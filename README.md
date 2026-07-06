@@ -1,0 +1,77 @@
+# VisionDrive 智视驾
+
+> 车载视觉感知与人机交互Web系统
+
+## 项目简介
+
+本项目面向智慧交通与智能座舱场景，构建一个前后端分离的Web系统，融合**计算机视觉**（车牌检测OCR、人体关键点检测、手部关键点检测）、**大语言模型**（LLM API调用、自然语言告警摘要生成）、**智能体技术**（自主感知-决策-告警）。
+
+## 技术架构
+
+```
+┌─────────────────────────────────┐
+│   前端  Vue 3 + Element Plus     │  端口: 5173
+└──────────────┬──────────────────┘
+               │ HTTP REST + WebSocket
+┌──────────────┴──────────────────┐
+│   后端  Java Spring Boot         │  端口: 8080
+│   · 用户认证 · 文件管理          │
+│   · 数据库 · Alert Agent         │
+└──────────────┬──────────────────┘
+               │ HTTP REST (内部)
+┌──────────────┴──────────────────┐
+│   算法服务  Python FastAPI       │  端口: 8000
+│   · 车牌识别 · 交警手势 · 车主手势 │
+└─────────────────────────────────┘
+```
+
+## 项目结构
+
+```
+vision-drive/
+├── frontend/        # Vue 3 前端
+├── backend/         # Java Spring Boot 后端
+├── algorithm/       # Python FastAPI 算法微服务
+├── docs/            # 项目文档
+├── data/            # 测试数据与样本
+├── docker/          # Docker 部署配置
+└── scripts/         # 工具脚本
+```
+
+## 快速开始
+
+### 1. 前端
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### 2. 后端
+```bash
+cd backend
+./mvnw spring-boot:run
+```
+
+### 3. 算法服务
+```bash
+cd algorithm
+pip install -r requirements.txt
+python main.py
+```
+
+## 团队
+
+| 角色 | 职责 |
+|---|---|
+| 组长 / 后端工程师 | Java后端 + API + DB + Agent + 项目管理 |
+| 前端工程师 | Vue3前端 + 页面 + 组件 + WebSocket |
+| 算法工程师 | 模型选型 + 推理pipeline + 精度测试 |
+| 测试工程师 | 测试用例 + 功能/性能测试 + 部署 |
+| 文档与项目管理 | 文档撰写 + 日报 + PPT（也参与开发） |
+
+## 文档
+
+- [产品需求文档](docs/prd/产品需求文档.md)
+- [概要设计文档](docs/design/概要设计文档.md)
+- [后端算法通讯协议](docs/design/后端算法通讯协议.md)

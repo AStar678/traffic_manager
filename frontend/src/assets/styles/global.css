@@ -1,0 +1,21 @@
+/* VisionDrive 全局样式 */
+:root {
+  --primary-color: #1a73e8;
+  --success-color: #34a853;
+  --warning-color: #fbbc04;
+  --danger-color: #ea4335;
+  --bg-color: #f5f7fa;
+  --text-color: #333;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  background: var(--bg-color);
+  color: var(--text-color);
+}

@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: ../docker/Dockerfile.frontend
+    ports:
+      - "5173:80"
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: ../docker/Dockerfile.backend
+    ports:
+      - "8080:8080"
+    depends_on:
+      - algorithm
+
+  algorithm:
+    build:
+      context: ../algorithm
+      dockerfile: ../docker/Dockerfile.algorithm
+    ports:
+      - "8000:8000"

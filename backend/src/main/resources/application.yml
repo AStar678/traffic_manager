@@ -1,0 +1,61 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: vision-drive-backend
+
+  # 数据库 (开发阶段使用H2)
+  datasource:
+    url: jdbc:h2:file:./data/visiondrive
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+  # JPA
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+
+  # 文件上传
+  servlet:
+    multipart:
+      max-file-size: 200MB
+      max-request-size: 220MB
+
+  # 邮件 (告警通知)
+  mail:
+    host: ${MAIL_HOST:smtp.example.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+
+# 算法服务地址
+algorithm:
+  base-url: http://localhost:8000
+
+# JWT
+jwt:
+  secret: ${JWT_SECRET:change-me-in-production}
+  expiration: 7200000  # 2小时
+  refresh-expiration: 604800000  # 7天
+
+# LLM API
+llm:
+  provider: deepseek
+  api-key: ${LLM_API_KEY:}
+  model: deepseek-chat
+  base-url: https://api.deepseek.com/v1
+
+# 告警Agent
+alert:
+  agent:
+    poll-interval: 30000  # 轮询间隔(毫秒)
+    failure-rate-threshold: 0.3
+    low-confidence-threshold: 0.5
+    token-limit: 1000000

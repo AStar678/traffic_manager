@@ -1,0 +1,53 @@
+# ============================
+# VisionDrive 智视驾
+# ============================
+
+# --- IDE ---
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# --- Frontend (Vue 3) ---
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+frontend/*.log
+
+# --- Backend (Java) ---
+backend/target/
+backend/.classpath
+backend/.project
+backend/.settings/
+backend/*.log
+
+# --- Algorithm (Python) ---
+algorithm/__pycache__/
+algorithm/**/__pycache__/
+algorithm/.venv/
+algorithm/venv/
+algorithm/*.pyc
+algorithm/.env
+
+# --- Models (large files) ---
+algorithm/models/**/*.pt
+algorithm/models/**/*.pth
+algorithm/models/**/*.onnx
+algorithm/models/**/*.h5
+algorithm/models/**/*.pb
+
+# --- Data ---
+data/datasets/
+data/samples/**/*.mp4
+data/samples/**/*.avi
+
+# --- Uploads ---
+uploads/
+temp/
+*.tmp
+
+# --- OS ---
+.DS_Store
+Thumbs.db

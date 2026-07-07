@@ -73,5 +73,5 @@ python main.py
 ## 文档
 
 - [产品需求文档](docs/prd/产品需求文档.md)
-- [概要设计文档](docs/design/概要设计文档.md)
+- [产品设计文档](docs/design/产品设计文档.md)
 - [后端算法通讯协议](docs/design/后端算法通讯协议.md)

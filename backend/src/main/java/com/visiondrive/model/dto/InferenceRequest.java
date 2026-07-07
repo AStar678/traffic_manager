@@ -1,8 +1,21 @@
 package com.visiondrive.model.dto;
 
-/**
- * // 推理请求DTO
- */
+import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.NotBlank;
+import lombok.Data;
+import java.util.List;
+
+@Data  //
+@Schema(description = "图片推理请求")
 public class InferenceRequest {
-    // TODO: 实现
+
+    @Schema(description = "任务类型: license_plate | police_gesture | owner_gesture",
+            example = "license_plate")
+    @NotBlank(message = "任务类型不能为空")
+    private String taskType;
+
+    @Schema(description = "图片URL",
+            example = "http://localhost:8080/api/files/images/2026-07-07/abc.jpg")
+    @NotBlank(message = "图片URL不能为空")
+    private String imageUrl;
 }

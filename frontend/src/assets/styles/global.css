@@ -1,21 +1,350 @@
-/* VisionDrive 全局样式 */
+/* ========================================
+   VisionDrive 车载HMI全局样式 v2.0
+   设计方向：驾驶员汽车中控大屏 ——
+   暗黑主题 · 高对比度 · 大触控区 · 扫读优先
+   ======================================== */
+
 :root {
-  --primary-color: #1a73e8;
-  --success-color: #34a853;
-  --warning-color: #fbbc04;
-  --danger-color: #ea4335;
-  --bg-color: #f5f7fa;
-  --text-color: #333;
+  /* ---- 主色调：赛博青蓝（现代EV车机风格） ---- */
+  --primary-color: #00b4d8;
+  --primary-glow: rgba(0, 180, 216, 0.25);
+  --primary-dark: #0077b6;
+  --primary-soft: rgba(0, 180, 216, 0.10);
+
+  /* ---- 功能色 ---- */
+  --success-color: #00e676;
+  --warning-color: #ffab00;
+  --danger-color: #ff3d00;
+  --info-color: #448aff;
+
+  /* ---- 背景体系（多层次暗黑） ---- */
+  --bg-root: #080c14;
+  --bg-surface: #0f1522;
+  --bg-card: #161d2b;
+  --bg-card-hover: #1c2434;
+  --bg-overlay: rgba(15, 21, 34, 0.88);
+
+  /* ---- 边框 ---- */
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-card: rgba(255, 255, 255, 0.08);
+  --border-active: rgba(0, 180, 216, 0.35);
+
+  /* ---- 文字 ---- */
+  --text-primary: #eef2f7;
+  --text-secondary: #92a0b8;
+  --text-muted: #586680;
+  --text-inverse: #080c14;
+
+  /* ---- 阴影 ---- */
+  --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.40);
+  --shadow-glow: 0 0 20px rgba(0, 180, 216, 0.12);
+  --shadow-elevated: 0 8px 32px rgba(0, 0, 0, 0.55);
+
+  /* ---- 圆角 ---- */
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+
+  /* ---- 动画 ---- */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --duration-fast: 180ms;
+  --duration-normal: 280ms;
 }
 
-* {
+/* ---- Reset ---- */
+*, *::before, *::after {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
+html, body, #app {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
-  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
-  background: var(--bg-color);
-  color: var(--text-color);
+  font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  background: var(--bg-root);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* 禁止用户选择，车机大屏不需要文本选择 */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+button, input, textarea, select {
+  font: inherit;
+  color: inherit;
+}
+
+a { color: inherit; text-decoration: none; }
+
+/* ---- 滚动条（暗黑细条） ---- */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.10);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* ========================================
+   Element Plus 全局覆盖
+   ======================================== */
+
+/* 按钮 */
+.el-button {
+  --el-button-bg-color: var(--bg-card);
+  --el-button-border-color: var(--border-card);
+  --el-button-text-color: var(--text-primary);
+  --el-button-hover-bg-color: var(--bg-card-hover);
+  --el-button-hover-border-color: var(--border-active);
+  border-radius: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+.el-button--primary {
+  --el-button-bg-color: var(--primary-color);
+  --el-button-border-color: var(--primary-color);
+  --el-button-text-color: #080c14;
+  --el-button-hover-bg-color: #00cdf0;
+  --el-button-hover-border-color: #00cdf0;
+  box-shadow: 0 0 18px var(--primary-glow);
+}
+.el-button--primary:hover {
+  box-shadow: 0 0 28px rgba(0, 180, 216, 0.40);
+  transform: translateY(-1px);
+}
+
+/* 输入框 */
+.el-input__wrapper {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-card) !important;
+  border-radius: 12px !important;
+  box-shadow: none !important;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+.el-input__wrapper:hover {
+  border-color: var(--border-active) !important;
+}
+.el-input__inner {
+  color: var(--text-primary) !important;
+}
+.el-input__inner::placeholder {
+  color: var(--text-muted) !important;
+}
+
+/* 选择器 */
+.el-select .el-input__wrapper {
+  background: var(--bg-card) !important;
+}
+
+/* 表格 */
+.el-table {
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  --el-table-header-bg-color: transparent;
+  --el-table-border-color: var(--border-subtle);
+  --el-table-text-color: var(--text-primary);
+  --el-table-header-text-color: var(--text-secondary);
+  --el-table-row-hover-bg-color: var(--bg-card-hover);
+}
+.el-table th.el-table__cell {
+  background: rgba(255, 255, 255, 0.02);
+  font-weight: 600;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* 标签 */
+.el-tag {
+  border-radius: 6px;
+  font-weight: 600;
+}
+
+/* 滑块 */
+.el-slider__bar {
+  background: var(--primary-color) !important;
+}
+.el-slider__button {
+  border-color: var(--primary-color) !important;
+  box-shadow: 0 0 10px var(--primary-glow) !important;
+}
+
+/* 进度条 */
+.el-progress-bar__outer {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-radius: 999px !important;
+}
+.el-progress-bar__inner {
+  background: linear-gradient(90deg, var(--primary-color), #00e5ff) !important;
+  border-radius: 999px !important;
+}
+
+/* 选项卡 */
+.el-tabs__header {
+  margin-bottom: 0 !important;
+}
+.el-tabs__nav-wrap::after {
+  background: var(--border-subtle) !important;
+}
+.el-tabs__item {
+  color: var(--text-secondary) !important;
+  font-weight: 600;
+}
+.el-tabs__item.is-active {
+  color: var(--primary-color) !important;
+}
+.el-tabs__active-bar {
+  background: var(--primary-color) !important;
+}
+
+/* 下拉菜单 */
+.el-dropdown-menu {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-card) !important;
+  border-radius: 12px !important;
+  box-shadow: var(--shadow-elevated) !important;
+}
+.el-dropdown-menu__item {
+  color: var(--text-primary) !important;
+}
+.el-dropdown-menu__item:hover {
+  background: var(--bg-card-hover) !important;
+}
+
+/* 对话框 */
+.el-dialog {
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border-card) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-elevated) !important;
+}
+.el-dialog__title {
+  color: var(--text-primary) !important;
+}
+
+/* 分页器 */
+.el-pagination button,
+.el-pager li {
+  background: var(--bg-card) !important;
+  color: var(--text-secondary) !important;
+  border-radius: 8px !important;
+}
+.el-pager li.is-active {
+  background: var(--primary-color) !important;
+  color: #080c14 !important;
+}
+
+/* 徽标 */
+.el-badge__content {
+  border: none !important;
+}
+
+/* ---- 工具类 ---- */
+.text-muted { color: var(--text-muted); }
+.text-secondary { color: var(--text-secondary); }
+.text-primary-glow { color: var(--primary-color); text-shadow: 0 0 12px var(--primary-glow); }
+.mono { font-family: "SF Mono", "Cascadia Code", "Consolas", monospace; }
+
+/* ---- 通用卡片 ---- */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+.card.glow {
+  box-shadow: var(--shadow-glow);
+}
+.card.interactive:hover {
+  border-color: var(--border-active);
+}
+
+/* ---- 玻璃效果面板 ---- */
+.glass-panel {
+  background: linear-gradient(135deg, rgba(22, 29, 43, 0.75), rgba(15, 21, 34, 0.85));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-md);
+}
+
+/* ---- 渐变分割线 ---- */
+.gradient-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-card), transparent);
+  margin: 16px 0;
+}
+
+/* ---- 脉冲状态点 ---- */
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.status-dot.online {
+  background: var(--success-color);
+  box-shadow: 0 0 8px rgba(0, 230, 118, 0.4);
+}
+.status-dot.warning {
+  background: var(--warning-color);
+  box-shadow: 0 0 8px rgba(255, 171, 0, 0.4);
+}
+.status-dot.offline {
+  background: var(--danger-color);
+  box-shadow: 0 0 8px rgba(255, 61, 0, 0.4);
+}
+
+/* ---- 扫描线动画（用于摄像头画面） ---- */
+@keyframes scanLine {
+  0% { top: 0%; }
+  50% { top: 100%; }
+  100% { top: 0%; }
+}
+
+.scan-line-animated {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--primary-color), transparent);
+  animation: scanLine 3s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* ---- 数值跳动动画 ---- */
+@keyframes pulseNumber {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.75; }
+}
+
+.value-live {
+  animation: pulseNumber 2s ease-in-out infinite;
+}
+
+/* ---- 呼吸光效 ---- */
+@keyframes breathe {
+  0%, 100% { box-shadow: 0 0 8px var(--primary-glow); }
+  50% { box-shadow: 0 0 24px var(--primary-glow), 0 0 48px rgba(0, 180, 216, 0.08); }
+}
+
+.breathing {
+  animation: breathe 3s ease-in-out infinite;
 }

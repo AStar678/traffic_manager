@@ -1,17 +1,25 @@
 import { defineStore } from 'pinia'
+import { mockAlerts, mockAlertStats } from '@/utils/mockData'
 
 export const useAlertStore = defineStore('alert', {
   state: () => ({
     alerts: [],
     unreadCount: 0,
-    stats: {}
+    stats: {},
+    connected: false
   }),
   actions: {
     connectWebSocket() {
-      // TODO: WebSocket连接
+      this.connected = true
+      if (!this.alerts.length) {
+        this.alerts = [...mockAlerts]
+        this.unreadCount = mockAlerts.filter(item => item.status !== 'resolved').length
+      }
     },
     fetchAlerts() {
-      // TODO: 获取告警列表
+      this.alerts = [...mockAlerts]
+      this.stats = { ...mockAlertStats }
+      this.unreadCount = this.alerts.filter(item => item.status !== 'resolved').length
     }
   }
 })

@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 
 const routes = [
   {
@@ -9,8 +10,13 @@ const routes = [
   {
     path: '/',
     component: () => import('@/views/MainLayout.vue'),
-    redirect: '/license-plate',
+    redirect: '/dashboard',
     children: [
+      {
+        path: 'dashboard',
+        name: 'Dashboard',
+        component: () => import('@/views/DashboardPage.vue')
+      },
       {
         path: 'license-plate',
         name: 'LicensePlate',
@@ -48,6 +54,17 @@ const routes = [
 const router = createRouter({
   history: createWebHistory(),
   routes
+})
+
+router.beforeEach(to => {
+  const authStore = useAuthStore()
+  if (to.path === '/login') {
+    return authStore.isAuthenticated ? '/dashboard' : true
+  }
+  if (!authStore.isAuthenticated) {
+    return { path: '/login', query: { redirect: to.fullPath } }
+  }
+  return true
 })
 
 export default router

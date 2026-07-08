@@ -1,8 +1,12 @@
 package com.visiondrive.repository;
 
-/**
- * // 异步任务数据访问
- */
-public class JobRepository {
-    // TODO: 实现
+import com.visiondrive.model.entity.Job;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.Optional;
+
+@Repository
+public interface JobRepository extends JpaRepository<Job, Long> {
+    Optional<Job> findByJobId(String jobId);
 }

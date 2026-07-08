@@ -24,8 +24,20 @@ public class User {
     @Column(nullable = false)
     private String password;
 
+    @Column(unique = true)
+    private String phone;
+
     private String email;
+
+    @Column(nullable = false)
+    private String nickname;
+
+    private String avatarUrl;
+
+    private String role;
 
     @CreationTimestamp
     private LocalDateTime createdAt;
+
+    private LocalDateTime lastLoginAt;
 }

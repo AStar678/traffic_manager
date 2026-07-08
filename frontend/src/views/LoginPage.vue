@@ -20,7 +20,7 @@
     <div class="login-panel">
       <div class="login-card">
         <h2>登录系统</h2>
-        <p class="hint">演示模式 · 输入任意密码即可进入</p>
+        <p class="hint">短信验证码登录 · 首次自动注册</p>
 
         <div class="form-group">
           <label>用户名</label>
@@ -49,9 +49,9 @@
           </div>
         </div>
 
-        <button class="login-btn" @click="handleLogin">
-          进入系统
-          <el-icon><ArrowRight /></el-icon>
+        <button class="login-btn" :disabled="loading" @click="handleLogin">
+          {{ loading ? '登录中...' : '进入系统' }}
+          <el-icon v-if="!loading"><ArrowRight /></el-icon>
         </button>
 
         <div class="toggle-mode" @click="showCodeLogin = !showCodeLogin">
@@ -71,8 +71,8 @@
             <div class="input-wrapper" style="flex:1">
               <input v-model="form.code" type="text" maxlength="6" placeholder="6位验证码" class="auto-input" />
             </div>
-            <button class="send-code-btn" :disabled="countdown > 0" @click="sendCode">
-              {{ countdown > 0 ? `${countdown}s` : '获取验证码' }}
+            <button class="send-code-btn" :disabled="countdown > 0 || sending" @click="sendCode">
+              {{ sending ? '发送中...' : countdown > 0 ? `${countdown}s` : '获取验证码' }}
             </button>
           </div>
         </div>
@@ -86,6 +86,7 @@ import { reactive, ref, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
+import { sendCode as apiSendCode } from '@/api/auth'
 
 const router = useRouter()
 const route = useRoute()
@@ -99,25 +100,83 @@ const form = reactive({
 })
 const showCodeLogin = ref(false)
 const countdown = ref(0)
-let timer
+const sending = ref(false)
+const loading = ref(false)
+let timer = null
 
-function sendCode() {
+/** 发送短信验证码 */
+async function sendCode() {
   if (!form.target) {
-    ElMessage.warning('请先输入手机号或邮箱')
+    ElMessage.warning('请先输入手机号')
     return
   }
-  countdown.value = 60
-  ElMessage.success('演示验证码：483921')
+  // 校验手机号格式
+  if (!/^1[3-9]\d{9}$/.test(form.target)) {
+    ElMessage.warning('请输入正确的手机号')
+    return
+  }
+
+  sending.value = true
+  try {
+    const res = await apiSendCode(form.target)
+    const data = res.data || res
+
+    if (res.code === 0) {
+      ElMessage.success('验证码已发送，请查收短信')
+      startCountdown()
+    } else if (res.code === 429 && data?.retryAfter) {
+      ElMessage.warning(res.message || `请 ${data.retryAfter} 秒后再试`)
+      startCountdown(data.retryAfter)
+    } else {
+      // 后端报错，显示真实错误信息
+      ElMessage.error(res.message || '验证码发送失败，请稍后重试')
+    }
+  } catch {
+    ElMessage.error('网络异常，请检查后端服务是否启动')
+  } finally {
+    sending.value = false
+  }
+}
+
+function startCountdown(seconds = 60) {
+  countdown.value = seconds
+  clearInterval(timer)
   timer = setInterval(() => {
     countdown.value -= 1
     if (countdown.value <= 0) clearInterval(timer)
   }, 1000)
 }
 
-function handleLogin() {
-  authStore.login(form.username || 'admin', form.password || 'visiondrive')
-  ElMessage.success('欢迎使用 VisionDrive')
-  router.push(route.query.redirect || '/dashboard')
+/** 登录 */
+async function handleLogin() {
+  loading.value = true
+  try {
+    if (showCodeLogin.value) {
+      // 验证码登录
+      if (!form.target || !form.code) {
+        ElMessage.warning('请输入手机号和验证码')
+        loading.value = false
+        return
+      }
+      if (!/^\d{6}$/.test(form.code)) {
+        ElMessage.warning('验证码为6位数字')
+        loading.value = false
+        return
+      }
+      await authStore.loginByCode(form.target, form.code)
+      ElMessage.success('登录成功')
+    } else {
+      // 账号密码登录
+      await authStore.login(form.username || 'admin', form.password || 'visiondrive')
+      ElMessage.success('欢迎使用 VisionDrive')
+    }
+    router.push(route.query.redirect || '/dashboard')
+  } catch (e) {
+    const msg = e?.response?.data?.message || e?.message || '登录失败'
+    ElMessage.error(msg)
+  } finally {
+    loading.value = false
+  }
 }
 
 onBeforeUnmount(() => {

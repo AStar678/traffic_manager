@@ -1,8 +1,16 @@
 package com.visiondrive.repository;
 
-/**
- * // 系统日志数据访问
- */
-public class SystemLogRepository {
-    // TODO: 实现
+import com.visiondrive.model.entity.SystemLog;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Repository
+public interface SystemLogRepository extends JpaRepository<SystemLog, Long> {
+
+    List<SystemLog> findByModuleAndCreatedAtAfter(String module, LocalDateTime after);
+
+    List<SystemLog> findByModuleAndEventAndCreatedAtAfter(String module, String event, LocalDateTime after);
 }

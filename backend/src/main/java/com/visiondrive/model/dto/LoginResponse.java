@@ -1,8 +1,16 @@
 package com.visiondrive.model.dto;
 
-/**
- * // 登录响应DTO
- */
+import io.swagger.v3.oas.annotations.media.Schema;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+
+@Data
+@AllArgsConstructor
+@Schema(description = "登录响应")
 public class LoginResponse {
-    // TODO: 实现
+    @Schema(description = "JWT Token")
+    private String token;
+
+    @Schema(description = "用户名")
+    private String username;
 }

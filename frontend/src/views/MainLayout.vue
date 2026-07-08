@@ -1,34 +1,40 @@
 <template>
   <div class="auto-layout">
-    <!-- 顶部状态栏（极简，仅显示时间和关键状态） -->
+    <!-- 顶部状态栏：极简车机风格 -->
     <header class="top-bar">
       <div class="top-left">
         <span class="time-display">{{ currentTime }}</span>
-        <span class="divider-dot">·</span>
+        <span class="top-sep">|</span>
         <span class="network-badge">
-          <span class="status-dot online"></span>
-          5G
+          <span class="status-dot online"></span>5G
         </span>
+        <span class="top-sep">|</span>
+        <span class="temp">🌡 31°</span>
       </div>
       <div class="top-center">
-        <span class="brand-wordmark">VisionDrive</span>
+        <span class="brand">VisionDrive</span>
       </div>
       <div class="top-right">
-        <span class="alert-indicator" v-if="alertCount > 0" @click="$router.push('/alert-dashboard')">
-          <el-icon><Bell /></el-icon>
-          <span class="alert-badge">{{ alertCount }}</span>
+        <!-- 告警通知 -->
+        <span class="notif-btn" @click="$router.push('/alert-dashboard')">
+          <el-icon :size="18"><Bell /></el-icon>
+          <span v-if="alertCount" class="badge">{{ alertCount }}</span>
         </span>
-        <span class="temp-outside">🌡 31°</span>
-        <button class="user-avatar" @click="showUserMenu = !showUserMenu">
+        <!-- WebSocket 状态 -->
+        <span class="ws-indicator" :class="{ connected: wsConnected }">
+          <span class="status-dot" :class="wsConnected ? 'online' : 'warning-dot'"></span>
+        </span>
+        <!-- 用户 -->
+        <button class="avatar-btn" @click="showUserMenu = !showUserMenu">
           {{ userInitial }}
         </button>
-        <div v-if="showUserMenu" class="user-dropdown" @click="handleLogout">
-          退出登录
+        <div v-if="showUserMenu" class="user-drop" @click="handleLogout">
+          <el-icon><SwitchButton /></el-icon> 退出
         </div>
       </div>
     </header>
 
-    <!-- 主内容区（全屏沉浸） -->
+    <!-- 主内容区 -->
     <main class="view-container">
       <router-view v-slot="{ Component }">
         <transition name="car-fade" mode="out-in">
@@ -37,7 +43,7 @@
       </router-view>
     </main>
 
-    <!-- 底部Dock导航栏（车机风格） -->
+    <!-- 底部Dock：车机风格导航 -->
     <nav class="bottom-dock">
       <router-link
         v-for="item in dockItems"
@@ -48,6 +54,7 @@
       >
         <el-icon :size="22"><component :is="item.icon" /></el-icon>
         <span>{{ item.label }}</span>
+        <span v-if="item.badge" class="dock-badge">{{ item.badge }}</span>
       </router-link>
     </nav>
   </div>
@@ -67,6 +74,7 @@ const alertStore = useAlertStore()
 alertStore.fetchAlerts()
 
 const showUserMenu = ref(false)
+const wsConnected = ref(true)
 let timeTimer = null
 const timeNow = ref(new Date())
 
@@ -80,16 +88,17 @@ const userInitial = computed(() => {
 
 const alertCount = computed(() => alertStore.unreadCount)
 
-const dockItems = [
-  { path: '/dashboard',  label: '驾驶',   icon: 'Monitor' },
-  { path: '/license-plate', label: '车牌', icon: 'Camera' },
-  { path: '/police-gesture', label: '交警', icon: 'Aim' },
-  { path: '/owner-gesture',  label: '手势', icon: 'Pointer' },
-  { path: '/settings',  label: '设置',   icon: 'Setting' },
-]
+const dockItems = computed(() => [
+  { path: '/dashboard',       label: '驾驶',   icon: 'Monitor',  badge: null },
+  { path: '/license-plate',   label: '车牌',   icon: 'Camera',   badge: null },
+  { path: '/police-gesture',  label: '交警',   icon: 'Aim',      badge: null },
+  { path: '/owner-gesture',   label: '手势',   icon: 'Pointer',  badge: null },
+  { path: '/alert-dashboard', label: '告警',   icon: 'Bell',     badge: alertCount.value || null },
+])
 
 function isActive(path) {
-  return route.path === path || (path === '/dashboard' && route.path === '/')
+  if (path === '/dashboard' && route.path === '/') return true
+  return route.path === path
 }
 
 function handleLogout() {
@@ -116,114 +125,104 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-/* ===== 顶部状态栏 ===== */
+/* ===== 顶部 ===== */
 .top-bar {
-  height: 48px;
-  min-height: 48px;
+  height: 46px;
+  min-height: 46px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 24px;
-  background: rgba(8, 12, 20, 0.92);
+  padding: 0 22px;
+  background: rgba(10, 13, 20, 0.94);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border-subtle);
   z-index: 100;
 }
 
-.top-left,
-.top-right {
+.top-left, .top-right {
   display: flex;
   align-items: center;
-  gap: 14px;
-  min-width: 160px;
+  gap: 12px;
+  min-width: 140px;
 }
-
 .top-right { justify-content: flex-end; }
-
-.top-center {
-  flex: 1;
-  text-align: center;
-}
+.top-center { flex: 1; text-align: center; }
 
 .time-display {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--text-primary);
-  letter-spacing: 0.5px;
+  letter-spacing: 0.3px;
 }
 
-.divider-dot {
-  color: var(--text-muted);
+.top-sep {
+  color: var(--border-card);
 }
 
 .network-badge {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--success-color);
 }
 
-.brand-wordmark {
+.temp {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.brand {
   font-size: 18px;
   font-weight: 800;
   letter-spacing: 1px;
-  background: linear-gradient(135deg, var(--primary-color), #00e5ff);
+  background: linear-gradient(135deg, var(--primary-color), #4a9af5);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
-.alert-indicator {
+.notif-btn {
   position: relative;
   cursor: pointer;
   color: var(--text-secondary);
-  transition: color var(--duration-fast);
+  padding: 6px;
+  border-radius: 8px;
+  transition: all var(--duration-fast);
 }
-.alert-indicator:hover { color: var(--warning-color); }
+.notif-btn:hover { color: var(--warning-color); background: rgba(255,255,255,0.04); }
 
-.alert-badge {
+.badge {
   position: absolute;
-  top: -6px;
-  right: -8px;
-  min-width: 18px;
-  height: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  top: 0; right: 0;
+  min-width: 16px; height: 16px;
+  display: flex; align-items: center; justify-content: center;
   background: var(--danger-color);
   color: #fff;
-  font-size: 11px;
-  font-weight: 800;
+  font-size: 10px; font-weight: 800;
   border-radius: 999px;
 }
 
-.temp-outside {
-  font-size: 13px;
-  color: var(--text-secondary);
-}
+.ws-indicator { display: flex; align-items: center; }
+.ws-indicator .status-dot { margin: 0; }
 
-.user-avatar {
-  width: 32px;
-  height: 32px;
+.avatar-btn {
+  width: 30px; height: 30px;
   border: 1.5px solid var(--border-card);
   border-radius: 50%;
   background: var(--primary-color);
-  color: #080c14;
-  font-size: 13px;
-  font-weight: 800;
+  color: #fff;
+  font-size: 12px; font-weight: 800;
   cursor: pointer;
-  transition: border-color var(--duration-fast);
 }
-.user-avatar:hover { border-color: var(--primary-color); }
 
-.user-dropdown {
+.user-drop {
   position: absolute;
-  top: 44px;
-  right: 24px;
-  padding: 10px 18px;
+  top: 44px; right: 22px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 16px;
   background: var(--bg-card);
   border: 1px solid var(--border-card);
   border-radius: 10px;
@@ -233,42 +232,34 @@ onBeforeUnmount(() => {
   box-shadow: var(--shadow-elevated);
   z-index: 200;
 }
-.user-dropdown:hover { color: var(--danger-color); }
+.user-drop:hover { color: var(--danger-color); }
 
-/* ===== 主视图容器 ===== */
+/* ===== 主视图 ===== */
 .view-container {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 20px 24px 16px;
-  /* 底部留出dock高度 */
-  padding-bottom: 12px;
+  padding: 16px 20px;
 }
 
-/* ===== 视图切换动画 ===== */
+/* 视图切换动画 */
 .car-fade-enter-active,
 .car-fade-leave-active {
-  transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out);
+  transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-out);
 }
-.car-fade-enter-from {
-  opacity: 0;
-  transform: translateY(8px);
-}
-.car-fade-leave-to {
-  opacity: 0;
-  transform: translateY(-8px);
-}
+.car-fade-enter-from { opacity: 0; transform: translateY(8px); }
+.car-fade-leave-to { opacity: 0; transform: translateY(-8px); }
 
-/* ===== 底部Dock导航 ===== */
+/* ===== 底部Dock ===== */
 .bottom-dock {
-  height: 72px;
-  min-height: 72px;
+  height: 70px;
+  min-height: 70px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 0 24px;
-  background: rgba(15, 21, 34, 0.94);
+  gap: 6px;
+  padding: 0 16px;
+  background: rgba(17, 22, 32, 0.95);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border-top: 1px solid var(--border-subtle);
@@ -276,26 +267,26 @@ onBeforeUnmount(() => {
 }
 
 .dock-item {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  min-width: 72px;
+  gap: 3px;
+  min-width: 68px;
   height: 54px;
-  padding: 6px 14px;
-  border-radius: 16px;
+  padding: 6px 12px;
+  border-radius: 14px;
   color: var(--text-muted);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.3px;
   transition: all var(--duration-fast) var(--ease-out);
-  cursor: pointer;
 }
 
 .dock-item:hover {
   color: var(--text-secondary);
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255,255,255,0.03);
 }
 
 .dock-item.active {
@@ -305,5 +296,17 @@ onBeforeUnmount(() => {
 
 .dock-item.active .el-icon {
   filter: drop-shadow(0 0 6px var(--primary-glow));
+}
+
+.dock-badge {
+  position: absolute;
+  top: 4px; right: 8px;
+  min-width: 16px; height: 16px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--danger-color);
+  color: #fff;
+  font-size: 10px; font-weight: 800;
+  border-radius: 999px;
+  line-height: 1;
 }
 </style>

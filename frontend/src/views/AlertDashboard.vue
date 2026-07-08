@@ -79,6 +79,10 @@
         </div>
       </div>
     </div>
+
+    <button class="back-btn" @click="$router.push('/dashboard')">
+      <el-icon><ArrowLeft /></el-icon> 返回驾驶主屏
+    </button>
   </div>
 </template>
 
@@ -122,8 +126,8 @@ onMounted(() => {
       series: [{
         type: 'line', smooth: true, data: stats.value.trend || [],
         areaStyle: { color: 'rgba(0,180,216,0.08)' },
-        lineStyle: { color: '#00b4d8', width: 3 },
-        itemStyle: { color: '#00b4d8' }
+        lineStyle: { color: '#1a73e8', width: 3 },
+        itemStyle: { color: '#1a73e8' }
       }]
     })
   }
@@ -318,4 +322,13 @@ onBeforeUnmount(() => {
 .suggested-actions strong { font-size: 12px; color: var(--text-secondary); }
 .suggested-actions ul { margin-top: 8px; padding-left: 18px; }
 .suggested-actions li { font-size: 13px; color: var(--text-primary); line-height: 1.8; }
+
+.back-btn {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%; padding: 10px; margin-top: 8px;
+  border: 1px solid var(--border-card); border-radius: 12px;
+  background: transparent; color: var(--text-secondary);
+  font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.back-btn:hover { border-color: var(--border-active); color: var(--text-primary); }
 </style>

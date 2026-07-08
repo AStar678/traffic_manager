@@ -174,7 +174,7 @@ onBeforeUnmount(() => {
   display: grid;
   place-items: center;
   margin: 0 auto 24px;
-  background: linear-gradient(135deg, var(--primary-color), #0096c7);
+  background: linear-gradient(135deg, var(--primary-color), #1557b0);
   border-radius: 20px;
   color: #080c14;
   font-size: 30px;
@@ -300,7 +300,7 @@ onBeforeUnmount(() => {
   margin-top: 24px;
   border: none;
   border-radius: 12px;
-  background: linear-gradient(135deg, var(--primary-color), #0096c7);
+  background: linear-gradient(135deg, var(--primary-color), #1557b0);
   color: #080c14;
   font-size: 16px;
   font-weight: 700;
@@ -324,7 +324,7 @@ onBeforeUnmount(() => {
   transition: color var(--duration-fast);
 }
 
-.toggle-mode:hover { color: #00e5ff; }
+.toggle-mode:hover { color: #4a9af5; }
 
 .code-section {
   margin-top: 4px;

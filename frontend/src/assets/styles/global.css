@@ -1,44 +1,45 @@
 /* ========================================
-   VisionDrive 车载HMI全局样式 v2.0
-   设计方向：驾驶员汽车中控大屏 ——
+   VisionDrive 车载HMI全局样式 v2.1
+   设计方向：驾驶员汽车中控大屏
+   配色基准：设计文档 #1a73e8 主色
    暗黑主题 · 高对比度 · 大触控区 · 扫读优先
    ======================================== */
 
 :root {
-  /* ---- 主色调：赛博青蓝（现代EV车机风格） ---- */
-  --primary-color: #00b4d8;
-  --primary-glow: rgba(0, 180, 216, 0.25);
-  --primary-dark: #0077b6;
-  --primary-soft: rgba(0, 180, 216, 0.10);
+  /* ---- 主色调：设计文档规定 #1a73e8 ---- */
+  --primary-color: #1a73e8;
+  --primary-glow: rgba(26, 115, 232, 0.25);
+  --primary-dark: #1557b0;
+  --primary-soft: rgba(26, 115, 232, 0.10);
 
-  /* ---- 功能色 ---- */
-  --success-color: #00e676;
-  --warning-color: #ffab00;
-  --danger-color: #ff3d00;
-  --info-color: #448aff;
+  /* ---- 功能色：设计文档规定 ---- */
+  --success-color: #34a853;
+  --warning-color: #fbbc04;
+  --danger-color: #ea4335;
+  --info-color: #4285f4;
 
-  /* ---- 背景体系（多层次暗黑） ---- */
-  --bg-root: #080c14;
-  --bg-surface: #0f1522;
-  --bg-card: #161d2b;
-  --bg-card-hover: #1c2434;
-  --bg-overlay: rgba(15, 21, 34, 0.88);
+  /* ---- 车机暗黑背景体系 ---- */
+  --bg-root: #0a0d14;
+  --bg-surface: #111620;
+  --bg-card: #181d2a;
+  --bg-card-hover: #1e2434;
+  --bg-overlay: rgba(17, 22, 32, 0.90);
 
   /* ---- 边框 ---- */
-  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-subtle: rgba(255, 255, 255, 0.05);
   --border-card: rgba(255, 255, 255, 0.08);
-  --border-active: rgba(0, 180, 216, 0.35);
+  --border-active: rgba(26, 115, 232, 0.40);
 
   /* ---- 文字 ---- */
-  --text-primary: #eef2f7;
-  --text-secondary: #92a0b8;
-  --text-muted: #586680;
-  --text-inverse: #080c14;
+  --text-primary: #e8edf4;
+  --text-secondary: #8e9aaf;
+  --text-muted: #556078;
+  --text-inverse: #0a0d14;
 
   /* ---- 阴影 ---- */
-  --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.40);
-  --shadow-glow: 0 0 20px rgba(0, 180, 216, 0.12);
-  --shadow-elevated: 0 8px 32px rgba(0, 0, 0, 0.55);
+  --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.45);
+  --shadow-glow: 0 0 20px rgba(26, 115, 232, 0.10);
+  --shadow-elevated: 0 8px 32px rgba(0, 0, 0, 0.60);
 
   /* ---- 圆角 ---- */
   --radius-sm: 8px;
@@ -71,7 +72,6 @@ body {
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* 禁止用户选择，车机大屏不需要文本选择 */
   user-select: none;
   -webkit-user-select: none;
 }
@@ -83,27 +83,16 @@ button, input, textarea, select {
 
 a { color: inherit; text-decoration: none; }
 
-/* ---- 滚动条（暗黑细条） ---- */
-::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.10);
-  border-radius: 999px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.18);
-}
+/* ---- 滚动条 ---- */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.08); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.15); }
 
 /* ========================================
-   Element Plus 全局覆盖
+   Element Plus 全局覆盖 - 暗黑车机风格
    ======================================== */
 
-/* 按钮 */
 .el-button {
   --el-button-bg-color: var(--bg-card);
   --el-button-border-color: var(--border-card);
@@ -118,17 +107,16 @@ a { color: inherit; text-decoration: none; }
 .el-button--primary {
   --el-button-bg-color: var(--primary-color);
   --el-button-border-color: var(--primary-color);
-  --el-button-text-color: #080c14;
-  --el-button-hover-bg-color: #00cdf0;
-  --el-button-hover-border-color: #00cdf0;
+  --el-button-text-color: #fff;
+  --el-button-hover-bg-color: #2b83f0;
+  --el-button-hover-border-color: #2b83f0;
   box-shadow: 0 0 18px var(--primary-glow);
 }
 .el-button--primary:hover {
-  box-shadow: 0 0 28px rgba(0, 180, 216, 0.40);
+  box-shadow: 0 0 28px rgba(26, 115, 232, 0.40);
   transform: translateY(-1px);
 }
 
-/* 输入框 */
 .el-input__wrapper {
   background: var(--bg-card) !important;
   border: 1px solid var(--border-card) !important;
@@ -136,22 +124,12 @@ a { color: inherit; text-decoration: none; }
   box-shadow: none !important;
   transition: border-color var(--duration-fast) var(--ease-out);
 }
-.el-input__wrapper:hover {
-  border-color: var(--border-active) !important;
-}
-.el-input__inner {
-  color: var(--text-primary) !important;
-}
-.el-input__inner::placeholder {
-  color: var(--text-muted) !important;
-}
+.el-input__wrapper:hover { border-color: var(--border-active) !important; }
+.el-input__inner { color: var(--text-primary) !important; }
+.el-input__inner::placeholder { color: var(--text-muted) !important; }
 
-/* 选择器 */
-.el-select .el-input__wrapper {
-  background: var(--bg-card) !important;
-}
+.el-select .el-input__wrapper { background: var(--bg-card) !important; }
 
-/* 表格 */
 .el-table {
   --el-table-bg-color: transparent;
   --el-table-tr-bg-color: transparent;
@@ -164,95 +142,54 @@ a { color: inherit; text-decoration: none; }
 .el-table th.el-table__cell {
   background: rgba(255, 255, 255, 0.02);
   font-weight: 600;
-  font-size: 13px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
-/* 标签 */
-.el-tag {
-  border-radius: 6px;
-  font-weight: 600;
-}
+.el-tag { border-radius: 6px; font-weight: 600; }
 
-/* 滑块 */
-.el-slider__bar {
-  background: var(--primary-color) !important;
-}
-.el-slider__button {
-  border-color: var(--primary-color) !important;
-  box-shadow: 0 0 10px var(--primary-glow) !important;
-}
+.el-slider__bar { background: var(--primary-color) !important; }
+.el-slider__button { border-color: var(--primary-color) !important; box-shadow: 0 0 10px var(--primary-glow) !important; }
 
-/* 进度条 */
-.el-progress-bar__outer {
-  background: rgba(255, 255, 255, 0.06) !important;
-  border-radius: 999px !important;
-}
-.el-progress-bar__inner {
-  background: linear-gradient(90deg, var(--primary-color), #00e5ff) !important;
-  border-radius: 999px !important;
-}
+.el-progress-bar__outer { background: rgba(255, 255, 255, 0.06) !important; border-radius: 999px !important; }
+.el-progress-bar__inner { background: linear-gradient(90deg, var(--primary-color), #4a9af5) !important; border-radius: 999px !important; }
 
-/* 选项卡 */
-.el-tabs__header {
-  margin-bottom: 0 !important;
-}
-.el-tabs__nav-wrap::after {
-  background: var(--border-subtle) !important;
-}
-.el-tabs__item {
-  color: var(--text-secondary) !important;
-  font-weight: 600;
-}
-.el-tabs__item.is-active {
-  color: var(--primary-color) !important;
-}
-.el-tabs__active-bar {
-  background: var(--primary-color) !important;
-}
+.el-tabs__header { margin-bottom: 0 !important; }
+.el-tabs__nav-wrap::after { background: var(--border-subtle) !important; }
+.el-tabs__item { color: var(--text-secondary) !important; font-weight: 600; }
+.el-tabs__item.is-active { color: var(--primary-color) !important; }
+.el-tabs__active-bar { background: var(--primary-color) !important; }
 
-/* 下拉菜单 */
 .el-dropdown-menu {
   background: var(--bg-card) !important;
   border: 1px solid var(--border-card) !important;
   border-radius: 12px !important;
   box-shadow: var(--shadow-elevated) !important;
 }
-.el-dropdown-menu__item {
-  color: var(--text-primary) !important;
-}
-.el-dropdown-menu__item:hover {
-  background: var(--bg-card-hover) !important;
-}
+.el-dropdown-menu__item { color: var(--text-primary) !important; }
+.el-dropdown-menu__item:hover { background: var(--bg-card-hover) !important; }
 
-/* 对话框 */
 .el-dialog {
   background: var(--bg-surface) !important;
   border: 1px solid var(--border-card) !important;
   border-radius: var(--radius-lg) !important;
   box-shadow: var(--shadow-elevated) !important;
 }
-.el-dialog__title {
-  color: var(--text-primary) !important;
-}
+.el-dialog__title { color: var(--text-primary) !important; }
 
-/* 分页器 */
-.el-pagination button,
-.el-pager li {
+.el-pagination button, .el-pager li {
   background: var(--bg-card) !important;
   color: var(--text-secondary) !important;
   border-radius: 8px !important;
 }
-.el-pager li.is-active {
-  background: var(--primary-color) !important;
-  color: #080c14 !important;
-}
+.el-pager li.is-active { background: var(--primary-color) !important; color: #fff !important; }
 
-/* 徽标 */
-.el-badge__content {
-  border: none !important;
-}
+.el-badge__content { border: none !important; }
+.el-radio-button__inner { background: var(--bg-card) !important; border-color: var(--border-card) !important; color: var(--text-secondary) !important; }
+.el-radio-button__original-radio:checked + .el-radio-button__inner { background: var(--primary-color) !important; border-color: var(--primary-color) !important; color: #fff !important; box-shadow: none !important; }
+
+.el-date-editor .el-input__wrapper { background: var(--bg-card) !important; }
 
 /* ---- 工具类 ---- */
 .text-muted { color: var(--text-muted); }
@@ -260,7 +197,7 @@ a { color: inherit; text-decoration: none; }
 .text-primary-glow { color: var(--primary-color); text-shadow: 0 0 12px var(--primary-glow); }
 .mono { font-family: "SF Mono", "Cascadia Code", "Consolas", monospace; }
 
-/* ---- 通用卡片 ---- */
+/* ---- 卡片 ---- */
 .card {
   background: var(--bg-card);
   border: 1px solid var(--border-card);
@@ -268,16 +205,12 @@ a { color: inherit; text-decoration: none; }
   padding: 20px;
   transition: border-color var(--duration-fast) var(--ease-out);
 }
-.card.glow {
-  box-shadow: var(--shadow-glow);
-}
-.card.interactive:hover {
-  border-color: var(--border-active);
-}
+.card.glow { box-shadow: var(--shadow-glow); }
+.card.interactive:hover { border-color: var(--border-active); }
 
-/* ---- 玻璃效果面板 ---- */
+/* ---- 玻璃效果 ---- */
 .glass-panel {
-  background: linear-gradient(135deg, rgba(22, 29, 43, 0.75), rgba(15, 21, 34, 0.85));
+  background: linear-gradient(135deg, rgba(24, 29, 42, 0.75), rgba(17, 22, 32, 0.85));
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border: 1px solid var(--border-card);
@@ -288,63 +221,48 @@ a { color: inherit; text-decoration: none; }
 .gradient-divider {
   height: 1px;
   background: linear-gradient(90deg, transparent, var(--border-card), transparent);
-  margin: 16px 0;
+  margin: 14px 0;
 }
 
-/* ---- 脉冲状态点 ---- */
+/* ---- 状态点 ---- */
 .status-dot {
   display: inline-block;
-  width: 8px;
-  height: 8px;
+  width: 8px; height: 8px;
   border-radius: 50%;
   margin-right: 6px;
+  flex-shrink: 0;
 }
-.status-dot.online {
-  background: var(--success-color);
-  box-shadow: 0 0 8px rgba(0, 230, 118, 0.4);
-}
-.status-dot.warning {
-  background: var(--warning-color);
-  box-shadow: 0 0 8px rgba(255, 171, 0, 0.4);
-}
-.status-dot.offline {
-  background: var(--danger-color);
-  box-shadow: 0 0 8px rgba(255, 61, 0, 0.4);
-}
+.status-dot.online { background: var(--success-color); box-shadow: 0 0 8px rgba(52, 168, 83, 0.4); }
+.status-dot.warning-dot { background: var(--warning-color); box-shadow: 0 0 8px rgba(251, 188, 4, 0.4); }
+.status-dot.offline { background: var(--danger-color); box-shadow: 0 0 8px rgba(234, 67, 53, 0.4); }
 
-/* ---- 扫描线动画（用于摄像头画面） ---- */
+/* ---- 扫描线动画 ---- */
 @keyframes scanLine {
-  0% { top: 0%; }
-  50% { top: 100%; }
-  100% { top: 0%; }
+  0% { top: -2px; }
+  50% { top: calc(100% + 2px); }
+  100% { top: -2px; }
 }
 
 .scan-line-animated {
   position: absolute;
-  left: 0;
-  right: 0;
+  left: 0; right: 0;
   height: 2px;
   background: linear-gradient(90deg, transparent, var(--primary-color), transparent);
   animation: scanLine 3s ease-in-out infinite;
   pointer-events: none;
+  z-index: 5;
 }
 
-/* ---- 数值跳动动画 ---- */
+/* ---- 数值跳动 ---- */
 @keyframes pulseNumber {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.75; }
+  50% { opacity: 0.78; }
 }
+.value-live { animation: pulseNumber 2s ease-in-out infinite; }
 
-.value-live {
-  animation: pulseNumber 2s ease-in-out infinite;
-}
-
-/* ---- 呼吸光效 ---- */
+/* ---- 呼吸光 ---- */
 @keyframes breathe {
   0%, 100% { box-shadow: 0 0 8px var(--primary-glow); }
-  50% { box-shadow: 0 0 24px var(--primary-glow), 0 0 48px rgba(0, 180, 216, 0.08); }
+  50% { box-shadow: 0 0 24px var(--primary-glow), 0 0 48px rgba(26, 115, 232, 0.06); }
 }
-
-.breathing {
-  animation: breathe 3s ease-in-out infinite;
-}
+.breathing { animation: breathe 3s ease-in-out infinite; }

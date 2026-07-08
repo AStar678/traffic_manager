@@ -1,567 +1,321 @@
 <template>
   <div class="dashboard">
-    <!-- 核心驾驶信息：速度 + 档位 -->
     <div class="hero-row">
-      <!-- 速度表区域 -->
-      <div class="speedo-section">
+      <!-- 左：速度表 + 档位 + 续航 -->
+      <div class="speedo-col">
         <div class="speed-ring">
-          <svg viewBox="0 0 200 200" class="speed-svg">
-            <circle cx="100" cy="100" r="88" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="10" />
-            <circle
-              cx="100" cy="100" r="88"
-              fill="none"
-              stroke="url(#speedGrad)"
-              stroke-width="10"
-              stroke-linecap="round"
-              :stroke-dasharray="`${(vehicle.speed / 120) * 553} 553`"
-              stroke-dashoffset="0"
-              transform="rotate(-90 100 100)"
-              class="speed-arc"
-            />
+          <svg viewBox="0 0 200 200">
             <defs>
               <linearGradient id="speedGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                <stop offset="0%" stop-color="#00b4d8" />
-                <stop offset="100%" stop-color="#00e5ff" />
+                <stop offset="0%" stop-color="#1a73e8" /><stop offset="100%" stop-color="#4a9af5" />
               </linearGradient>
             </defs>
+            <circle cx="100" cy="100" r="86" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="8" />
+            <circle cx="100" cy="100" r="86" fill="none" stroke="url(#speedGrad)" stroke-width="8"
+              stroke-linecap="round" :stroke-dasharray="`${Math.min(1, vehicle.speed / 120) * 520} 520`"
+              stroke-dashoffset="0" transform="rotate(-90 100 100)" class="speed-arc" />
           </svg>
-          <div class="speed-value">
-            <strong>{{ vehicle.speed }}</strong>
-            <span>km/h</span>
-          </div>
+          <div class="speed-num"><strong>{{ vehicle.speed }}</strong><span>km/h</span></div>
         </div>
-        <!-- 档位 -->
-        <div class="gear-badge">
-          <span>档位</span>
-          <strong>{{ vehicle.gear }}</strong>
+        <div class="badge-row">
+          <div class="gear-badge"><span>档位</span><strong>{{ vehicle.gear }}</strong></div>
+          <div class="range-badge"><strong>{{ vehicle.range }}</strong><span>km</span></div>
         </div>
       </div>
 
-      <!-- 中央：前置摄像头画面 -->
-      <div class="camera-feed card">
-        <div class="camera-inner">
-          <div class="camera-overlay-info">
-            <span class="camera-label">前置摄像头</span>
-            <span class="camera-live">● LIVE</span>
+      <!-- 中：摄像头画面 -->
+      <div class="cam-card">
+        <div class="cam-box">
+          <!-- 始终渲染 video，id 定位避开 ref 时序问题，去掉 transform 防 Edge 渲染bug -->
+          <video
+            id="dash-cam"
+            class="cam-video"
+            :style="{ opacity: camActive ? 1 : 0 }"
+            autoplay playsinline muted
+          ></video>
+
+          <!-- 降级占位 -->
+          <div v-if="!camActive" class="cam-start" @click="openCamera">
+            <el-icon :size="48"><VideoCamera /></el-icon>
+            <strong v-if="camError">{{ camError }}</strong>
+            <strong v-else>摄像头启动中...</strong>
           </div>
-          <div class="scan-line-animated"></div>
-          <!-- 检测到车牌时显示浮层 -->
-          <div class="detection-hint" v-if="vehicle.policeDetection.detected">
-            <span class="status-dot warning"></span>
-            检测到交警 · 置信度 {{ Math.round(vehicle.policeDetection.confidence * 100) }}%
-            <button class="action-pill" @click="$router.push('/police-gesture')">查看</button>
+
+          <div v-if="camActive" class="scan-line-animated"></div>
+
+          <div class="cam-top">
+            <span v-if="camActive" class="tag live">● LIVE</span>
+            <span v-else class="tag">○ 待机</span>
+            <span class="tag adas">ADAS</span>
           </div>
+
+          <!-- 自动检测气泡 -->
+          <div v-if="camActive && detection.police" class="detect-toast police" @click="$router.push('/police-gesture')">
+            <span class="toast-icon">👮</span>
+            <div class="toast-body">
+              <strong>检测到交警手势</strong>
+              <span>{{ detection.police.name }} · 置信度 {{ detection.police.conf }}%</span>
+            </div>
+            <span class="toast-arrow">查看详情 →</span>
+          </div>
+          <div v-if="camActive && detection.plate" class="detect-toast plate" @click="$router.push('/license-plate')">
+            <span class="toast-icon">🚗</span>
+            <div class="toast-body">
+              <strong>检测到车牌</strong>
+              <span>{{ detection.plate.number }} · {{ detection.plate.type }}</span>
+            </div>
+            <span class="toast-arrow">查看详情 →</span>
+          </div>
+
+          <button v-if="camActive" class="cam-flip" @click="flipCamera" title="切换摄像头">
+            <el-icon><Switch /></el-icon>
+          </button>
         </div>
       </div>
 
-      <!-- 右侧：车辆健康状态卡片 -->
-      <div class="health-stack">
-        <div class="card health-item" v-for="item in health.slice(0, 3)" :key="item.name">
-          <div class="health-head">
-            <span>{{ item.name }}</span>
-            <span class="status-dot" :class="item.status === 'normal' ? 'online' : 'warning'"></span>
-          </div>
-          <strong>{{ item.value }}</strong>
-          <p>{{ item.detail }}</p>
+      <!-- 右：系统状态 -->
+      <div class="status-col">
+        <div class="card s-card" v-for="s in statusCards" :key="s.label">
+          <div class="s-head"><span>{{ s.label }}</span><span class="status-dot" :class="s.dot"></span></div>
+          <strong>{{ s.val }}</strong><p>{{ s.desc }}</p>
         </div>
       </div>
     </div>
 
-    <!-- 第二行：车辆状态 + 快捷操作 -->
-    <div class="secondary-row">
-      <!-- 胎压 + 空调 -->
-      <div class="card status-grid">
-        <h3 class="card-title">车辆状态</h3>
-        <div class="status-items">
-          <div
-            v-for="tire in vehicle.tirePressure"
-            :key="tire.name"
-            class="status-item"
-            :class="{ alert: tire.status === 'warning' }"
-          >
-            <el-icon><Location /></el-icon>
-            <div>
-              <strong>{{ tire.value }} <small>bar</small></strong>
-              <span>{{ tire.name }}胎压</span>
-            </div>
-          </div>
-        </div>
-        <div class="gradient-divider"></div>
-        <div class="climate-row">
-          <div class="climate-icon">
-            <el-icon :size="28"><Sunny /></el-icon>
-          </div>
-          <div class="climate-info">
-            <strong>{{ vehicle.climate.temperature }}°C</strong>
-            <span>空调 · {{ vehicle.climate.mode }}</span>
+    <div class="info-row">
+      <div class="card"><h4>胎压监测</h4>
+        <div class="tire-grid">
+          <div v-for="t in vehicle.tirePressure" :key="t.name" class="tire-item" :class="{ warn: t.status === 'warning' }">
+            <span>{{ t.name }}</span><strong>{{ t.value }}<small>bar</small></strong>
           </div>
         </div>
       </div>
-
-      <!-- 多媒体卡片 -->
-      <div class="card media-card">
-        <h3 class="card-title">正在播放</h3>
-        <div class="media-art">
-          <el-icon :size="40"><Headset /></el-icon>
-        </div>
-        <strong class="media-track">{{ vehicle.audio.track }}</strong>
-        <span class="media-meta">音量 {{ vehicle.audio.volume }}%</span>
-        <div class="media-controls">
-          <el-button circle><el-icon><VideoPlay /></el-icon></el-button>
-          <el-button circle><el-icon><ArrowRight /></el-icon></el-button>
-        </div>
+      <div class="card"><h4>空调</h4>
+        <div class="climate"><el-icon :size="28"><Sunny /></el-icon><strong>{{ vehicle.climate.temperature }}°</strong><span>{{ vehicle.climate.mode }} · 风量 {{ vehicle.climate.fan }}</span></div>
       </div>
-
-      <!-- 电话状态 -->
-      <div class="card phone-card">
-        <h3 class="card-title">电话</h3>
-        <div class="phone-status">
-          <el-icon :size="36"><Phone /></el-icon>
-          <strong>{{ vehicle.phone.status }}</strong>
-          <span>{{ vehicle.phone.caller }}</span>
-        </div>
+      <div class="card"><h4>正在播放</h4>
+        <div class="media"><div class="media-art"><el-icon :size="28"><Headset /></el-icon></div><div><strong>{{ vehicle.audio.track }}</strong><span>音量 {{ vehicle.audio.volume }}%</span></div></div>
       </div>
-
-      <!-- 告警快捷入口 -->
-      <div class="card alert-card">
-        <h3 class="card-title">系统告警</h3>
-        <div class="alert-mini" v-for="alert in recentAlerts" :key="alert.id" @click="$router.push('/alert-dashboard')">
-          <span class="status-dot" :class="alert.severity === 'CRITICAL' ? 'offline' : 'warning'"></span>
-          <div>
-            <strong>{{ alert.title }}</strong>
-            <span>{{ alert.occurredAt }}</span>
-          </div>
-        </div>
-        <button class="action-link" @click="$router.push('/alert-dashboard')">查看全部 →</button>
+      <div class="card"><h4>电话</h4>
+        <div class="phone"><el-icon :size="28"><Phone /></el-icon><strong>{{ vehicle.phone.status }}</strong><span>{{ vehicle.phone.caller }}</span></div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue'
-import { mockVehicleState, mockSystemHealth, mockAlerts } from '@/utils/mockData'
-import { useAlertStore } from '@/stores/alert'
+import { reactive, ref, onMounted, onBeforeUnmount } from 'vue'
+import { mockVehicleState, mockSystemHealth } from '@/utils/mockData'
 
-const alertStore = useAlertStore()
 const vehicle = mockVehicleState
 const health = mockSystemHealth
 
-onMounted(() => {
-  alertStore.fetchAlerts()
+// ===== 摄像头（最简实现，绕过所有 Edge 坑） =====
+const camActive = ref(false)
+const camError = ref('')
+let camStream = null
+
+async function openCamera() {
+  if (camStream) return
+  camError.value = ''
+
+  try {
+    // 1. 获取流
+    camStream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+      audio: false,
+    })
+
+    // 2. 先让 video 可见（不用 ref，直接 DOM 查询，彻底绕开 ref 时序）
+    camActive.value = true
+    await new Promise(r => setTimeout(r, 200))
+
+    // 3. 用原生 DOM 绑定
+    const el = document.querySelector('#dash-cam')
+    if (el) {
+      el.srcObject = camStream
+      try { await el.play() } catch (_) {}
+    }
+  } catch (err) {
+    console.warn('[Camera]', err.name, err.message)
+    if (err.name === 'NotAllowedError')
+      camError.value = '摄像头权限被拒绝，请点击地址栏左侧锁图标 → 允许摄像头'
+    else if (err.name === 'NotFoundError')
+      camError.value = '未检测到摄像头设备'
+    else {
+      // 最宽松重试
+      try {
+        camStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+        camActive.value = true
+        await new Promise(r => setTimeout(r, 200))
+        const el = document.querySelector('#dash-cam')
+        if (el) { el.srcObject = camStream; try { await el.play() } catch (_) {} }
+        camError.value = ''
+        return
+      } catch (_) {}
+      camError.value = err.message
+    }
+  }
+}
+
+function closeCamera() {
+  if (camStream) {
+    camStream.getTracks().forEach(t => t.stop())
+    camStream = null
+  }
+  camActive.value = false
+}
+
+async function flipCamera() {
+  if (!camStream) return
+  const facing = camStream.getVideoTracks()[0]?.getSettings()?.facingMode
+  closeCamera()
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 },
+        facingMode: facing === 'user' ? 'environment' : 'user' },
+      audio: false,
+    })
+    camActive.value = true
+    await new Promise(r => setTimeout(r, 200))
+    const el = document.querySelector('#dash-cam')
+    if (el) { el.srcObject = camStream; try { await el.play() } catch (_) {} }
+  } catch (err) {
+    camError.value = '切换失败: ' + err.message
+  }
+}
+
+// ===== 自动检测模拟 =====
+const detection = reactive({ police: null, plate: null })
+let detectTimer = null
+
+function simulateDetection() {
+  if (!camActive.value) { detection.police = null; detection.plate = null; return }
+  const r = Math.random()
+  if (r < 0.35) {
+    detection.police = { name: '停止信号', conf: 93 }; detection.plate = null
+  } else if (r < 0.65) {
+    detection.police = null; detection.plate = { number: '京A12345', type: '蓝牌小型车' }
+  } else if (r < 0.85) {
+    detection.police = { name: '直行信号', conf: 87 }; detection.plate = { number: '沪B8K218', type: '新能源车牌' }
+  } else {
+    detection.police = null; detection.plate = null
+  }
+}
+
+const statusCards = [
+  { label: '模型服务', val: health[0].value, desc: health[0].detail, dot: health[0].status === 'normal' ? 'online' : 'warning-dot' },
+  { label: '后端服务', val: health[1].value, desc: health[1].detail, dot: health[1].status === 'normal' ? 'online' : 'warning-dot' },
+  { label: '告警通道', val: health[2].value, desc: health[2].detail, dot: health[2].status === 'normal' ? 'online' : 'warning-dot' },
+]
+
+onMounted(async () => {
+  await openCamera()
+  detectTimer = setInterval(simulateDetection, 4000)
 })
 
-const recentAlerts = computed(() => mockAlerts.slice(0, 2))
+onBeforeUnmount(() => {
+  clearInterval(detectTimer)
+  closeCamera()
+})
 </script>
 
 <style scoped>
-.dashboard {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+.dashboard { display: flex; flex-direction: column; gap: 14px; }
+
+.hero-row { display: grid; grid-template-columns: 185px minmax(0, 1fr) 240px; gap: 14px; min-height: 300px; }
+
+.speedo-col { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.speed-ring { position: relative; width: 170px; height: 170px; }
+.speed-ring svg { width: 100%; height: 100%; }
+.speed-arc { transition: stroke-dasharray 500ms var(--ease-out); filter: drop-shadow(0 0 8px rgba(26,115,232,0.3)); }
+.speed-num { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.speed-num strong { font-size: 54px; font-weight: 700; line-height: 1; letter-spacing: -2px; color: var(--text-primary); }
+.speed-num span { margin-top: 2px; font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+
+.badge-row { display: flex; gap: 8px; width: 100%; }
+.gear-badge { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 8px 0; background: var(--primary-color); border-radius: var(--radius-md); }
+.gear-badge span { font-size: 10px; color: rgba(255,255,255,0.7); font-weight: 600; }
+.gear-badge strong { font-size: 28px; color: #fff; font-weight: 800; line-height: 1; }
+.range-badge { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 8px 0; background: var(--bg-card); border: 1px solid var(--border-card); border-radius: var(--radius-md); }
+.range-badge strong { font-size: 22px; color: var(--success-color); }
+.range-badge span { font-size: 10px; color: var(--text-muted); }
+
+.cam-card { }
+.cam-box {
+  position: relative; height: 100%; min-height: 300px;
+  border-radius: var(--radius-lg); overflow: hidden;
+  background: #040810; border: 1px solid var(--border-subtle);
 }
-
-/* ===== 第一行：速度 + 摄像头 + 健康状态 ===== */
-.hero-row {
-  display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) 280px;
-  gap: 16px;
-  min-height: 280px;
+.cam-video {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; background: #000;
 }
-
-/* 速度表 */
-.speedo-section {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
+.cam-start {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  background: radial-gradient(ellipse at 50% 60%, #162035 0%, #080c14 70%);
+  color: var(--text-secondary); cursor: pointer;
 }
+.cam-start .el-icon { color: var(--primary-color); }
+.cam-start strong { font-size: 15px; color: var(--text-primary); text-align: center; max-width: 280px; line-height: 1.5; }
+.cam-top { position: absolute; top: 10px; left: 12px; display: flex; gap: 6px; z-index: 6; }
+.tag { padding: 3px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; background: rgba(0,0,0,0.5); color: var(--text-secondary); backdrop-filter: blur(4px); }
+.tag.live { color: var(--danger-color); }
+.tag.adas { color: var(--success-color); border: 1px solid rgba(52,168,83,0.3); }
 
-.speed-ring {
-  position: relative;
-  width: 200px;
-  height: 200px;
+.cam-flip {
+  position: absolute; bottom: 14px; right: 14px; z-index: 10;
+  width: 32px; height: 32px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(0,0,0,0.45); color: #fff; cursor: pointer; display: grid; place-items: center;
 }
+.cam-flip:hover { background: rgba(0,0,0,0.65); }
 
-.speed-svg {
-  width: 100%;
-  height: 100%;
+.detect-toast {
+  position: absolute; left: 14px; right: 50px; display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; border-radius: 12px; cursor: pointer; z-index: 8;
+  backdrop-filter: blur(8px); animation: slideUp 300ms var(--ease-out);
 }
+.detect-toast:hover { transform: translateY(-1px); }
+.detect-toast.police { bottom: 60px; background: rgba(234,67,53,0.15); border: 1px solid rgba(234,67,53,0.35); }
+.detect-toast.plate { bottom: 14px; background: rgba(52,168,83,0.15); border: 1px solid rgba(52,168,83,0.35); }
+.toast-icon { font-size: 22px; }
+.toast-body strong { display: block; font-size: 13px; color: #fff; }
+.toast-body span { font-size: 11px; color: rgba(255,255,255,0.7); }
+.toast-arrow { margin-left: auto; font-size: 12px; color: rgba(255,255,255,0.5); font-weight: 600; white-space: nowrap; }
 
-.speed-arc {
-  transition: stroke-dasharray 600ms var(--ease-out);
-}
+@keyframes slideUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
-.speed-value {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-}
+.status-col { display: flex; flex-direction: column; gap: 8px; }
+.s-card { padding: 13px 16px; }
+.s-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.s-head span { font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; }
+.s-card > strong { font-size: 17px; color: var(--text-primary); }
+.s-card > p { margin-top: 2px; font-size: 11px; color: var(--text-muted); }
 
-.speed-value strong {
-  font-size: 64px;
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: -2px;
-  color: var(--text-primary);
-}
+.info-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.info-row h4 { font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; }
 
-.speed-value span {
-  margin-top: 4px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  letter-spacing: 1px;
-}
+.tire-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.tire-item { display: flex; flex-direction: column; align-items: center; padding: 8px; background: rgba(255,255,255,0.02); border-radius: 8px; border: 1px solid transparent; }
+.tire-item.warn { background: rgba(251,188,4,0.06); border-color: rgba(251,188,4,0.15); }
+.tire-item span { font-size: 10px; color: var(--text-muted); }
+.tire-item strong { font-size: 16px; color: var(--text-primary); }
+.tire-item.warn strong { color: var(--warning-color); }
+.tire-item strong small { font-size: 10px; color: var(--text-muted); margin-left: 2px; }
 
-.gear-badge {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 10px 28px;
-  background: linear-gradient(135deg, var(--primary-color), #0096c7);
-  border-radius: var(--radius-lg);
-}
+.climate { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.climate .el-icon { color: var(--warning-color); }
+.climate strong { font-size: 28px; color: var(--text-primary); }
+.climate span { font-size: 11px; color: var(--text-muted); }
 
-.gear-badge span {
-  font-size: 11px;
-  font-weight: 600;
-  color: rgba(8, 12, 20, 0.7);
-  letter-spacing: 1px;
-  text-transform: uppercase;
-}
+.media { display: flex; align-items: center; gap: 12px; }
+.media-art { width: 50px; height: 50px; display: grid; place-items: center; background: linear-gradient(135deg, #1a3050, #253a56); border-radius: var(--radius-md); color: var(--primary-color); }
+.media strong { display: block; font-size: 13px; color: var(--text-primary); }
+.media span { font-size: 11px; color: var(--text-muted); }
 
-.gear-badge strong {
-  font-size: 36px;
-  font-weight: 800;
-  color: #080c14;
-  line-height: 1;
-}
-
-/* 摄像头画面 */
-.camera-feed {
-  padding: 0;
-  overflow: hidden;
-  border-radius: var(--radius-lg);
-}
-
-.camera-inner {
-  position: relative;
-  height: 100%;
-  min-height: 280px;
-  background:
-    linear-gradient(180deg, rgba(8,12,20,0.15) 0%, rgba(8,12,20,0.55) 100%),
-    radial-gradient(ellipse at 50% 70%, #1a2940 0%, #0a1220 70%);
-  display: flex;
-  align-items: flex-end;
-}
-
-.camera-overlay-info {
-  position: absolute;
-  top: 14px;
-  left: 18px;
-  right: 18px;
-  display: flex;
-  justify-content: space-between;
-}
-
-.camera-label {
-  font-size: 13px;
-  font-weight: 700;
-  color: rgba(255,255,255,0.85);
-}
-
-.camera-live {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--danger-color);
-  animation: pulseNumber 1.5s ease-in-out infinite;
-}
-
-.detection-hint {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 12px 18px;
-  background: rgba(255, 171, 0, 0.12);
-  border-top: 1px solid rgba(255, 171, 0, 0.2);
-  color: var(--warning-color);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.action-pill {
-  margin-left: auto;
-  padding: 6px 16px;
-  border: 1px solid var(--warning-color);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--warning-color);
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all var(--duration-fast);
-}
-
-.action-pill:hover {
-  background: var(--warning-color);
-  color: #080c14;
-}
-
-/* 健康状态 */
-.health-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.health-item {
-  padding: 14px 16px;
-}
-
-.health-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.health-head span {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-secondary);
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-}
-
-.health-item strong {
-  display: block;
-  margin-top: 6px;
-  font-size: 18px;
-  color: var(--text-primary);
-}
-
-.health-item p {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-/* ===== 第二行 ===== */
-.secondary-row {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.card-title {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 14px;
-}
-
-/* 车辆状态 */
-.status-grid { }
-
-.status-items {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 10px;
-}
-
-.status-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px;
-  background: rgba(255,255,255,0.03);
-  border-radius: var(--radius-sm);
-  transition: background var(--duration-fast);
-}
-
-.status-item.alert {
-  background: rgba(255, 171, 0, 0.08);
-  border: 1px solid rgba(255, 171, 0, 0.15);
-}
-
-.status-item .el-icon {
-  color: var(--text-muted);
-  font-size: 20px;
-}
-
-.status-item strong {
-  display: block;
-  font-size: 16px;
-  color: var(--text-primary);
-}
-
-.status-item strong small {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.status-item span {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.climate-row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-top: 8px;
-}
-
-.climate-icon {
-  width: 48px;
-  height: 48px;
-  display: grid;
-  place-items: center;
-  background: rgba(255,255,255,0.04);
-  border-radius: var(--radius-sm);
-  color: var(--warning-color);
-}
-
-.climate-info strong {
-  display: block;
-  font-size: 22px;
-  color: var(--text-primary);
-}
-
-.climate-info span {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-/* 多媒体 */
-.media-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-}
-
-.media-art {
-  width: 64px;
-  height: 64px;
-  display: grid;
-  place-items: center;
-  background: linear-gradient(135deg, #1a2940, #253a56);
-  border-radius: var(--radius-md);
-  margin-bottom: 12px;
-  color: var(--primary-color);
-}
-
-.media-track {
-  font-size: 15px;
-  color: var(--text-primary);
-}
-
-.media-meta {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 4px;
-}
-
-.media-controls {
-  display: flex;
-  gap: 10px;
-  margin-top: 14px;
-}
-
-/* 电话 */
-.phone-card { }
-
-.phone-status {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 16px 0;
-}
-
-.phone-status .el-icon {
-  color: var(--success-color);
-}
-
-.phone-status strong {
-  font-size: 18px;
-  color: var(--text-primary);
-}
-
-.phone-status span {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-/* 告警快捷卡片 */
-.alert-card { }
-
-.alert-mini {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 0;
-  cursor: pointer;
-  transition: opacity var(--duration-fast);
-}
-
-.alert-mini:hover {
-  opacity: 0.8;
-}
-
-.alert-mini + .alert-mini {
-  border-top: 1px solid var(--border-subtle);
-}
-
-.alert-mini strong {
-  display: block;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  line-height: 1.3;
-}
-
-.alert-mini span {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 2px;
-}
-
-.action-link {
-  display: inline-block;
-  margin-top: 10px;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--primary-color);
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: color var(--duration-fast);
-}
-
-.action-link:hover {
-  color: #00e5ff;
-}
-
-@media (max-width: 1200px) {
-  .hero-row {
-    grid-template-columns: 1fr;
-  }
-  .secondary-row {
-    grid-template-columns: repeat(2, 1fr);
-  }
-  .speedo-section {
-    flex-direction: row;
-    justify-content: center;
-  }
-}
+.phone { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.phone .el-icon { color: var(--success-color); }
+.phone strong { font-size: 15px; color: var(--text-primary); }
+.phone span { font-size: 11px; color: var(--text-muted); }
 </style>

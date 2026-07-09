@@ -162,10 +162,14 @@ const {
   cameraStatus,
   cameraError,
   cameraStreamUrl,
+  isStreamReady,
   refreshCameraPreview
 } = useCameraSource()
 
 const cameraStatusText = computed(() => {
+  if (cameraStatus.value === 'loading' || (selectedCameraSource.value && !isStreamReady.value)) {
+    return '连接中...'
+  }
   const labels = { idle: '待机', loading: '连接中', ready: 'LIVE', empty: '无源', offline: '离线' }
   return labels[cameraStatus.value] || cameraStatus.value
 })

@@ -3,22 +3,38 @@
     <!-- 主画面：ADAS前视摄像头 -->
     <div class="viewport-area">
       <div class="viewport">
-        <!-- 真实摄像头 -->
+        <!-- 实时预览：iframe 嵌入 WebRTC -->
+        <iframe
+          v-if="isLiveMode && webRtcUrl"
+          :src="webRtcUrl"
+          class="stream-iframe"
+          allow="camera;microphone"
+        ></iframe>
+
+        <!-- 实时预览待机 -->
+        <div v-if="isLiveMode && !webRtcUrl" class="viewport-placeholder">
+          <el-icon :size="48"><VideoCamera /></el-icon>
+          <span>选择摄像头并启动实时预览</span>
+          <small>需要先启动 mediamtx 流媒体服务器</small>
+        </div>
+
+        <!-- 非预览模式：本地摄像头 -->
         <video
+          v-if="!isLiveMode"
           id="plate-cam"
           class="camera-video"
           :style="{ opacity: cameraActive ? 1 : 0 }"
           autoplay playsinline muted
         ></video>
         <!-- 降级占位 -->
-        <div v-if="!cameraActive" class="viewport-placeholder">
+        <div v-if="!isLiveMode && !cameraActive" class="viewport-placeholder">
           <el-icon :size="48"><Camera /></el-icon>
           <span>{{ cameraError || '前置摄像头待机' }}</span>
           <small>点击右侧上传图片或连接RTSP流开始检测</small>
         </div>
 
-        <!-- 检测框叠加层（SVG矢量锚定） -->
-        <svg v-if="result.detections.length" class="detect-svg" viewBox="0 0 1200 720" preserveAspectRatio="none">
+        <!-- 检测框叠加层（实时预览模式下隐藏，因为标注由后端绘制） -->
+        <svg v-if="result.detections.length && !isLiveMode" class="detect-svg" viewBox="0 0 1200 720" preserveAspectRatio="none">
           <g v-for="box in result.detections" :key="box.objectId">
             <rect
               :x="box.bbox.x1" :y="box.bbox.y1"
@@ -40,15 +56,20 @@
 
         <div class="scan-line-animated"></div>
 
-        <!-- 顶部信息 -->
-        <div class="viewport-top">
+        <!-- 顶部信息（非预览模式：模拟数据；预览模式：隐藏） -->
+        <div v-if="!isLiveMode" class="viewport-top">
           <span class="badge-live">● LIVE</span>
-          <span class="badge-info">RTSP live1 桥面</span>
+          <span class="badge-info">RTSP {{ inputMode === 'video' ? '视频分析' : '本地摄像头' }}</span>
           <span class="badge-info">FPS 24</span>
+        </div>
+        <div v-if="isLiveMode && streamActive" class="viewport-top">
+          <span class="badge-live">● LIVE</span>
+          <span class="badge-info">{{ currentCameraLabel }}</span>
+          <span class="badge-info">RTSP {{ selectedRtsp }}</span>
         </div>
 
         <!-- 底部检测摘要 -->
-        <div v-if="result.detections.length" class="viewport-bottom">
+        <div v-if="result.detections.length && !isLiveMode" class="viewport-bottom">
           <div class="bottom-left">
             <span>检测到 <strong>{{ result.detections.length }}</strong> 辆车</span>
           </div>
@@ -69,6 +90,11 @@
           <button :class="{ active: inputMode === 'video' }" @click="inputMode = 'video'">视频/RTSP</button>
         </div>
 
+        <div v-if="inputMode === 'video'" class="video-sub-tabs">
+          <button :class="{ active: videoSubMode === 'job' }" @click="videoSubMode = 'job'">异步分析任务</button>
+          <button :class="{ active: videoSubMode === 'live' }" @click="videoSubMode = 'live'">实时预览</button>
+        </div>
+
         <div class="upload-zone" @click="triggerUpload">
           <input ref="fileInput" type="file" accept=".jpg,.jpeg,.png,.bmp" style="display:none" @change="onFileSelected">
           <el-icon :size="26"><UploadFilled /></el-icon>
@@ -76,21 +102,47 @@
           <small>jpg / png / bmp · ≤ 10MB</small>
         </div>
 
-        <div v-if="inputMode === 'video'" class="rtsp-select">
+        <!-- 视频/RTSP 模式 -->
+        <div v-if="inputMode === 'video'" class="rtsp-controls">
           <label>沙盘摄像头通道</label>
           <el-select v-model="selectedRtsp" style="width:100%">
-            <el-option v-for="ch in rtspChannels" :key="ch.value" :label="ch.label" :value="ch.value" />
+            <el-option v-for="ch in allRtspChannels" :key="ch.value" :label="ch.label" :value="ch.value" />
           </el-select>
-          <div class="job-info" v-if="showJob">
-            <span>任务 {{ videoJob.jobId }}</span>
-            <el-progress :percentage="videoJob.progress" :stroke-width="6" />
-            <small>已处理 {{ videoJob.processedFrames }} / {{ videoJob.totalFrames }} 帧</small>
-          </div>
+
+          <!-- 异步分析任务 -->
+          <template v-if="videoSubMode === 'job'">
+            <button class="action-btn primary" :disabled="loading" @click="runInference">
+              <el-icon v-if="loading" class="spinner"><Loading /></el-icon>
+              {{ loading ? '识别中...' : '创建视频任务' }}
+            </button>
+            <div class="job-info" v-if="showJob">
+              <span>任务 {{ videoJob.jobId }}</span>
+              <el-progress :percentage="videoJob.progress" :stroke-width="6" />
+              <small>已处理 {{ videoJob.processedFrames }} / {{ videoJob.totalFrames }} 帧</small>
+            </div>
+          </template>
+
+          <!-- 实时预览 -->
+          <template v-if="videoSubMode === 'live'">
+            <button
+              class="action-btn primary"
+              :disabled="streamLoading"
+              @click="streamActive ? stopStream() : startStream()"
+            >
+              <el-icon v-if="streamLoading" class="spinner"><Loading /></el-icon>
+              {{ streamLoading ? '连接中...' : streamActive ? '停止预览' : '启动实时预览' }}
+            </button>
+            <div v-if="streamActive && webRtcUrl" class="stream-info">
+              <span class="stream-live">● 实时预览中</span>
+              <small>{{ webRtcUrl }}</small>
+            </div>
+          </template>
         </div>
 
-        <button class="action-btn primary" :disabled="loading" @click="runInference">
+        <!-- 图片模式按钮 -->
+        <button v-if="inputMode === 'image'" class="action-btn primary" :disabled="loading" @click="runInference">
           <el-icon v-if="loading" class="spinner"><Loading /></el-icon>
-          {{ loading ? '识别中...' : (inputMode === 'image' ? '上传并同步识别' : '创建视频任务') }}
+          {{ loading ? '识别中...' : '上传并同步识别' }}
         </button>
       </div>
 
@@ -137,14 +189,74 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { mockInference, mockVideoJob, rtspChannels, businessPipelines } from '@/utils/mockData'
 import { TASK_TYPES } from '@/utils/constants'
+import request from '@/api/request'
 
 const result = ref(mockInference[TASK_TYPES.LICENSE_PLATE])
 const loading = ref(false)
 const inputMode = ref('image')
+const videoSubMode = ref('job')  // job=异步任务, live=实时预览
 const selectedRtsp = ref(rtspChannels[0].value)
 const showJob = ref(false)
 const fileInput = ref(null)
 const videoJob = mockVideoJob
+
+const isLiveMode = computed(() => inputMode.value === 'video' && videoSubMode.value === 'live')
+
+const currentCameraLabel = computed(() => {
+  const ch = allRtspChannels.find(c => c.value === selectedRtsp.value)
+  return ch ? ch.label : selectedRtsp.value
+})
+
+// ===== 实时推流 =====
+const streamLoading = ref(false)
+const streamActive = ref(false)
+const webRtcUrl = ref('')
+
+// 完整的 12 路摄像头（用于推流模式）
+const allRtspChannels = [
+  { label: 'live1 桥面', value: 'live1' },
+  { label: 'live2 停车场出口', value: 'live2' },
+  { label: 'live3 行人检测', value: 'live3' },
+  { label: 'live4 消防车识别', value: 'live4' },
+  { label: 'live5 桥出口', value: 'live5' },
+  { label: 'live6 桥入口', value: 'live6' },
+  { label: 'live7 道路2', value: 'live7' },
+  { label: 'live8 隧道(事故)', value: 'live8' },
+  { label: 'live9 隧道(计数)', value: 'live9' },
+  { label: 'live10 道路3', value: 'live10' },
+  { label: 'live11 停车场入口', value: 'live11' },
+  { label: 'live12 道路1', value: 'live12' },
+]
+
+async function startStream() {
+  const cameraId = selectedRtsp.value
+  streamLoading.value = true
+  try {
+    const res = await request.post(`/cameras/${cameraId}/stream/start`)
+    const data = res.data || res
+    if (res.code === 0 || data.success) {
+      streamActive.value = true
+      webRtcUrl.value = data.webRtcUrl
+      ElMessage.success('推流已启动')
+    } else {
+      ElMessage.error(data.message || '启动失败')
+    }
+  } catch (e) {
+    ElMessage.error('无法连接后端，请确认后端服务和 mediamtx 均已启动')
+  } finally {
+    streamLoading.value = false
+  }
+}
+
+async function stopStream() {
+  const cameraId = selectedRtsp.value
+  try {
+    await request.post(`/cameras/${cameraId}/stream/stop`)
+  } catch (_) {}
+  streamActive.value = false
+  webRtcUrl.value = ''
+  ElMessage.info('推流已停止')
+}
 
 // ===== 摄像头（用 id 定位，绕开 ref 时序） =====
 const cameraActive = ref(false)
@@ -317,7 +429,7 @@ function saveRecord() {
   margin-bottom: 12px;
 }
 
-.mode-tabs { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-bottom: 14px; }
+.mode-tabs { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-bottom: 10px; }
 
 .mode-tabs button {
   padding: 9px; border: 1px solid var(--border-card);
@@ -327,6 +439,17 @@ function saveRecord() {
 }
 .mode-tabs button.active {
   border-color: var(--primary-color); background: var(--primary-soft); color: var(--primary-color);
+}
+
+.video-sub-tabs { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; margin-bottom: 10px; }
+.video-sub-tabs button {
+  padding: 6px 8px; border: 1px solid var(--border-card);
+  border-radius: 8px; background: transparent;
+  color: var(--text-secondary); font-size: 11px; font-weight: 600;
+  cursor: pointer; transition: all var(--duration-fast);
+}
+.video-sub-tabs button.active {
+  border-color: var(--primary-color); color: var(--primary-color);
 }
 
 .upload-zone {
@@ -340,8 +463,8 @@ function saveRecord() {
 .upload-zone span { font-size: 13px; color: var(--text-secondary); font-weight: 600; }
 .upload-zone small { font-size: 11px; color: var(--text-muted); }
 
-.rtsp-select { margin-top: 12px; }
-.rtsp-select label { display: block; margin-bottom: 6px; font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; }
+.rtsp-controls { margin-top: 0; }
+.rtsp-controls label { display: block; margin-bottom: 6px; font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; }
 
 .job-info { margin-top: 12px; padding: 10px; background: rgba(255,255,255,0.02); border-radius: 8px; }
 .job-info span { font-size: 13px; font-weight: 600; color: var(--text-primary); }
@@ -396,4 +519,19 @@ function saveRecord() {
   font-size: 13px; font-weight: 600; cursor: pointer;
 }
 .back-btn:hover { border-color: var(--border-active); color: var(--text-primary); }
+
+/* 实时预览状态 */
+.stream-info { margin-top: 10px; padding: 10px; background: rgba(52,168,83,0.08); border-radius: 8px; }
+.stream-info small { display: block; margin-top: 4px; font-size: 11px; color: var(--text-muted); word-break: break-all; }
+
+.stream-live { font-size: 13px; font-weight: 700; color: var(--success-color); }
+
+.stream-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+}
 </style>

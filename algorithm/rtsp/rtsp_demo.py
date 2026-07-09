@@ -1,82 +1,93 @@
-"""RTSP流 + 模型推理 Demo
-基于《沙盘摄像头视频流获取.pdf》参考代码
-演示：拉取沙盘摄像头 → 模型推理 → 显示标注结果
+"""沙盘摄像头交互式预览工具
+
+用法:
+    python rtsp_demo.py              # 交互选择摄像头
+    python rtsp_demo.py --camera live1  # 直接打开 live1
+    python rtsp_demo.py --camera live1 --mock  # 预览 + Mock 车牌标注
+    python rtsp_demo.py --list       # 列出所有摄像头
 """
-import cv2
+import argparse
 import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from pathlib import Path
 
-from rtsp.camera_config import CAMERAS, get_cameras_for_task
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import cv2
+from rtsp.camera_config import CAMERAS
 from rtsp.rtsp_reader import RTSPStreamReader
+from services.streaming.mock_detector import MockLicensePlateDetector
 
 
-def demo_basic(camera_id: str = "live1"):
-    """基础演示：显示原始画面，按s截图，按q退出"""
+def list_cameras():
+    """列出所有摄像头"""
+    print("\n沙盘摄像头列表:\n")
+    print(f"{'编号':<8} {'名称':<14} {'场景':<18} {'用途'}")
+    print("-" * 70)
+    for cam_id, cam in CAMERAS.items():
+        uses = ", ".join(cam["use_for"])
+        print(f"{cam_id:<8} {cam['name']:<14} {cam['scene']:<18} {uses}")
+    print()
+
+
+def preview_camera(camera_id: str, use_mock: bool = False):
+    """预览指定摄像头"""
     cam = CAMERAS.get(camera_id)
     if not cam:
         print(f"未知摄像头: {camera_id}")
         return
 
+    mock = MockLicensePlateDetector() if use_mock else None
+
+    print(f"\n正在连接: {cam['name']} ({camera_id})")
+    print(f"地址: {cam['rtsp_url']}")
+    if use_mock:
+        print("Mock 模式: 画面中随机标注模拟车牌")
+    print("按 q 退出，按 s 截图保存为 snapshot.jpg\n")
+
     reader = RTSPStreamReader(cam["rtsp_url"])
     reader.start()
-    print(f"场景: {cam['name']} | 按 q 退出 | 按 s 截图")
 
     try:
         while True:
             frame = reader.get_frame()
             if frame is None:
                 continue
-            cv2.imshow(f"沙盘 - {cam['name']}", frame)
+
+            if mock:
+                frame = mock(frame)
+
+            cv2.imshow(f"{cam['name']} - {camera_id}", frame)
             key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
+
+            if key == ord("q"):
                 break
-            elif key == ord('s'):
-                reader.save_snapshot(f"snapshot_{camera_id}.jpg")
+            elif key == ord("s"):
+                filename = f"snapshot_{camera_id}.jpg"
+                cv2.imwrite(filename, frame)
+                print(f"已保存截图: {filename}")
     finally:
         reader.stop()
 
 
-def demo_with_model(camera_id: str = "live1", model_path: str = None):
-    """模型推理演示：显示识别后的标注画面"""
-    cam = CAMERAS.get(camera_id)
-    if not cam:
-        print(f"未知摄像头: {camera_id}")
+def main():
+    parser = argparse.ArgumentParser(description="沙盘摄像头预览工具")
+    parser.add_argument("--camera", "-c", help="摄像头编号 (如 live1)")
+    parser.add_argument("--list", "-l", action="store_true", help="列出所有摄像头")
+    parser.add_argument("--mock", "-m", action="store_true", help="显示 Mock 车牌标注")
+    args = parser.parse_args()
+
+    if args.list:
+        list_cameras()
         return
 
-    # TODO: 加载模型（替换为训练好的模型）
-    # model = YOLO(model_path or "yolov8n.pt")
-
-    reader = RTSPStreamReader(cam["rtsp_url"])
-    reader.start()
-    print(f"场景: {cam['name']} | 模型推理中... | 按 q 退出")
-
-    try:
-        while True:
-            frame = reader.get_frame()
-            if frame is None:
-                continue
-            # TODO: 模型推理
-            # results = model(frame, verbose=False)
-            # annotated = results[0].plot()
-            # cv2.imshow(f"检测结果 - {cam['name']}", annotated)
-            cv2.imshow(f"检测结果 - {cam['name']}", frame)  # 暂时显示原图
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-    finally:
-        reader.stop()
+    if args.camera:
+        preview_camera(args.camera, use_mock=args.mock)
+    else:
+        list_cameras()
+        cam_id = input("输入摄像头编号 (如 live1): ").strip()
+        if cam_id:
+            preview_camera(cam_id, use_mock=args.mock)
 
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="沙盘RTSP视频流测试")
-    parser.add_argument("--camera", "-c", default="live1", help="摄像头ID (live1~live12)")
-    parser.add_argument("--model", "-m", default=None, help="模型路径")
-    parser.add_argument("--task", "-t", default=None, help="按任务筛选摄像头（license_plate/police_gesture）")
-    args = parser.parse_args()
-
-    if args.task:
-        cameras = get_cameras_for_task(args.task)
-        print(f"适用于 {args.task} 的摄像头: {[c['name'] for c in cameras]}")
-
-    demo_basic(args.camera)
+    main()

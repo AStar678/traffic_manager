@@ -32,7 +32,7 @@ from config import (
 )
 
 
-SourceType = Literal["browser", "device", "image", "video"]
+SourceType = Literal["browser", "device", "image", "video", "rtsp"]
 BROWSER_CAMERA_SOURCE_ID = "browser-camera"
 ALL_TASK_TYPES = ["license_plate", "police_gesture", "owner_gesture"]
 MAX_OPEN_READERS = 12
@@ -49,6 +49,7 @@ class CameraSource:
     taskTypes: list[str] = field(default_factory=list)
     path: str | None = None
     deviceIndex: int | None = None
+    rtspUrl: str | None = None
     fps: int = DEFAULT_FPS
     loop: bool = True
     builtIn: bool = False
@@ -77,6 +78,30 @@ def build_default_sources() -> list[CameraSource]:
             builtIn=True,
         )
     ]
+
+    # 沙盘RTSP摄像头（12路）
+    _RTSP_CAMERAS = [
+        ("live1",  "桥面",       "rtsp://10.126.59.120:8554/live/live1"),
+        ("live2",  "停车场出口",  "rtsp://10.126.59.120:8554/live/live2"),
+        ("live3",  "行人检测",   "rtsp://10.126.59.120:8554/live/live3"),
+        ("live4",  "消防车识别",  "rtsp://10.126.59.120:8554/live/live4"),
+        ("live5",  "桥出口",     "rtsp://10.126.59.120:8554/live/live5"),
+        ("live6",  "桥入口",     "rtsp://10.126.59.120:8554/live/live6"),
+        ("live7",  "道路2",      "rtsp://10.126.59.120:8554/live/live7"),
+        ("live8",  "隧道(事故)",  "rtsp://10.126.59.120:8554/live/live8"),
+        ("live9",  "隧道(计数)",  "rtsp://10.126.59.120:8554/live/live9"),
+        ("live10", "道路3",      "rtsp://10.126.59.120:8554/live/live10"),
+        ("live11", "停车场入口",  "rtsp://10.126.59.120:8554/live/live11"),
+        ("live12", "道路1",      "rtsp://10.126.59.120:8554/live/live12"),
+    ]
+    _PLATE_CAMS = {"live1", "live2", "live4", "live5", "live6", "live7", "live11", "live12", "live10"}
+    for cam_id, name, url in _RTSP_CAMERAS:
+        tasks = ["license_plate"] if cam_id in _PLATE_CAMS else ALL_TASK_TYPES
+        sources.append(CameraSource(
+            id=f"rtsp-{cam_id}", name=f"沙盘-{name}",
+            sourceType="rtsp", taskTypes=tasks,
+            rtspUrl=url, fps=25, builtIn=True,
+        ))
 
     sources.extend(_scan_media_sources(
         LICENSE_PLATE_SAMPLE_DIR,
@@ -304,6 +329,7 @@ class CameraManager:
                     taskTypes=list(item.get("taskTypes") or []),
                     path=item.get("path"),
                     deviceIndex=item.get("deviceIndex"),
+                    rtspUrl=item.get("rtspUrl"),
                     fps=int(item.get("fps") or DEFAULT_FPS),
                     loop=bool(item.get("loop", True)),
                     builtIn=False,
@@ -358,11 +384,22 @@ class FrameReader:
             self.last_frame = self.image_frame
             return
 
-        target = self.source.deviceIndex if self.source.sourceType == "device" else self.source.path
-        self.capture = cv2.VideoCapture(target)
-        self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, DEFAULT_WIDTH)
-        self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, DEFAULT_HEIGHT)
-        self.capture.set(cv2.CAP_PROP_FPS, self.source.fps)
+        target = None
+        if self.source.sourceType == "rtsp":
+            target = self.source.rtspUrl
+        elif self.source.sourceType == "device":
+            target = self.source.deviceIndex
+        else:
+            target = self.source.path
+
+        if self.source.sourceType == "rtsp":
+            self.capture = cv2.VideoCapture(target, cv2.CAP_FFMPEG)
+        else:
+            self.capture = cv2.VideoCapture(target)
+        if self.capture and self.capture.isOpened():
+            self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, DEFAULT_WIDTH)
+            self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, DEFAULT_HEIGHT)
+            self.capture.set(cv2.CAP_PROP_FPS, self.source.fps)
 
     def read(self) -> np.ndarray:
         with self._lock:
@@ -385,7 +422,7 @@ class FrameReader:
 
             ok, frame = self.capture.read()
             if not ok or frame is None:
-                if self.source.sourceType == "video" and self.source.loop:
+                if self.source.sourceType in ("video", "rtsp") and self.source.loop:
                     self.capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     ok, frame = self.capture.read()
                 if not ok or frame is None:

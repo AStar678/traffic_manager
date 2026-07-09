@@ -18,35 +18,68 @@ import java.util.UUID;
 public class AuthService {
 
     private final UserRepository userRepository;
+    private final VerificationCodeService verificationCodeService;
 
     public LoginResponse login(LoginRequest request) {
-        // 简化版：先查询用户
         User user = userRepository.findByUsername(request.getUsername())
                 .orElseThrow(() -> new RuntimeException("用户不存在"));
 
-        // 简化版：密码先明文对比（后续加加密）
         if (!user.getPassword().equals(request.getPassword())) {
             throw new RuntimeException("密码错误");
         }
 
-        // 简化版：生成临时 Token（后续替换为 JWT）
-        String token = UUID.randomUUID().toString();
-        return new LoginResponse(token, user.getUsername());
+        user.setLastLoginAt(LocalDateTime.now());
+        userRepository.save(user);
+        return buildResponse(user);
+    }
+
+    public LoginResponse loginByCode(String phone, String code) {
+        String error = verificationCodeService.verifyCode(phone, code);
+        if (error != null) throw new RuntimeException(error);
+
+        User user = userRepository.findByPhone(phone).orElseGet(() -> {
+            User u = new User();
+            u.setUsername("u" + phone);
+            u.setPhone(phone);
+            u.setPassword(UUID.randomUUID().toString());
+            u.setNickname("用户" + phone.substring(phone.length() - 4));
+            u.setRole("USER");
+            u.setCreatedAt(LocalDateTime.now());
+            return userRepository.save(u);
+        });
+
+        user.setLastLoginAt(LocalDateTime.now());
+        userRepository.save(user);
+        return buildResponse(user);
     }
 
     public void register(RegisterRequest request) {
-        // 检查用户名是否已存在
         if (userRepository.findByUsername(request.getUsername()).isPresent()) {
             throw new RuntimeException("用户名已存在");
         }
-
         User user = new User();
         user.setUsername(request.getUsername());
-        user.setPassword(request.getPassword());  // 后续加加密
+        user.setPassword(request.getPassword());
         user.setEmail(request.getEmail());
+        user.setNickname(request.getUsername());
+        user.setRole("USER");
         user.setCreatedAt(LocalDateTime.now());
-
         userRepository.save(user);
         log.info("用户注册成功: {}", user.getUsername());
+    }
+
+    private LoginResponse buildResponse(User user) {
+        LoginResponse r = new LoginResponse();
+        r.setToken(UUID.randomUUID().toString());
+        r.setUsername(user.getUsername());
+        r.setUserId(user.getId());
+        r.setNickname(user.getNickname() != null ? user.getNickname() : user.getUsername());
+        r.setPhone(user.getPhone() != null ? maskPhone(user.getPhone()) : null);
+        r.setRole(user.getRole() != null ? user.getRole() : "USER");
+        return r;
+    }
+
+    private String maskPhone(String phone) {
+        return phone != null && phone.length() >= 7 ? phone.substring(0, 3) + "****" + phone.substring(phone.length() - 4) : phone;
     }
 }

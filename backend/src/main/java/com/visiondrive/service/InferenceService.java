@@ -15,7 +15,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -49,7 +51,9 @@ public class InferenceService {
                     System.currentTimeMillis() - startTime, true, null);
 
             log.info("推理完成: traceId={}, detectionCount={}, latency={}ms",
-                    traceId, response.getData() != null ? response.getData().getDetectionCount() : 0);
+                    traceId,
+                    response.getData() != null ? response.getData().getDetectionCount() : 0,
+                    System.currentTimeMillis() - startTime);
 
             return response;
 
@@ -87,9 +91,9 @@ public class InferenceService {
             // record.setUserId(1L);  // 等认证完成后从SecurityContext获取
 
             if (success && response != null && response.getData() != null) {
-                record.setResultUrl(response.getData().getAnnotatedImageUrl());
+                record.setResultUrl(request.getImageUrl());
                 record.setDetectionCount(response.getData().getDetectionCount());
-                record.setResultJson(JsonLogBuilder.toJson(response));
+                record.setResultJson(JsonLogBuilder.toJson(buildRecordSummary(response)));
             }
 
             InferenceRecord saved = recordRepository.save(record);
@@ -107,5 +111,14 @@ public class InferenceService {
         } catch (Exception e) {
             log.error("保存记录失败: {}", e.getMessage());
         }
+    }
+
+    private Map<String, Object> buildRecordSummary(InferenceResponse response) {
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("requestId", response.getRequestId());
+        summary.put("taskType", response.getData().getTaskType());
+        summary.put("latencyMs", response.getData().getLatencyMs());
+        summary.put("detectionCount", response.getData().getDetectionCount());
+        return summary;
     }
 }

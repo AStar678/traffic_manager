@@ -45,12 +45,24 @@ public class InferenceResponse {
         private String objectId;
         private String objectType;
         private Bbox bbox;
+        private Position position;
         private String plateNumber;
         private String plateColor;
+        private String plateType;
         private Double confidence;
+        private Double detectionConfidence;
+        private Double ocrConfidence;
         private String gestureCode;
         private String gestureName;
         private List<Keypoint> keypoints;
+    }
+
+    @Data
+    public static class Position {
+        private Integer centerX;
+        private Integer centerY;
+        private Integer width;
+        private Integer height;
     }
 
     @Data

@@ -40,9 +40,19 @@
       <!-- 中央：前置摄像头画面 -->
       <div class="camera-feed card">
         <div class="camera-inner">
+          <img
+            v-if="cameraStreamUrl"
+            class="camera-stream"
+            :src="cameraStreamUrl"
+            alt="前置摄像头画面"
+          >
+          <div v-else class="camera-placeholder">
+            <el-icon :size="42"><Camera /></el-icon>
+            <span>{{ cameraError || '等待摄像头服务' }}</span>
+          </div>
           <div class="camera-overlay-info">
-            <span class="camera-label">前置摄像头</span>
-            <span class="camera-live">● LIVE</span>
+            <span class="camera-label">{{ selectedCameraSource?.name || '前置摄像头' }}</span>
+            <span class="camera-live">● {{ cameraStatusText }}</span>
           </div>
           <div class="scan-line-animated"></div>
           <!-- 检测到车牌时显示浮层 -->
@@ -142,13 +152,27 @@
 import { computed, onMounted } from 'vue'
 import { mockVehicleState, mockSystemHealth, mockAlerts } from '@/utils/mockData'
 import { useAlertStore } from '@/stores/alert'
+import { useCameraSource } from '@/composables/useCameraSource'
 
 const alertStore = useAlertStore()
 const vehicle = mockVehicleState
 const health = mockSystemHealth
+const {
+  selectedCameraSource,
+  cameraStatus,
+  cameraError,
+  cameraStreamUrl,
+  refreshCameraPreview
+} = useCameraSource()
+
+const cameraStatusText = computed(() => {
+  const labels = { idle: '待机', loading: '连接中', ready: 'LIVE', empty: '无源', offline: '离线' }
+  return labels[cameraStatus.value] || cameraStatus.value
+})
 
 onMounted(() => {
   alertStore.fetchAlerts()
+  refreshCameraPreview()
 })
 
 const recentAlerts = computed(() => mockAlerts.slice(0, 2))
@@ -258,6 +282,33 @@ const recentAlerts = computed(() => mockAlerts.slice(0, 2))
     radial-gradient(ellipse at 50% 70%, #1a2940 0%, #0a1220 70%);
   display: flex;
   align-items: flex-end;
+}
+
+.camera-stream {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 0.9;
+  background: #070b12;
+}
+
+.camera-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 700;
+  background:
+    linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px),
+    linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px);
+  background-size: 40px 40px;
 }
 
 .camera-overlay-info {

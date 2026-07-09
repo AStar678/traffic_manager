@@ -16,7 +16,7 @@ import java.time.LocalDateTime;
 
 @Slf4j
 @RestController
-@RequestMapping("/api/records")
+@RequestMapping({"/api/records", "/api/v1/records"})
 @RequiredArgsConstructor
 @Tag(name = "历史记录", description = "识别记录的查询和管理")
 public class RecordController {

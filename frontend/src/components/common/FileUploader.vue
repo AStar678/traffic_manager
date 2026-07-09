@@ -15,10 +15,10 @@
     </label>
 
     <div v-if="showVideoUrl" class="url-input">
-      <span>视频 / RTSP 地址</span>
+      <span>摄像头微服务截图 / 视频地址</span>
       <el-input
         v-model="localUrl"
-        placeholder="rtsp://10.126.59.120:8554/live/live1"
+        placeholder="http://127.0.0.1:8010/api/v1/cameras/snapshot.jpg?sourceId=..."
         clearable
         @input="$emit('update:url', localUrl)"
       />
@@ -26,7 +26,7 @@
 
     <div class="mode-note">
       <strong>业务链路</strong>
-      <p>图片走同步推理，视频/RTSP 走异步 Job；前端只访问 Java 后端，不直连算法服务。</p>
+      <p>主服务的视频输入统一来自摄像头微服务；抓拍地址再交给 Java 后端调用算法服务。</p>
     </div>
   </div>
 </template>
@@ -42,7 +42,7 @@ defineProps({
   },
   hint: {
     type: String,
-    default: '支持 jpg/png/bmp/mp4/avi/mov，当前为前端 Mock 演示'
+    default: '支持 jpg/png/bmp/mp4/avi/mov；视频输入默认走摄像头微服务'
   },
   accept: {
     type: String,

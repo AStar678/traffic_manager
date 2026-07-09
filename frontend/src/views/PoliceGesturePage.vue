@@ -3,14 +3,24 @@
     <!-- 主画面 -->
     <div class="viewport-area">
       <div class="viewport">
-        <img v-if="result.annotatedImageUrl" :src="result.annotatedImageUrl" alt="camera" />
+        <img v-if="viewportImageUrl" :src="viewportImageUrl" alt="camera" />
         <div v-else class="viewport-placeholder">
           <el-icon :size="48"><Aim /></el-icon>
           <span>路口摄像头待机</span>
         </div>
 
+        <div class="viewport-top">
+          <span class="chip live">● LIVE</span>
+          <span class="chip">{{ cameraLabel }}</span>
+        </div>
+
         <!-- 骨架叠加 -->
-        <svg class="skeleton-overlay" viewBox="0 0 1200 720" preserveAspectRatio="none" v-if="result.detections.length">
+        <svg
+          class="skeleton-overlay"
+          :viewBox="detectionViewBox"
+          preserveAspectRatio="xMidYMid meet"
+          v-if="result.detections.length"
+        >
           <g v-for="person in result.detections" :key="person.objectId">
             <!-- 人体框 -->
             <rect
@@ -50,6 +60,42 @@
 
     <!-- 右侧信息面板 -->
     <div class="side-panel">
+      <div class="card">
+        <h3 class="card-title">识别控制</h3>
+        <div class="camera-control">
+          <div class="control-row">
+            <span>视频输入</span>
+            <strong>{{ selectedCameraSource?.name || '摄像头微服务' }}</strong>
+          </div>
+          <div class="control-row">
+            <span>服务状态</span>
+            <strong :class="['state-text', cameraStatus]">{{ cameraError || cameraStatusText }}</strong>
+          </div>
+          <div class="control-row">
+            <span>识别状态</span>
+            <strong :class="{ active: recognizing }">{{ recognizing ? '持续识别中' : '未启动' }}</strong>
+          </div>
+          <div class="control-row">
+            <span>识别间隔</span>
+            <strong>{{ recognitionIntervalMs / 1000 }}s</strong>
+          </div>
+        </div>
+
+        <button
+          class="action-btn primary"
+          :class="{ danger: recognizing }"
+          :disabled="!selectedCameraSourceId && !recognizing"
+          @click="toggleRecognition"
+        >
+          <el-icon v-if="loading" class="spinner"><Loading /></el-icon>
+          {{ recognizing ? '停止识别' : (loading ? '识别中...' : '开始持续识别') }}
+        </button>
+
+        <button class="action-btn secondary compact" :disabled="recognizing" @click="refreshCameraSource">
+          刷新视频输入
+        </button>
+      </div>
+
       <!-- 当前识别手势 -->
       <div class="card gesture-hero" :class="{ detected: result.detections.length }">
         <div class="gesture-code">{{ gestureCode }}</div>
@@ -91,15 +137,32 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import * as echarts from 'echarts'
-import { mockInference, mockConfidence } from '@/utils/mockData'
+import { ElMessage } from 'element-plus'
+import { mockConfidence } from '@/utils/mockData'
 import { POLICE_GESTURE_MAP, TASK_TYPES } from '@/utils/constants'
+import { getInferenceData, inferenceImage } from '@/api/inference'
+import { useCameraSource } from '@/composables/useCameraSource'
 
-const result = mockInference[TASK_TYPES.POLICE_GESTURE]
-const confidenceData = mockConfidence.police
+const result = ref(emptyResult())
 const confidenceRef = ref(null)
+const loading = ref(false)
+const recognizing = ref(false)
+const recognitionIntervalMs = 2000
+let recognitionTimer = null
 let chart
 
-const gestureCode = computed(() => result.detections[0]?.gestureCode || '--')
+const {
+  selectedCameraSourceId,
+  selectedCameraSource,
+  cameraStatus,
+  cameraError,
+  cameraStreamUrl,
+  loadCameraSources,
+  refreshCameraPreview,
+  getCameraSnapshotUrl
+} = useCameraSource(TASK_TYPES.POLICE_GESTURE)
+
+const gestureCode = computed(() => result.value.detections[0]?.gestureCode || '--')
 const currentGesture = computed(() => POLICE_GESTURE_MAP[gestureCode.value] || '等待识别')
 const currentAction = computed(() => {
   const map = {
@@ -110,10 +173,31 @@ const currentAction = computed(() => {
   return map[gestureCode.value] || '—'
 })
 const currentActionText = computed(() => `输出交通指令：${currentAction.value}`)
+const detectionViewBox = computed(() => {
+  const width = result.value.image?.width || 1200
+  const height = result.value.image?.height || 720
+  return `0 0 ${width} ${height}`
+})
 
 const standardGestures = Object.entries(POLICE_GESTURE_MAP).map(([code, label]) => ({ code, label }))
+const confidenceData = computed(() => {
+  const top3 = result.value.detections[0]?.top3
+  if (!top3?.length) return mockConfidence.police
+  return top3.map(item => ({
+    name: item.gestureName,
+    value: Math.round(item.confidence * 100)
+  }))
+})
 
 const pipelineSteps = ['摄像头帧输入', 'MediaPipe Pose', '关键点序列提取', 'ST-GCN/LSTM分类', '交通指令输出']
+const viewportImageUrl = computed(() => cameraStreamUrl.value)
+const cameraLabel = computed(() => {
+  return selectedCameraSource.value?.name || '摄像头微服务'
+})
+const cameraStatusText = computed(() => {
+  const labels = { idle: '未连接', loading: '连接中', ready: '已连接', empty: '无可用源', offline: '服务离线' }
+  return labels[cameraStatus.value] || cameraStatus.value
+})
 
 const bonePairs = [
   ['nose','left_shoulder'],['nose','right_shoulder'],['left_shoulder','right_shoulder'],
@@ -134,17 +218,92 @@ function renderChart() {
   chart.setOption({
     grid: { left: 0, right: 10, top: 4, bottom: 0, containLabel: true },
     xAxis: { type: 'value', max: 100, axisLine: { show: false }, axisTick: { show: false }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } } },
-    yAxis: { type: 'category', inverse: true, data: confidenceData.map(d => d.name), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: '#92a0b8' } },
+    yAxis: { type: 'category', inverse: true, data: confidenceData.value.map(d => d.name), axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: '#92a0b8' } },
     series: [{
-      type: 'bar', data: confidenceData.map(d => d.value), barWidth: 12,
+      type: 'bar', data: confidenceData.value.map(d => d.value), barWidth: 12,
       itemStyle: { color: '#ea4335', borderRadius: [0, 6, 6, 0] },
       label: { show: true, position: 'right', formatter: '{c}%', color: '#92a0b8' }
     }]
   })
 }
 
+async function refreshCameraSource() {
+  await loadCameraSources()
+  refreshCameraPreview()
+  ElMessage.success('视频输入已刷新')
+}
+
+async function recognizeOnce({ silent = false } = {}) {
+  if (loading.value) return
+  if (!selectedCameraSourceId.value) {
+    if (!silent) ElMessage.warning('摄像头微服务暂无可用视频输入')
+    return
+  }
+
+  loading.value = true
+  try {
+    const imageUrl = getCameraSnapshotUrl()
+    const response = await inferenceImage(TASK_TYPES.POLICE_GESTURE, imageUrl)
+    const data = getInferenceData(response)
+    result.value = {
+      ...data,
+      annotatedImageUrl: ''
+    }
+    renderChart()
+  } catch (error) {
+    console.error(error)
+    if (!silent) ElMessage.error('识别失败，请检查后端、算法服务和摄像头服务是否已启动')
+  } finally {
+    loading.value = false
+  }
+}
+
+function startRecognition() {
+  if (!selectedCameraSourceId.value) {
+    ElMessage.warning('摄像头微服务暂无可用视频输入')
+    return
+  }
+  recognizing.value = true
+  result.value = emptyResult()
+  renderChart()
+  recognizeOnce({ silent: true })
+  clearInterval(recognitionTimer)
+  recognitionTimer = setInterval(() => {
+    if (recognizing.value) recognizeOnce({ silent: true })
+  }, recognitionIntervalMs)
+  ElMessage.success('已开始持续识别')
+}
+
+function stopRecognition() {
+  recognizing.value = false
+  clearInterval(recognitionTimer)
+  recognitionTimer = null
+  ElMessage.info('已停止识别')
+}
+
+function toggleRecognition() {
+  if (recognizing.value) stopRecognition()
+  else startRecognition()
+}
+
+function emptyResult() {
+  return {
+    taskType: TASK_TYPES.POLICE_GESTURE,
+    latencyMs: 0,
+    image: { width: 1200, height: 720 },
+    detections: [],
+    detectionCount: 0,
+    annotatedImageUrl: ''
+  }
+}
+
 onMounted(() => { renderChart(); window.addEventListener('resize', renderChart) })
-onBeforeUnmount(() => { window.removeEventListener('resize', renderChart); chart?.dispose() })
+onBeforeUnmount(() => {
+  clearInterval(recognitionTimer)
+  window.removeEventListener('resize', renderChart)
+  chart?.dispose()
+})
+watch(confidenceData, renderChart, { deep: true })
 </script>
 
 <style scoped>
@@ -173,8 +332,9 @@ onBeforeUnmount(() => { window.removeEventListener('resize', renderChart); chart
 .viewport img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   opacity: 0.88;
+  background: #070b12;
 }
 
 .viewport-placeholder {
@@ -198,6 +358,30 @@ onBeforeUnmount(() => { window.removeEventListener('resize', renderChart); chart
   width: 100%;
   height: 100%;
   pointer-events: none;
+}
+
+.viewport-top {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  display: flex;
+  gap: 8px;
+}
+
+.chip {
+  padding: 5px 12px;
+  background: rgba(0,0,0,0.6);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  backdrop-filter: blur(6px);
+}
+
+.chip.live {
+  color: #ea4335;
+  border-color: rgba(234,67,53,0.4);
 }
 
 .command-bar {
@@ -255,6 +439,97 @@ onBeforeUnmount(() => { window.removeEventListener('resize', renderChart); chart
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 14px;
+}
+
+.camera-control {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.control-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  background: rgba(255,255,255,0.025);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-sm);
+}
+
+.control-row span {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.control-row strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.control-row strong.active,
+.state-text.ready {
+  color: var(--success-color);
+}
+
+.state-text.loading { color: var(--warning-color); }
+
+.state-text.offline,
+.state-text.empty { color: var(--danger-color); }
+
+.action-btn {
+  width: 100%;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 14px;
+  border: none;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all var(--duration-fast);
+}
+
+.action-btn.primary {
+  background: linear-gradient(135deg, #ea4335, #c5221f);
+  color: #fff;
+}
+
+.action-btn.primary.danger {
+  background: linear-gradient(135deg, var(--danger-color), #b91c1c);
+  box-shadow: 0 4px 18px rgba(255,61,0,0.22);
+}
+
+.action-btn.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.action-btn.secondary {
+  background: transparent;
+  border: 1px solid var(--border-card);
+  color: var(--text-secondary);
+}
+
+.action-btn.secondary:hover {
+  border-color: rgba(234,67,53,0.4);
+  color: var(--text-primary);
+}
+
+.action-btn.compact {
+  height: 36px;
+  margin-top: 10px;
+  font-size: 12px;
 }
 
 .gesture-hero {
@@ -350,4 +625,64 @@ onBeforeUnmount(() => { window.removeEventListener('resize', renderChart); chart
 }
 
 .chart { width: 100%; height: 200px; }
+.spinner { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 900px) {
+  .gesture-page {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    height: auto;
+    min-height: 100%;
+    padding-bottom: 12px;
+    overflow-y: auto;
+  }
+
+  .viewport {
+    flex: none;
+    min-height: 220px;
+    aspect-ratio: 16 / 9;
+  }
+
+  .side-panel {
+    overflow: visible;
+  }
+
+  .command-bar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .command-main,
+  .command-meta {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 480px) {
+  .gesture-page {
+    gap: 10px;
+  }
+
+  .viewport {
+    min-height: 190px;
+  }
+
+  .control-row {
+    padding: 10px;
+  }
+
+  .control-row strong {
+    max-width: 180px;
+  }
+
+  .gesture-hero {
+    padding: 22px 18px;
+  }
+
+  .chart {
+    height: 180px;
+  }
+}
 </style>

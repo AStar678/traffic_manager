@@ -7,7 +7,6 @@
 fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
 python-multipart>=0.0.9
-httpx>=0.27.0
 pydantic>=2.0.0
 
 # --- 车牌识别：CLPRNet ---
@@ -16,14 +15,10 @@ torchvision>=0.15.0
 opencv-python>=4.8.0
 pillow>=10.0.0
 
-# --- 交警手势：MMPose + MMAction2 ---
-mmpose>=1.0.0
-mmaction2>=1.0.0
-mmengine>=0.10.0
-mmcv>=2.0.0
-mmdet>=3.0.0          # MMPose 依赖
+# --- 交警手势：ctpgr-pytorch Pose + LSTM ---
+# 使用 ../交警指令识别/checkpoints 与 ctpgr-pytorch-master 源码，无需安装 MMPose/MMAction2。
 
-# --- 车主手势：HaGRIDv2 + 原型网络 ---
+# --- 车主手势：MediaPipe Hands + 几何/时序规则 ---
 mediapipe>=0.10.0     # 手部关键点备用方案
 
 # --- 通用 ---

@@ -3,39 +3,44 @@
     <!-- 主区域：摄像头大画面 -->
     <div class="viewport-area">
       <div class="viewport">
-        <img v-if="result.annotatedImageUrl" :src="result.annotatedImageUrl" alt="camera" />
+        <img v-if="cameraStreamUrl" :src="cameraStreamUrl" alt="camera" />
         <div v-else class="viewport-placeholder">
           <el-icon :size="48"><Camera /></el-icon>
-          <span>前置摄像头待机</span>
+          <span>{{ cameraError || '等待摄像头服务' }}</span>
         </div>
 
         <!-- 检测框叠加层 -->
-        <svg class="detection-overlay" viewBox="0 0 1200 720" preserveAspectRatio="none" v-if="result.detections.length">
+        <svg
+          class="detection-overlay"
+          :viewBox="detectionViewBox"
+          preserveAspectRatio="xMidYMid meet"
+          v-if="result.detections.length"
+        >
           <g v-for="box in result.detections" :key="box.objectId">
             <rect
               :x="box.bbox.x1" :y="box.bbox.y1"
               :width="box.bbox.x2 - box.bbox.x1"
               :height="box.bbox.y2 - box.bbox.y1"
               fill="none"
-              stroke="#00e676"
+              :stroke="plateTheme(box).accent"
               stroke-width="4"
               class="detect-rect"
             />
             <rect
               :x="box.bbox.x1"
               :y="Math.max(0, box.bbox.y1 - 32)"
-              :width="box.plateNumber.length * 22 + 28"
+              :width="plateLabelWidth(box)"
               height="28"
               rx="14"
-              fill="#00e676"
+              :fill="plateTheme(box).accent"
             />
             <text
               :x="box.bbox.x1 + 14"
               :y="Math.max(18, box.bbox.y1 - 11)"
-              fill="#080c14"
+              :fill="plateTheme(box).text"
               font-size="18"
               font-weight="800"
-            >{{ box.plateNumber }}</text>
+            >{{ plateOverlayText(box) }}</text>
           </g>
         </svg>
 
@@ -44,7 +49,7 @@
         <!-- 顶部状态 -->
         <div class="viewport-top">
           <span class="chip live">● LIVE</span>
-          <span class="chip">RTSP live1 桥面</span>
+          <span class="chip">{{ cameraLabel }}</span>
         </div>
 
         <!-- 底部检测信息 -->
@@ -61,35 +66,38 @@
     <div class="side-panel">
       <!-- 输入模式切换 -->
       <div class="card">
-        <div class="mode-tabs">
-          <button
-            :class="{ active: inputMode === 'image' }"
-            @click="inputMode = 'image'"
-          >图片识别</button>
-          <button
-            :class="{ active: inputMode === 'video' }"
-            @click="inputMode = 'video'"
-          >视频/RTSP</button>
+        <h3 class="card-title">识别控制</h3>
+        <div class="camera-control">
+          <div class="control-row">
+            <span>视频输入</span>
+            <strong>{{ selectedCameraSource?.name || '摄像头微服务' }}</strong>
+          </div>
+          <div class="control-row">
+            <span>服务状态</span>
+            <strong :class="['state-text', cameraStatus]">{{ cameraError || cameraStatusText }}</strong>
+          </div>
+          <div class="control-row">
+            <span>识别状态</span>
+            <strong :class="{ active: recognizing }">{{ recognizing ? '持续识别中' : '未启动' }}</strong>
+          </div>
+          <div class="control-row">
+            <span>识别间隔</span>
+            <strong>{{ recognitionIntervalMs / 1000 }}s</strong>
+          </div>
         </div>
 
-        <!-- 上传区域 -->
-        <div class="upload-zone" @click="triggerUpload">
-          <input ref="fileInput" type="file" accept=".jpg,.jpeg,.png,.bmp" style="display:none" @change="onFileSelected">
-          <el-icon :size="28"><UploadFilled /></el-icon>
-          <span>点击或拖拽上传图片</span>
-          <small>jpg / png / bmp · ≤ 10MB</small>
-        </div>
-
-        <div v-if="inputMode === 'video'" class="rtsp-select">
-          <label>沙盘摄像头通道</label>
-          <el-select v-model="selectedRtsp" style="width:100%">
-            <el-option v-for="ch in rtspChannels" :key="ch.value" :label="ch.label" :value="ch.value" />
-          </el-select>
-        </div>
-
-        <button class="action-btn primary" :disabled="loading" @click="runInference">
+        <button
+          class="action-btn primary"
+          :class="{ danger: recognizing }"
+          :disabled="!selectedCameraSourceId && !recognizing"
+          @click="toggleRecognition"
+        >
           <el-icon v-if="loading" class="spinner"><Loading /></el-icon>
-          {{ loading ? '识别中...' : (inputMode === 'image' ? '上传并识别' : '创建识别任务') }}
+          {{ recognizing ? '停止识别' : (loading ? '识别中...' : '开始持续识别') }}
+        </button>
+
+        <button class="action-btn secondary compact" :disabled="recognizing" @click="refreshCameraSource">
+          刷新视频输入
         </button>
       </div>
 
@@ -98,58 +106,183 @@
         <h3 class="card-title">识别结果</h3>
         <div v-if="result.detections.length" class="result-list">
           <div v-for="item in result.detections" :key="item.objectId" class="result-item">
-            <div class="plate-tag" :class="item.plateColor">
+            <div class="plate-tag" :style="plateTagStyle(item)">
               {{ item.plateNumber }}
             </div>
             <div class="result-meta">
-              <span>{{ item.plateType }}</span>
-              <span>OCR {{ Math.round(item.ocrConfidence * 100) }}%</span>
+              <span>{{ plateColorLabel(item) }}</span>
+              <span>OCR {{ percent(item.ocrConfidence) }}</span>
             </div>
           </div>
         </div>
         <div v-else class="empty-result">
           <el-icon :size="32"><Picture /></el-icon>
           <span>暂无识别结果</span>
-          <small>上传图片开始识别</small>
+          <small>{{ recognizing ? '等待下一次识别结果' : '点击开始持续识别后输出结果' }}</small>
         </div>
-
-        <button class="action-btn secondary" style="margin-top:14px" v-if="result.detections.length">
-          保存记录
-        </button>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { mockInference, rtspChannels } from '@/utils/mockData'
 import { TASK_TYPES } from '@/utils/constants'
+import { getInferenceData, inferenceImage } from '@/api/inference'
+import { useCameraSource } from '@/composables/useCameraSource'
 
-const result = ref(mockInference[TASK_TYPES.LICENSE_PLATE])
+const result = ref(emptyResult())
 const loading = ref(false)
-const inputMode = ref('image')
-const selectedRtsp = ref(rtspChannels[0].value)
-const fileInput = ref(null)
+const recognizing = ref(false)
+const recognitionIntervalMs = 2000
+let recognitionTimer = null
+const {
+  selectedCameraSourceId,
+  selectedCameraSource,
+  cameraStatus,
+  cameraError,
+  cameraStreamUrl,
+  loadCameraSources,
+  refreshCameraPreview,
+  getCameraSnapshotUrl
+} = useCameraSource(TASK_TYPES.LICENSE_PLATE)
 
-function triggerUpload() {
-  fileInput.value?.click()
+const cameraLabel = computed(() => {
+  return selectedCameraSource.value?.name || '摄像头微服务'
+})
+const cameraStatusText = computed(() => {
+  const labels = { idle: '未连接', loading: '连接中', ready: '已连接', empty: '无可用源', offline: '服务离线' }
+  return labels[cameraStatus.value] || cameraStatus.value
+})
+const detectionViewBox = computed(() => {
+  const width = result.value.image?.width || 1200
+  const height = result.value.image?.height || 720
+  return `0 0 ${width} ${height}`
+})
+
+const plateColorThemes = {
+  blue: { accent: '#1a73e8', bg: '#163e7a', text: '#ffffff', border: 'rgba(116, 185, 255, 0.58)', label: '蓝牌' },
+  green: { accent: '#00e676', bg: '#0b5f32', text: '#06140c', border: 'rgba(0, 230, 118, 0.62)', label: '绿牌' },
+  yellow: { accent: '#ffd43b', bg: '#ffd43b', text: '#1d1600', border: 'rgba(255, 212, 59, 0.82)', label: '黄牌' },
+  white: { accent: '#f8fafc', bg: '#f8fafc', text: '#111827', border: 'rgba(248, 250, 252, 0.7)', label: '白牌' },
+  black: { accent: '#111827', bg: '#111827', text: '#f8fafc', border: 'rgba(255, 255, 255, 0.28)', label: '黑牌' },
+  unknown: { accent: '#00e676', bg: '#1c2434', text: '#eef2f7', border: 'rgba(255, 255, 255, 0.16)', label: '未知颜色' }
 }
 
-function onFileSelected(e) {
-  const file = e.target.files?.[0]
-  if (file) ElMessage.success(`已选择：${file.name}`)
+function normalizePlateColor(item = {}) {
+  const value = String(item.plateColor || item.plateType || '').toLowerCase()
+  if (value.includes('yellow') || value.includes('黄')) return 'yellow'
+  if (value.includes('blue') || value.includes('蓝')) return 'blue'
+  if (value.includes('green') || value.includes('绿') || value.includes('新能源')) return 'green'
+  if (value.includes('white') || value.includes('白')) return 'white'
+  if (value.includes('black') || value.includes('黑')) return 'black'
+  return 'unknown'
 }
 
-function runInference() {
+function plateTheme(item) {
+  return plateColorThemes[normalizePlateColor(item)] || plateColorThemes.unknown
+}
+
+function plateColorLabel(item) {
+  const type = item.plateType || plateTheme(item).label
+  const confidence = typeof item.confidence === 'number' ? ` · 置信度 ${percent(item.confidence)}` : ''
+  return `${type}${confidence}`
+}
+
+function percent(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? `${Math.round(value * 100)}%` : '--'
+}
+
+function plateOverlayText(item) {
+  return item.plateNumber || item.objectId || '车牌'
+}
+
+function plateLabelWidth(item) {
+  return Math.max(96, plateOverlayText(item).length * 22 + 28)
+}
+
+function plateTagStyle(item) {
+  const theme = plateTheme(item)
+  return {
+    background: theme.bg,
+    color: theme.text,
+    borderColor: theme.border,
+    boxShadow: `0 0 18px ${theme.border}`
+  }
+}
+
+async function refreshCameraSource() {
+  await loadCameraSources()
+  refreshCameraPreview()
+  ElMessage.success('视频输入已刷新')
+}
+
+async function recognizeOnce({ silent = false } = {}) {
+  if (loading.value) return
+  if (!selectedCameraSourceId.value) {
+    if (!silent) ElMessage.warning('摄像头微服务暂无可用视频输入')
+    return
+  }
+
   loading.value = true
-  setTimeout(() => {
-    result.value = { ...mockInference[TASK_TYPES.LICENSE_PLATE], latencyMs: 386 + Math.round(Math.random() * 120) }
+  try {
+    const imageUrl = getCameraSnapshotUrl()
+    const response = await inferenceImage(TASK_TYPES.LICENSE_PLATE, imageUrl)
+    const data = getInferenceData(response)
+    result.value = {
+      ...data,
+      annotatedImageUrl: ''
+    }
+  } catch (error) {
+    console.error(error)
+    if (!silent) ElMessage.error('识别失败，请检查后端、算法服务和摄像头服务是否已启动')
+  } finally {
     loading.value = false
-    ElMessage.success('识别完成')
-  }, 800)
+  }
 }
+
+function startRecognition() {
+  if (!selectedCameraSourceId.value) {
+    ElMessage.warning('摄像头微服务暂无可用视频输入')
+    return
+  }
+  recognizing.value = true
+  result.value = emptyResult()
+  recognizeOnce({ silent: true })
+  clearInterval(recognitionTimer)
+  recognitionTimer = setInterval(() => {
+    if (recognizing.value) recognizeOnce({ silent: true })
+  }, recognitionIntervalMs)
+  ElMessage.success('已开始持续识别')
+}
+
+function stopRecognition() {
+  recognizing.value = false
+  clearInterval(recognitionTimer)
+  recognitionTimer = null
+  ElMessage.info('已停止识别')
+}
+
+function toggleRecognition() {
+  if (recognizing.value) stopRecognition()
+  else startRecognition()
+}
+
+function emptyResult() {
+  return {
+    taskType: TASK_TYPES.LICENSE_PLATE,
+    latencyMs: 0,
+    image: { width: 1200, height: 720 },
+    detections: [],
+    detectionCount: 0,
+    annotatedImageUrl: ''
+  }
+}
+
+onBeforeUnmount(() => {
+  clearInterval(recognitionTimer)
+})
 </script>
 
 <style scoped>
@@ -175,8 +308,9 @@ function runInference() {
 .viewport img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   opacity: 0.9;
+  background: #070b12;
 }
 
 .viewport-placeholder {
@@ -268,63 +402,51 @@ function runInference() {
   margin-bottom: 14px;
 }
 
-.mode-tabs {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.mode-tabs button {
-  padding: 10px;
-  border: 1px solid var(--border-card);
-  border-radius: 10px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all var(--duration-fast);
-}
-
-.mode-tabs button.active {
-  border-color: var(--primary-color);
-  background: var(--primary-soft);
-  color: var(--primary-color);
-}
-
-.upload-zone {
+.camera-control {
   display: flex;
   flex-direction: column;
+  gap: 10px;
+}
+
+.control-row {
+  display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 24px;
-  border: 1px dashed rgba(255,255,255,0.10);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: all var(--duration-fast);
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  background: rgba(255,255,255,0.025);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-sm);
 }
 
-.upload-zone:hover {
-  border-color: var(--border-active);
-  background: rgba(255,255,255,0.02);
-}
-
-.upload-zone .el-icon { color: var(--text-muted); }
-.upload-zone span { font-size: 13px; color: var(--text-secondary); font-weight: 600; }
-.upload-zone small { font-size: 11px; color: var(--text-muted); }
-
-.rtsp-select {
-  margin-top: 14px;
-}
-
-.rtsp-select label {
-  display: block;
-  margin-bottom: 6px;
-  font-size: 11px;
+.control-row span {
+  flex: 0 0 auto;
+  font-size: 12px;
   font-weight: 700;
   color: var(--text-muted);
-  text-transform: uppercase;
+}
+
+.control-row strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.control-row strong.active,
+.state-text.ready {
+  color: var(--success-color);
+}
+
+.state-text.loading {
+  color: var(--warning-color);
+}
+
+.state-text.offline,
+.state-text.empty {
+  color: var(--danger-color);
 }
 
 .action-btn {
@@ -349,6 +471,12 @@ function runInference() {
   box-shadow: 0 4px 18px var(--primary-glow);
 }
 
+.action-btn.primary.danger {
+  background: linear-gradient(135deg, var(--danger-color), #c5221f);
+  color: #fff;
+  box-shadow: 0 4px 18px rgba(255,61,0,0.22);
+}
+
 .action-btn.primary:hover:not(:disabled) {
   box-shadow: 0 6px 26px rgba(0,180,216,0.35);
   transform: translateY(-1px);
@@ -368,6 +496,12 @@ function runInference() {
 .action-btn.secondary:hover {
   border-color: var(--border-active);
   color: var(--text-primary);
+}
+
+.action-btn.compact {
+  height: 36px;
+  margin-top: 10px;
+  font-size: 12px;
 }
 
 /* 结果列表 */
@@ -392,6 +526,7 @@ function runInference() {
   display: grid;
   place-items: center;
   border-radius: 6px;
+  border: 1.5px solid rgba(255,255,255,0.16);
   font-size: 16px;
   font-weight: 800;
   letter-spacing: 1px;

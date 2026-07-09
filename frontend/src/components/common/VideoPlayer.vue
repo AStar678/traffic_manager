@@ -35,7 +35,7 @@ defineProps({
   },
   label: {
     type: String,
-    default: '模拟视频帧'
+    default: '摄像头微服务视频流'
   }
 })
 </script>

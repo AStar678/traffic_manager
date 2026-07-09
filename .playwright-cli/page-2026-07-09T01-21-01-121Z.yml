@@ -1,0 +1,27 @@
+- generic [ref=e3]:
+  - generic [ref=e6]:
+    - generic [ref=e7]: VD
+    - heading "VisionDrive" [level=1] [ref=e8]
+    - paragraph [ref=e9]: 智视驾 · 车载视觉感知与交互系统
+    - generic [ref=e10]:
+      - generic [ref=e11]: 车牌识别
+      - generic [ref=e12]: 交警手势
+      - generic [ref=e13]: 手势控车
+      - generic [ref=e14]: AI告警
+  - generic [ref=e16]:
+    - heading "登录系统" [level=2] [ref=e17]
+    - paragraph [ref=e18]: 演示模式 · 输入任意密码即可进入
+    - generic [ref=e19]:
+      - generic [ref=e20]: 用户名
+      - generic [ref=e21]:
+        - img [ref=e23]
+        - textbox "admin" [ref=e25]
+    - generic [ref=e26]:
+      - generic [ref=e27]: 密码
+      - generic [ref=e28]:
+        - img [ref=e30]
+        - textbox "任意输入" [ref=e33]: visiondrive
+    - button "进入系统" [ref=e34] [cursor=pointer]:
+      - text: 进入系统
+      - img [ref=e36]
+    - generic [ref=e38] [cursor=pointer]: 验证码登录 →

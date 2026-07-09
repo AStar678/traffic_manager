@@ -23,6 +23,12 @@
 │   算法服务  Python FastAPI       │  端口: 8000
 │   · 车牌识别 · 交警手势 · 车主手势 │
 └─────────────────────────────────┘
+
+┌─────────────────────────────────┐
+│ 虚拟摄像头服务 Python FastAPI    │  端口: 8010
+│ · 本机摄像头 · 测试视频 · 测试图片 │
+│ · MJPEG预览 · JPEG抓拍           │
+└─────────────────────────────────┘
 ```
 
 ## 项目结构
@@ -32,6 +38,7 @@ vision-drive/
 ├── frontend/        # Vue 3 前端
 ├── backend/         # Java Spring Boot 后端
 ├── algorithm/       # Python FastAPI 算法微服务
+├── camera_service/  # Python FastAPI 虚拟摄像头微服务
 ├── docs/            # 项目文档
 ├── data/            # 测试数据与样本
 ├── docker/          # Docker 部署配置
@@ -59,6 +66,15 @@ cd algorithm
 pip install -r requirements.txt
 python main.py
 ```
+
+### 4. 虚拟摄像头服务
+```bash
+cd camera_service
+../algorithm/.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8010
+```
+
+前端默认读取 `http://127.0.0.1:8010`，也可以通过 `VITE_CAMERA_URL` 覆盖。
+摄像头服务自带独立管理台：`http://127.0.0.1:8010/ui`，不接入主前端路由。
 
 ## 团队
 

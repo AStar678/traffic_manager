@@ -6,7 +6,7 @@
     </div>
 
     <div class="nav-actions">
-      <span class="metric-chip severity-info">前端 Mock 模式</span>
+      <span class="metric-chip severity-info">摄像头服务输入</span>
       <span class="metric-chip severity-info">WebSocket 已连接</span>
       <el-badge :value="unreadCount" :hidden="!unreadCount">
         <el-button circle>

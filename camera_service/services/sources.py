@@ -1,0 +1,522 @@
+"""Camera source discovery and frame acquisition."""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import os
+import threading
+import time
+from collections import OrderedDict
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Literal
+
+os.environ.setdefault("OPENCV_AVFOUNDATION_SKIP_AUTH", "1")
+
+import cv2
+import numpy as np
+
+from config import (
+    CAMERA_STATE_FILE,
+    DEFAULT_FPS,
+    DEFAULT_HEIGHT,
+    DEFAULT_WIDTH,
+    IMAGE_EXTENSIONS,
+    JPEG_QUALITY,
+    LICENSE_PLATE_SAMPLE_DIR,
+    OWNER_GESTURE_SOURCE_DIR,
+    POLICE_GESTURE_SAMPLE_DIR,
+    VIDEO_EXTENSIONS,
+)
+
+
+SourceType = Literal["browser", "device", "image", "video"]
+BROWSER_CAMERA_SOURCE_ID = "browser-camera"
+ALL_TASK_TYPES = ["license_plate", "police_gesture", "owner_gesture"]
+MAX_OPEN_READERS = 12
+_BROWSER_FRAME_LOCK = threading.RLock()
+_BROWSER_FRAME: np.ndarray | None = None
+_BROWSER_FRAME_UPDATED_AT = 0.0
+
+
+@dataclass
+class CameraSource:
+    id: str
+    name: str
+    sourceType: SourceType
+    taskTypes: list[str] = field(default_factory=list)
+    path: str | None = None
+    deviceIndex: int | None = None
+    fps: int = DEFAULT_FPS
+    loop: bool = True
+    builtIn: bool = False
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def build_default_sources() -> list[CameraSource]:
+    sources = [
+        CameraSource(
+            id=BROWSER_CAMERA_SOURCE_ID,
+            name="本机前置摄像头（浏览器推流）",
+            sourceType="browser",
+            taskTypes=ALL_TASK_TYPES,
+            fps=DEFAULT_FPS,
+            builtIn=True,
+        ),
+        CameraSource(
+            id="front-camera-0",
+            name="OpenCV 摄像头 0（备用）",
+            sourceType="device",
+            taskTypes=ALL_TASK_TYPES,
+            deviceIndex=0,
+            fps=DEFAULT_FPS,
+            builtIn=True,
+        )
+    ]
+
+    sources.extend(_scan_media_sources(
+        LICENSE_PLATE_SAMPLE_DIR,
+        task_type="license_plate",
+        prefix="license-plate",
+        title="车牌测试图",
+        limit=30,
+    ))
+    sources.extend(_scan_media_sources(
+        POLICE_GESTURE_SAMPLE_DIR,
+        task_type="police_gesture",
+        prefix="police-gesture",
+        title="交警测试视频",
+        limit=200,
+    ))
+    sources.extend(_scan_media_sources(
+        OWNER_GESTURE_SOURCE_DIR / "test",
+        task_type="owner_gesture",
+        prefix="owner-gesture",
+        title="手势测试媒体",
+        limit=200,
+    ))
+    return sources
+
+
+def make_custom_source(
+    source_type: SourceType,
+    *,
+    path: str | None = None,
+    device_index: int | None = None,
+    name: str | None = None,
+    fps: int = DEFAULT_FPS,
+    loop: bool = True,
+) -> CameraSource:
+    if source_type == "device":
+        index = 0 if device_index is None else device_index
+        return CameraSource(
+            id=f"device-{index}",
+            name=name or f"本机摄像头 {index}",
+            sourceType="device",
+            taskTypes=["license_plate", "police_gesture", "owner_gesture"],
+            deviceIndex=index,
+            fps=fps,
+            loop=loop,
+            builtIn=False,
+        )
+
+    if not path:
+        raise ValueError("图片或视频源必须提供 path")
+
+    media_path = Path(path).expanduser().resolve()
+    if not media_path.exists():
+        raise FileNotFoundError(f"源文件不存在: {media_path}")
+
+    inferred_type = _source_type_from_path(media_path)
+    if inferred_type != source_type:
+        raise ValueError(f"path 扩展名与 sourceType 不匹配: {media_path.suffix}")
+
+    digest = hashlib.md5(str(media_path).encode("utf-8")).hexdigest()[:10]
+    return CameraSource(
+        id=f"custom-{inferred_type}-{digest}",
+        name=name or media_path.name,
+        sourceType=inferred_type,
+        path=str(media_path),
+        fps=fps,
+        loop=loop,
+        builtIn=False,
+    )
+
+
+class CameraManager:
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self.sources: dict[str, CameraSource] = {src.id: src for src in build_default_sources()}
+        self._readers: OrderedDict[str, FrameReader] = OrderedDict()
+        saved_active_id = self._load_state()
+        self.active_source_id = self._initial_active_source_id(saved_active_id)
+
+    def list_sources(self) -> list[dict]:
+        with self._lock:
+            return [source.to_dict() for source in self.sources.values()]
+
+    def get_active_source(self) -> CameraSource | None:
+        with self._lock:
+            return self.sources.get(self.active_source_id)
+
+    def add_source(self, source: CameraSource) -> CameraSource:
+        with self._lock:
+            self.sources[source.id] = source
+            self._save_state()
+            return source
+
+    def remove_source(self, source_id: str) -> CameraSource:
+        with self._lock:
+            if source_id not in self.sources:
+                raise KeyError(f"未知摄像头源: {source_id}")
+            source = self.sources[source_id]
+            if source.builtIn:
+                raise ValueError("内置摄像头源不能删除")
+            removed = self.sources.pop(source_id)
+            self._close_reader(source_id)
+            if self.active_source_id == source_id:
+                self.active_source_id = self._initial_active_source_id(None)
+            self._save_state()
+            return removed
+
+    def set_active(self, source_id: str) -> CameraSource:
+        with self._lock:
+            if source_id not in self.sources:
+                raise KeyError(f"未知摄像头源: {source_id}")
+            if self.active_source_id != source_id:
+                self.active_source_id = source_id
+                self._save_state()
+            return self.sources[source_id]
+
+    def read_frame(self, source_id: str | None = None) -> np.ndarray:
+        with self._lock:
+            source = self._get_read_source(source_id)
+            if not source:
+                return placeholder_frame("未配置摄像头源")
+            reader = self._reader_for(source)
+        return reader.read()
+
+    def read_snapshot_frame(self, source_id: str | None = None) -> np.ndarray:
+        with self._lock:
+            source = self._get_read_source(source_id)
+            if not source:
+                return placeholder_frame("未配置摄像头源")
+            snapshot_source = source
+
+        if snapshot_source.sourceType == "image" and snapshot_source.path:
+            return read_image(snapshot_source.path)
+        return self.read_frame(snapshot_source.id)
+
+    def get_snapshot_image_path(self, source_id: str | None = None) -> Path | None:
+        with self._lock:
+            source = self._get_read_source(source_id)
+            if not source or source.sourceType != "image" or not source.path:
+                return None
+            path = Path(source.path)
+            if not path.exists() or path.suffix.lower() not in {".jpg", ".jpeg"}:
+                return None
+            return path
+
+    def update_browser_frame(self, frame: np.ndarray, source_id: str = BROWSER_CAMERA_SOURCE_ID) -> CameraSource:
+        with self._lock:
+            source = self.sources.get(source_id)
+            if not source:
+                raise KeyError(f"未知摄像头源: {source_id}")
+            if source.sourceType != "browser":
+                raise ValueError("浏览器帧只能写入浏览器摄像头源")
+            update_browser_frame(frame)
+            if self.active_source_id != source_id:
+                self.active_source_id = source_id
+                self._save_state()
+            return source
+
+    def encode_jpeg(self, frame: np.ndarray, quality: int | None = None) -> bytes:
+        jpeg_quality = max(1, min(100, JPEG_QUALITY if quality is None else quality))
+        ok, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality])
+        if not ok:
+            raise RuntimeError("JPEG 编码失败")
+        return buffer.tobytes()
+
+    def _reader_for(self, source: CameraSource) -> FrameReader:
+        reader = self._readers.get(source.id)
+        if reader is None:
+            reader = FrameReader(source)
+            self._readers[source.id] = reader
+        else:
+            self._readers.move_to_end(source.id)
+        self._trim_readers()
+        return reader
+
+    def _close_reader(self, source_id: str | None = None) -> None:
+        if source_id is None:
+            readers = list(self._readers.values())
+            self._readers.clear()
+        else:
+            reader = self._readers.pop(source_id, None)
+            readers = [reader] if reader else []
+
+        for reader in readers:
+            reader.close()
+
+    def _trim_readers(self) -> None:
+        while len(self._readers) > MAX_OPEN_READERS:
+            _, reader = self._readers.popitem(last=False)
+            reader.close()
+
+    def _get_read_source(self, source_id: str | None = None) -> CameraSource | None:
+        if source_id:
+            source = self.sources.get(source_id)
+            if not source:
+                raise KeyError(f"未知摄像头源: {source_id}")
+            return source
+        return self.sources.get(self.active_source_id)
+
+    def _initial_active_source_id(self, preferred_source_id: str | None) -> str:
+        if preferred_source_id in self.sources:
+            preferred = self.sources[preferred_source_id]
+            if preferred.sourceType != "device":
+                return preferred.id
+
+        for source_type in ("image", "video", "browser", "device"):
+            for source in self.sources.values():
+                if source.sourceType == source_type:
+                    return source.id
+        return next(iter(self.sources), "")
+
+    def _load_state(self) -> str | None:
+        if not CAMERA_STATE_FILE.exists():
+            return None
+        try:
+            data = json.loads(CAMERA_STATE_FILE.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+        for item in data.get("customSources", []):
+            try:
+                source = CameraSource(
+                    id=item["id"],
+                    name=item["name"],
+                    sourceType=item["sourceType"],
+                    taskTypes=list(item.get("taskTypes") or []),
+                    path=item.get("path"),
+                    deviceIndex=item.get("deviceIndex"),
+                    fps=int(item.get("fps") or DEFAULT_FPS),
+                    loop=bool(item.get("loop", True)),
+                    builtIn=False,
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+            if source.sourceType in {"image", "video"} and source.path and not Path(source.path).exists():
+                continue
+            self.sources[source.id] = source
+        return data.get("activeSourceId")
+
+    def _save_state(self) -> None:
+        try:
+            CAMERA_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            custom_sources = [
+                source.to_dict()
+                for source in self.sources.values()
+                if not source.builtIn
+            ]
+            CAMERA_STATE_FILE.write_text(
+                json.dumps(
+                    {
+                        "activeSourceId": self.active_source_id,
+                        "customSources": custom_sources,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+
+
+class FrameReader:
+    def __init__(self, source: CameraSource) -> None:
+        self._lock = threading.RLock()
+        self.source = source
+        self.capture: cv2.VideoCapture | None = None
+        self.image_frame: np.ndarray | None = None
+        self.last_frame: np.ndarray | None = None
+        self.last_read_at = 0.0
+        self._open()
+
+    def _open(self) -> None:
+        if self.source.sourceType == "browser":
+            self.last_frame = read_browser_frame()
+            return
+
+        if self.source.sourceType == "image":
+            self.image_frame = read_image(self.source.path or "")
+            self.last_frame = self.image_frame
+            return
+
+        target = self.source.deviceIndex if self.source.sourceType == "device" else self.source.path
+        self.capture = cv2.VideoCapture(target)
+        self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, DEFAULT_WIDTH)
+        self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, DEFAULT_HEIGHT)
+        self.capture.set(cv2.CAP_PROP_FPS, self.source.fps)
+
+    def read(self) -> np.ndarray:
+        with self._lock:
+            min_interval = 1 / max(1, self.source.fps)
+            elapsed = time.time() - self.last_read_at
+            if self.last_frame is not None and elapsed < min_interval:
+                return self.last_frame.copy()
+
+            self.last_read_at = time.time()
+
+            if self.source.sourceType == "browser":
+                self.last_frame = read_browser_frame()
+                return self.last_frame.copy()
+
+            if self.source.sourceType == "image":
+                return self.image_frame.copy() if self.image_frame is not None else placeholder_frame("图片源读取失败")
+
+            if not self.capture or not self.capture.isOpened():
+                return placeholder_frame(f"{self.source.name} 不可用")
+
+            ok, frame = self.capture.read()
+            if not ok or frame is None:
+                if self.source.sourceType == "video" and self.source.loop:
+                    self.capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ok, frame = self.capture.read()
+                if not ok or frame is None:
+                    return self.last_frame.copy() if self.last_frame is not None else placeholder_frame("视频源读取结束")
+
+            self.last_frame = resize_to_canvas(frame)
+            return self.last_frame.copy()
+
+    def close(self) -> None:
+        with self._lock:
+            if self.capture:
+                self.capture.release()
+                self.capture = None
+
+
+def read_image(path: str, *, resize: bool = True) -> np.ndarray:
+    data = np.fromfile(path, dtype=np.uint8)
+    frame = cv2.imdecode(data, cv2.IMREAD_COLOR)
+    if frame is None:
+        return placeholder_frame("图片源读取失败")
+    if resize:
+        return pad_to_16_9(frame)
+    return frame
+
+
+def decode_data_url_image(image: str) -> np.ndarray:
+    payload = image.split(",", 1)[1] if "," in image else image
+    raw = base64.b64decode(payload)
+    return decode_image_bytes(raw)
+
+
+def decode_image_bytes(raw: bytes) -> np.ndarray:
+    frame = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if frame is None:
+        raise ValueError("浏览器摄像头帧解码失败")
+    return frame
+
+
+def update_browser_frame(frame: np.ndarray) -> None:
+    global _BROWSER_FRAME, _BROWSER_FRAME_UPDATED_AT
+    with _BROWSER_FRAME_LOCK:
+        _BROWSER_FRAME = resize_to_canvas(frame)
+        _BROWSER_FRAME_UPDATED_AT = time.time()
+
+
+def read_browser_frame() -> np.ndarray:
+    with _BROWSER_FRAME_LOCK:
+        if _BROWSER_FRAME is None:
+            return placeholder_frame("等待管理台启动浏览器摄像头")
+        return _BROWSER_FRAME.copy()
+
+
+def resize_to_canvas(frame: np.ndarray) -> np.ndarray:
+    height, width = frame.shape[:2]
+    scale = min(DEFAULT_WIDTH / width, DEFAULT_HEIGHT / height)
+    new_width = max(1, int(width * scale))
+    new_height = max(1, int(height * scale))
+    resized = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
+
+    canvas = np.zeros((DEFAULT_HEIGHT, DEFAULT_WIDTH, 3), dtype=np.uint8)
+    y = (DEFAULT_HEIGHT - new_height) // 2
+    x = (DEFAULT_WIDTH - new_width) // 2
+    canvas[y:y + new_height, x:x + new_width] = resized
+    return canvas
+
+
+def pad_to_16_9(frame: np.ndarray) -> np.ndarray:
+    height, width = frame.shape[:2]
+    target_width = width
+    target_height = height
+    if width * 9 < height * 16:
+        target_width = int(np.ceil(height * 16 / 9))
+    elif width * 9 > height * 16:
+        target_height = int(np.ceil(width * 9 / 16))
+
+    if target_width == width and target_height == height:
+        return frame
+
+    canvas = np.zeros((target_height, target_width, 3), dtype=frame.dtype)
+    y = (target_height - height) // 2
+    x = (target_width - width) // 2
+    canvas[y:y + height, x:x + width] = frame
+    return canvas
+
+
+def placeholder_frame(message: str) -> np.ndarray:
+    frame = np.zeros((DEFAULT_HEIGHT, DEFAULT_WIDTH, 3), dtype=np.uint8)
+    frame[:] = (12, 18, 30)
+    cv2.rectangle(frame, (40, 40), (DEFAULT_WIDTH - 40, DEFAULT_HEIGHT - 40), (40, 52, 72), 2)
+    cv2.putText(frame, "VisionDrive Virtual Camera", (72, 110), cv2.FONT_HERSHEY_SIMPLEX, 1.25, (0, 180, 216), 3)
+    cv2.putText(frame, message, (72, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (210, 220, 235), 2)
+    cv2.putText(frame, "Use image/video samples or connect a local camera source.", (72, 235), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (150, 162, 184), 2)
+    return frame
+
+
+def _scan_media_sources(
+    root: Path,
+    *,
+    task_type: str,
+    prefix: str,
+    title: str,
+    limit: int,
+) -> list[CameraSource]:
+    if not root.exists():
+        return []
+
+    files = sorted(
+        path for path in root.iterdir()
+        if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
+    )[:limit]
+
+    sources: list[CameraSource] = []
+    for path in files:
+        source_type = _source_type_from_path(path)
+        sources.append(CameraSource(
+            id=f"{prefix}-{path.stem}",
+            name=f"{title} {path.name}",
+            sourceType=source_type,
+            taskTypes=[task_type],
+            path=str(path),
+            fps=DEFAULT_FPS,
+            loop=True,
+            builtIn=True,
+        ))
+    return sources
+
+
+def _source_type_from_path(path: Path) -> SourceType:
+    suffix = path.suffix.lower()
+    if suffix in IMAGE_EXTENSIONS:
+        return "image"
+    if suffix in VIDEO_EXTENSIONS:
+        return "video"
+    raise ValueError(f"不支持的媒体类型: {suffix}")

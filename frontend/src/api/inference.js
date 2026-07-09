@@ -3,7 +3,11 @@ import request from './request'
 // 统一图片推理接口
 export function inferenceImage(taskType, imageUrl) {
   return request.post('/inference/image', {
-    task_type: taskType,
-    image_url: imageUrl
+    taskType,
+    imageUrl
   })
+}
+
+export function getInferenceData(response) {
+  return response?.data?.data || response?.data || response
 }

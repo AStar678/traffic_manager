@@ -76,6 +76,10 @@
             </button>
           </div>
         </div>
+
+        <div style="margin-top:18px;text-align:center;font-size:13px;color:var(--text-muted);">
+          还没有账号？<span style="color:var(--primary-color);font-weight:600;cursor:pointer;" @click="$router.push('/register')">立即注册 →</span>
+        </div>
       </div>
     </div>
   </div>

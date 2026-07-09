@@ -17,7 +17,7 @@ export const useAuthStore = defineStore('auth', {
       try {
         const res = await apiLogin(username, password)
         const data = res.data || res
-        this.saveAuth(data)
+        this._applyLogin(data)
         return data
       } catch (e) {
         console.warn('后端登录失败，使用 Mock 模式:', e)
@@ -27,16 +27,7 @@ export const useAuthStore = defineStore('auth', {
     async loginByCode(phone, code) {
       const res = await apiLoginByCode(phone, code)
       const data = res.data || res
-      this.saveAuth({
-        token: data.token,
-        user: {
-          id: data.userId,
-          username: data.username,
-          nickname: data.nickname,
-          phone: data.phone,
-          role: data.role
-        }
-      })
+      this._applyLogin(data)
     },
     mockLogin(username) {
       const user = {
@@ -55,11 +46,17 @@ export const useAuthStore = defineStore('auth', {
       this.token = ''; this.refreshToken = ''; this.user = null
       localStorage.removeItem('token'); localStorage.removeItem('refreshToken'); localStorage.removeItem('user')
     },
-    saveAuth(data) {
-      this.token = data.token; this.refreshToken = data.refreshToken || ''
-      this.user = data.user
+    // 后端 LoginResponse 是扁平结构，转成 { token, user }
+    _applyLogin(data) {
+      this.token = data.token
+      this.user = {
+        id: data.userId,
+        username: data.username,
+        nickname: data.nickname,
+        phone: data.phone,
+        role: data.role
+      }
       localStorage.setItem('token', this.token)
-      if (this.refreshToken) localStorage.setItem('refreshToken', this.refreshToken)
       localStorage.setItem('user', JSON.stringify(this.user))
     }
   }

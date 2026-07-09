@@ -54,14 +54,31 @@ public class AuthService {
     }
 
     public void register(RegisterRequest request) {
-        if (userRepository.findByUsername(request.getUsername()).isPresent()) {
-            throw new RuntimeException("用户名已存在");
+        String phone = request.getPhone();
+        if (phone != null && !phone.isBlank()) {
+            // 手机号注册：校验验证码
+            if (request.getSmsCode() == null || request.getSmsCode().isBlank())
+                throw new RuntimeException("验证码不能为空");
+            String err = verificationCodeService.verifyCode(phone, request.getSmsCode());
+            if (err != null) throw new RuntimeException(err);
+            if (userRepository.findByPhone(phone).isPresent())
+                throw new RuntimeException("该手机号已注册");
         }
+
+        String username = request.getUsername();
+        if (username == null || username.isBlank()) {
+            username = phone != null ? phone : "user" + System.currentTimeMillis() % 10000;
+        }
+
+        if (userRepository.findByUsername(username).isPresent())
+            throw new RuntimeException("用户名已存在");
+
         User user = new User();
-        user.setUsername(request.getUsername());
+        user.setUsername(username);
         user.setPassword(request.getPassword());
         user.setEmail(request.getEmail());
-        user.setNickname(request.getUsername());
+        user.setPhone(phone);
+        user.setNickname(username);
         user.setRole("USER");
         user.setCreatedAt(LocalDateTime.now());
         userRepository.save(user);

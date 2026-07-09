@@ -7,7 +7,7 @@ spring:
 
   # 数据库 (开发阶段使用H2)
   datasource:
-    url: jdbc:h2:file:./data/visiondrive;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    url: jdbc:h2:file:./data/visiondrive
     driver-class-name: org.h2.Driver
     username: sa
     password:
@@ -20,13 +20,8 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update
-    show-sql: true
-    database-platform: org.hibernate.dialect.H2Dialect  # ← 显式指定方言
-    properties:
-      hibernate:
-        format_sql: true
-        hbm2ddl:
-          auto: update
+    show-sql: false
+
   # 文件上传
   servlet:
     multipart:
@@ -39,12 +34,6 @@ spring:
     port: ${MAIL_PORT:587}
     username: ${MAIL_USERNAME:}
     password: ${MAIL_PASSWORD:}
-    properties:
-      mail:
-        smtp:
-          auth: ${MAIL_SMTP_AUTH:true}
-          starttls:
-            enable: ${MAIL_SMTP_STARTTLS:true}
 
 # 算法服务地址
 algorithm:
@@ -66,13 +55,17 @@ llm:
 # 告警Agent
 alert:
   agent:
-    enabled: ${ALERT_AGENT_ENABLED:true}
     poll-interval: 30000  # 轮询间隔(毫秒)
-    cooldown: ${ALERT_AGENT_COOLDOWN:300000}  # 同类告警冷却时间(毫秒)
     failure-rate-threshold: 0.3
     low-confidence-threshold: 0.5
     token-limit: 1000000
-  email:
-    enabled: ${ALERT_EMAIL_ENABLED:true}
-    recipients: ${ALERT_EMAIL_RECIPIENTS:}
-    from: ${ALERT_EMAIL_FROM:${MAIL_USERNAME:}}
+
+# 短信验证码服务 (阿里云号码认证)
+sms:
+  provider: ${SMS_PROVIDER:mock}  # mock=开发环境, aliyun=阿里云
+  aliyun:
+    region-id: ${ALIYUN_REGION_ID:cn-hangzhou}
+    access-key-id: ${ALIYUN_ACCESS_KEY_ID:}
+    access-key-secret: ${ALIYUN_ACCESS_KEY_SECRET:}
+    sign-name: ${ALIYUN_SMS_SIGN_NAME:}
+    template-code: ${ALIYUN_SMS_TEMPLATE_CODE:}

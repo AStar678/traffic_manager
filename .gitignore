@@ -14,22 +14,27 @@
 frontend/node_modules/
 frontend/dist/
 frontend/.env.local
-frontend/*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
 # --- Backend (Java) ---
 backend/target/
 backend/.classpath
 backend/.project
 backend/.settings/
-backend/*.log
 
-# --- Algorithm (Python) ---
-algorithm/__pycache__/
-algorithm/**/__pycache__/
-algorithm/.venv/
-algorithm/venv/
-algorithm/*.pyc
-algorithm/.env
+# --- Python ---
+__pycache__/
+*.py[cod]
+.Python
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.env
 
 # --- Models (large files) ---
 algorithm/models/**/*.pt
@@ -42,11 +47,23 @@ algorithm/models/**/*.pb
 data/datasets/
 data/samples/**/*.mp4
 data/samples/**/*.avi
+*.mv.db
+*.trace.db
+*.lock.db
 
 # --- Uploads ---
 uploads/
 temp/
 *.tmp
+
+# --- Logs and runtime output ---
+logs/
+*.log
+screenlog.*
+.playwright-cli/
+output/
+test-results/
+playwright-report/
 
 # --- OS ---
 .DS_Store

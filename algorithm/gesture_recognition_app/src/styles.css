@@ -275,8 +275,7 @@ label {
 }
 
 input[type="text"],
-select,
-.auto-kind-value {
+select {
   width: 100%;
   min-height: 40px;
   border: 1px solid #cbd5d0;
@@ -284,13 +283,6 @@ select,
   padding: 0 11px;
   color: #24302f;
   background: #ffffff;
-}
-
-.auto-kind-value {
-  display: flex;
-  align-items: center;
-  color: #245c58;
-  font-weight: 800;
 }
 
 input[type="text"]:focus,
@@ -385,6 +377,85 @@ input[type="range"] {
   color: #245c58;
 }
 
+.countdown-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 3100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(14, 21, 20, 0.58);
+}
+
+.countdown-screen[hidden] {
+  display: none;
+}
+
+.countdown-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px;
+  gap: 16px;
+  align-items: stretch;
+  width: min(780px, calc(100vw - 48px));
+  border: 1px solid rgba(226, 238, 233, 0.24);
+  border-radius: 8px;
+  padding: 16px;
+  color: #f5fbf8;
+  background: #172321;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
+}
+
+.countdown-preview {
+  position: relative;
+  overflow: hidden;
+  min-height: 280px;
+  border-radius: 6px;
+  background: #0d1514;
+  aspect-ratio: 16 / 9;
+}
+
+.countdown-badge {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  border: 1px solid rgba(189, 215, 205, 0.36);
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: #d9ede6;
+  background: rgba(12, 22, 20, 0.7);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.countdown-info {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  min-width: 0;
+  border-left: 1px solid rgba(226, 238, 233, 0.14);
+  padding-left: 16px;
+  text-align: center;
+}
+
+.countdown-info span {
+  color: #b8c9c3;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.countdown-info strong {
+  font-size: 96px;
+  line-height: 1;
+}
+
+.countdown-info p {
+  margin: 0;
+  color: #d3e1dc;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
 @media (max-width: 1100px) {
   .layout {
     grid-template-columns: 1fr;
@@ -411,6 +482,31 @@ input[type="range"] {
 
   .video-shell {
     min-height: 240px;
+  }
+
+  .countdown-screen {
+    padding: 12px;
+  }
+
+  .countdown-panel {
+    grid-template-columns: 1fr;
+    width: 100%;
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .countdown-preview {
+    min-height: 0;
+  }
+
+  .countdown-info {
+    border-left: 0;
+    border-top: 1px solid rgba(226, 238, 233, 0.14);
+    padding: 12px 0 0;
+  }
+
+  .countdown-info strong {
+    font-size: 72px;
   }
 
   .readout-grid,

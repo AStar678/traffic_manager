@@ -11,9 +11,8 @@ from typing import Any
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "sampleTarget": 45,
-    "recordingWarmupFrames": 60,
-    "staticMatchThreshold": 0.84,
-    "dynamicMatchThreshold": 0.78,
+    "staticMatchThreshold": 0.70,
+    "dynamicMatchThreshold": 0.70,
     "palmDirectionThreshold": 0.28,
     "palmWorldDirectionThreshold": 0.62,
     "palmWorldMismatchPenalty": 0.45,
@@ -109,17 +108,13 @@ def create_recognition_engine(initial_prototypes: list[dict[str, Any]] | None, c
 def update_engine_config(engine: dict[str, Any], next_config: dict[str, Any]) -> dict[str, Any]:
     engine["config"] = normalize_config(next_config)
     sample_target = engine["config"]["sampleTarget"]
-    warmup_target = engine["config"]["recordingWarmupFrames"]
     engine["liveVectors"] = engine["liveVectors"][-sample_target:]
     engine["staticStillSince"] = 0.0
     engine["lastStableName"] = ""
     engine["stableSince"] = 0.0
     if engine.get("recording"):
         recording = engine["recording"]
-        recording.setdefault("analysisVectors", [])
         recording.setdefault("vectors", [])
-        if len(recording["analysisVectors"]) > warmup_target:
-            recording["analysisVectors"] = recording["analysisVectors"][-warmup_target:]
         if len(recording["vectors"]) > sample_target:
             recording["vectors"] = recording["vectors"][-sample_target:]
     return engine["config"]
@@ -128,18 +123,20 @@ def update_engine_config(engine: dict[str, Any], next_config: dict[str, Any]) ->
 def start_recording(engine: dict[str, Any], options: dict[str, Any]) -> dict[str, Any]:
     name = str(options.get("name") or options.get("gestureName") or "").strip()
     action = normalize_action(options.get("action") or options.get("actionType") or "NONE")
+    kind = str(options.get("kind") or options.get("gestureKind") or "").strip()
     if not name:
         raise ValueError("动作名称不能为空")
+    if kind not in {"dynamic", "static"}:
+        raise ValueError("请选择动态或静态手势类型")
 
     engine["recording"] = {
         "id": random_id(),
         "name": name,
         "action": action,
-        "kind": "pending",
-        "phase": "detecting",
+        "kind": kind,
+        "phase": "sampling",
         "motion": 0.0,
         "holdMs": int(options.get("holdMs") or engine["config"]["defaultHoldMs"]),
-        "analysisVectors": [],
         "vectors": [],
     }
     return get_recording_status(engine)
@@ -286,46 +283,40 @@ def clear_prototypes(engine: dict[str, Any]) -> list[dict[str, Any]]:
 def get_recording_status(engine: dict[str, Any]) -> dict[str, Any]:
     if not engine.get("recording"):
         config = engine["config"]
-        total_target = config["recordingWarmupFrames"] + config["sampleTarget"]
         return {
             "active": False,
-            "kind": "pending",
+            "kind": "static",
             "phase": "idle",
             "count": 0,
-            "target": total_target,
+            "target": config["sampleTarget"],
             "detectCount": 0,
-            "detectTarget": config["recordingWarmupFrames"],
+            "detectTarget": 0,
             "sampleCount": 0,
             "sampleTarget": config["sampleTarget"],
             "totalCount": 0,
-            "totalTarget": total_target,
+            "totalTarget": config["sampleTarget"],
             "motion": 0,
             "motionLabel": motion_label(0, config),
         }
     recording = engine["recording"]
     config = engine["config"]
-    recording.setdefault("analysisVectors", [])
     recording.setdefault("vectors", [])
-    detect_count = len(recording["analysisVectors"])
     sample_count = len(recording["vectors"])
-    total_target = config["recordingWarmupFrames"] + config["sampleTarget"]
-    phase = recording.get("phase") or "detecting"
-    count = detect_count if phase == "detecting" else sample_count
-    target = config["recordingWarmupFrames"] if phase == "detecting" else config["sampleTarget"]
+    phase = recording.get("phase") or "sampling"
     return {
         "active": True,
         "id": recording["id"],
         "name": recording["name"],
         "kind": recording["kind"],
         "phase": phase,
-        "count": count,
-        "target": target,
-        "detectCount": detect_count,
-        "detectTarget": config["recordingWarmupFrames"],
+        "count": sample_count,
+        "target": config["sampleTarget"],
+        "detectCount": 0,
+        "detectTarget": 0,
         "sampleCount": sample_count,
         "sampleTarget": config["sampleTarget"],
-        "totalCount": detect_count + sample_count,
-        "totalTarget": total_target,
+        "totalCount": sample_count,
+        "totalTarget": config["sampleTarget"],
         "motion": recording.get("motion", 0),
         "motionLabel": motion_label(float(recording.get("motion") or 0), config),
     }
@@ -360,10 +351,6 @@ def find_prototype(prototypes: list[dict[str, Any]], prototype_id: str) -> dict[
 
 def finish_recording(engine: dict[str, Any]) -> dict[str, Any]:
     recording = engine["recording"]
-    if recording.get("kind") not in {"dynamic", "static"}:
-        motion = sequence_motion(recording["analysisVectors"] or recording["vectors"], engine["config"])
-        recording["kind"] = infer_kind_from_motion(motion, engine["config"])
-        recording["motion"] = motion
     prototype = {
         "id": random_id(),
         "name": recording["name"],
@@ -386,24 +373,8 @@ def finish_recording(engine: dict[str, Any]) -> dict[str, Any]:
 def process_recording_frame(engine: dict[str, Any], vector: list[float]) -> dict[str, Any] | None:
     recording = engine["recording"]
     config = engine["config"]
-    warmup_target = config["recordingWarmupFrames"]
-    recording.setdefault("analysisVectors", [])
     recording.setdefault("vectors", [])
 
-    if len(recording["analysisVectors"]) < warmup_target:
-        recording["phase"] = "detecting"
-        recording["analysisVectors"].append(vector)
-        if len(recording["analysisVectors"]) >= warmup_target:
-            motion = sequence_motion(recording["analysisVectors"], config)
-            recording["motion"] = motion
-            recording["kind"] = infer_kind_from_motion(motion, config)
-            recording["phase"] = "sampling"
-        return None
-
-    if recording.get("kind") not in {"dynamic", "static"}:
-        motion = sequence_motion(recording["analysisVectors"], config)
-        recording["motion"] = motion
-        recording["kind"] = infer_kind_from_motion(motion, config)
     recording["phase"] = "sampling"
     recording["vectors"].append(vector)
     if len(recording["vectors"]) >= config["sampleTarget"]:
@@ -428,13 +399,7 @@ def create_recording_recognition(
         }
 
     recording = engine.get("recording") or {}
-    phase = recording.get("phase")
-    if phase == "detecting":
-        trigger_state = "动态判定中"
-    elif phase == "sampling":
-        trigger_state = f"{kind_label(recording.get('kind'))}采样中"
-    else:
-        trigger_state = "录入中"
+    trigger_state = f"{kind_label(recording.get('kind'))}采样中" if recording else "录入中"
     return {
         "accepted": False,
         "name": recording.get("name") or "录入中",

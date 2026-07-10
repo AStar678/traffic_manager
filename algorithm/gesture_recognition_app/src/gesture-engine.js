@@ -30,22 +30,23 @@ export function updateEngineConfig(engine, nextConfig) {
   engine.lastStableName = "";
   engine.stableSince = 0;
   if (engine.recording) {
-    engine.recording.analysisVectors = (engine.recording.analysisVectors || []).slice(-recordingWarmupFrames(engine.config));
     engine.recording.vectors = (engine.recording.vectors || []).slice(-engine.config.sampleTarget);
   }
   return engine.config;
 }
 
 export function startRecording(engine, options) {
+  if (!["dynamic", "static"].includes(options.kind)) {
+    throw new Error("请选择动态或静态手势类型");
+  }
   engine.recording = {
     id: cryptoRandomId(),
     name: options.name,
     action: options.action || "NONE",
-    kind: "pending",
-    phase: "detecting",
+    kind: options.kind,
+    phase: "sampling",
     motion: 0,
     holdMs: Number(options.holdMs || engine.config.defaultHoldMs),
-    analysisVectors: [],
     vectors: []
   };
   return getRecordingStatus(engine);
@@ -125,42 +126,40 @@ export function clearPrototypes(engine) {
 }
 
 export function getRecordingStatus(engine) {
-  const warmupTarget = recordingWarmupFrames(engine.config);
   if (!engine.recording) {
     return {
       active: false,
-      kind: "pending",
+      kind: "static",
       phase: "idle",
       count: 0,
-      target: warmupTarget + engine.config.sampleTarget,
+      target: engine.config.sampleTarget,
       detectCount: 0,
-      detectTarget: warmupTarget,
+      detectTarget: 0,
       sampleCount: 0,
       sampleTarget: engine.config.sampleTarget,
       totalCount: 0,
-      totalTarget: warmupTarget + engine.config.sampleTarget,
+      totalTarget: engine.config.sampleTarget,
       motion: 0,
       motionLabel: motionLabel(0, engine.config)
     };
   }
 
-  const detectCount = (engine.recording.analysisVectors || []).length;
   const sampleCount = (engine.recording.vectors || []).length;
-  const phase = engine.recording.phase || "detecting";
+  const phase = engine.recording.phase || "sampling";
   return {
     active: true,
     id: engine.recording.id,
     name: engine.recording.name,
     kind: engine.recording.kind,
     phase,
-    count: phase === "detecting" ? detectCount : sampleCount,
-    target: phase === "detecting" ? warmupTarget : engine.config.sampleTarget,
-    detectCount,
-    detectTarget: warmupTarget,
+    count: sampleCount,
+    target: engine.config.sampleTarget,
+    detectCount: 0,
+    detectTarget: 0,
     sampleCount,
     sampleTarget: engine.config.sampleTarget,
-    totalCount: detectCount + sampleCount,
-    totalTarget: warmupTarget + engine.config.sampleTarget,
+    totalCount: sampleCount,
+    totalTarget: engine.config.sampleTarget,
     motion: engine.recording.motion || 0,
     motionLabel: motionLabel(engine.recording.motion || 0, engine.config)
   };
@@ -184,11 +183,6 @@ export function summarizePrototypes(prototypes) {
 
 function finishRecording(engine) {
   const recording = engine.recording;
-  if (!["dynamic", "static"].includes(recording.kind)) {
-    const motion = sequenceMotion(recording.analysisVectors?.length ? recording.analysisVectors : recording.vectors, engine.config);
-    recording.kind = inferKindFromMotion(motion, engine.config);
-    recording.motion = motion;
-  }
   const vector = meanVector(recording.vectors);
   const motion = sequenceMotion(recording.vectors, engine.config);
   const prototype = {
@@ -211,28 +205,8 @@ function finishRecording(engine) {
 function processRecordingFrame(engine, vector) {
   const recording = engine.recording;
   const config = engine.config;
-  const warmupTarget = recordingWarmupFrames(config);
 
-  recording.analysisVectors ||= [];
   recording.vectors ||= [];
-
-  if (recording.analysisVectors.length < warmupTarget) {
-    recording.phase = "detecting";
-    recording.analysisVectors.push(vector);
-    if (recording.analysisVectors.length >= warmupTarget) {
-      const motion = sequenceMotion(recording.analysisVectors, config);
-      recording.motion = motion;
-      recording.kind = inferKindFromMotion(motion, config);
-      recording.phase = "sampling";
-    }
-    return null;
-  }
-
-  if (!["dynamic", "static"].includes(recording.kind)) {
-    const motion = sequenceMotion(recording.analysisVectors, config);
-    recording.motion = motion;
-    recording.kind = inferKindFromMotion(motion, config);
-  }
 
   recording.phase = "sampling";
   recording.vectors.push(vector);
@@ -256,9 +230,7 @@ function createRecordingRecognition(engine, recordingComplete, liveMotion) {
   }
 
   const recording = engine.recording || {};
-  const triggerState = recording.phase === "detecting"
-    ? "动态判定中"
-    : `${kindLabel(recording.kind)}采样中`;
+  const triggerState = recording ? `${kindLabel(recording.kind)}采样中` : "录入中";
   return {
     accepted: false,
     name: recording.name || "录入中",
@@ -633,10 +605,6 @@ function inferKindFromMotion(motion, config) {
 
 function kindLabel(kind) {
   return kind === "dynamic" ? "动态轨迹" : "静态姿态";
-}
-
-function recordingWarmupFrames(config) {
-  return Number(config.recordingWarmupFrames || 60);
 }
 
 function normalizeConfig(config) {

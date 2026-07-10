@@ -28,7 +28,57 @@ from .engine import (
     update_prototype,
 )
 
-BUILT_IN_GESTURES = []
+BUILT_IN_GESTURES = [
+    {
+        "gestureCode": "Closed_Fist",
+        "gestureName": "握拳",
+        "gestureKind": "static",
+        "gestureSource": "built_in",
+        "actionType": "NONE",
+    },
+    {
+        "gestureCode": "Open_Palm",
+        "gestureName": "手掌张开",
+        "gestureKind": "static",
+        "gestureSource": "built_in",
+        "actionType": "NONE",
+    },
+    {
+        "gestureCode": "Pointing_Up",
+        "gestureName": "单指向上",
+        "gestureKind": "static",
+        "gestureSource": "built_in",
+        "actionType": "NONE",
+    },
+    {
+        "gestureCode": "Thumb_Down",
+        "gestureName": "拇指向下",
+        "gestureKind": "static",
+        "gestureSource": "built_in",
+        "actionType": "NONE",
+    },
+    {
+        "gestureCode": "Thumb_Up",
+        "gestureName": "拇指向上",
+        "gestureKind": "static",
+        "gestureSource": "built_in",
+        "actionType": "NONE",
+    },
+    {
+        "gestureCode": "Victory",
+        "gestureName": "胜利手势",
+        "gestureKind": "static",
+        "gestureSource": "built_in",
+        "actionType": "NONE",
+    },
+    {
+        "gestureCode": "ILoveYou",
+        "gestureName": "I Love You",
+        "gestureKind": "static",
+        "gestureSource": "built_in",
+        "actionType": "NONE",
+    },
+]
 
 
 class GestureRecognitionService:
@@ -211,20 +261,22 @@ class GestureRecognitionService:
 
     def _built_in_legacy_gestures(self) -> list[dict[str, Any]]:
         settings = {item["gestureCode"]: item for item in self._merged_control_settings(include_prototypes=False)}
+        default_hold_ms = int(self.engine["config"].get("defaultHoldMs") or 1200)
         gestures = []
         for item in BUILT_IN_GESTURES:
             setting = settings.get(item["gestureCode"], {})
             action_type = setting.get("actionType") or item["actionType"]
+            hold_ms = normalize_positive_int(setting.get("holdMs"), default_hold_ms)
             gestures.append({
                 "gestureCode": item["gestureCode"],
                 "gestureName": setting.get("gestureName") or item["gestureName"],
                 "action": action_label(action_type),
                 "actionType": action_type,
-                "kind": "built_in",
-                "source": "built_in",
+                "kind": item.get("gestureKind") or "static",
+                "source": item.get("gestureSource") or "built_in",
                 "sampleCount": 0,
                 "motion": 0,
-                "holdMs": None,
+                "holdMs": hold_ms,
                 "createdAt": None,
                 "enabled": setting.get("enabled", True),
                 "vector": [],
@@ -256,34 +308,48 @@ class GestureRecognitionService:
 
     def _default_control_setting(self, item: dict[str, Any]) -> dict[str, Any]:
         action_type = item.get("actionType") or "NONE"
+        hold_ms = normalize_positive_int(item.get("holdMs"), self.engine["config"].get("defaultHoldMs"))
         return {
             "gestureCode": str(item.get("gestureCode")),
             "gestureName": item.get("gestureName"),
+            "gestureKind": item.get("gestureKind") or item.get("kind") or "static",
+            "gestureSource": item.get("gestureSource") or item.get("source") or "built_in",
             "actionType": action_type,
             "actionLabel": action_label(action_type),
             "enabled": action_type != "NONE",
+            "holdMs": hold_ms,
         }
 
     def _prototype_control_setting(self, prototype: dict[str, Any]) -> dict[str, Any]:
         action_type = prototype.get("action") or "NONE"
+        hold_ms = normalize_positive_int(prototype.get("holdMs"), self.engine["config"].get("defaultHoldMs"))
         return {
             "gestureCode": str(prototype.get("id")),
             "gestureName": prototype.get("name"),
+            "gestureKind": prototype.get("kind", "static"),
+            "gestureSource": prototype.get("source", "custom"),
             "actionType": action_type,
             "actionLabel": action_label(action_type),
             "enabled": action_type != "NONE",
+            "holdMs": hold_ms,
         }
 
     def _normalize_control_setting(self, item: dict[str, Any]) -> dict[str, Any]:
         action_type = item.get("actionType") or "NONE"
         enabled = item.get("enabled", action_type != "NONE")
-        return {
+        setting = {
             "gestureCode": str(item.get("gestureCode")),
             "gestureName": str(item.get("gestureName") or item.get("gestureCode") or "").strip(),
+            "gestureKind": str(item.get("gestureKind") or item.get("kind") or "static").strip(),
+            "gestureSource": str(item.get("gestureSource") or item.get("source") or "").strip(),
             "actionType": action_type,
             "actionLabel": item.get("actionLabel") or action_label(action_type),
             "enabled": bool(enabled) and action_type != "NONE",
         }
+        hold_ms = normalize_positive_int(item.get("holdMs"), None)
+        if hold_ms is not None:
+            setting["holdMs"] = hold_ms
+        return setting
 
     def _vector_from_payload(self, payload: dict[str, Any]) -> list[float]:
         if isinstance(payload.get("vector"), list):
@@ -350,6 +416,17 @@ class GestureRecognitionService:
             else:
                 output[key] = value
         return output
+
+
+def normalize_positive_int(value: Any, fallback: Any = None) -> int | None:
+    for candidate in (value, fallback):
+        try:
+            numeric = int(candidate)
+        except (TypeError, ValueError):
+            continue
+        if numeric > 0:
+            return numeric
+    return None
 
 
 gesture_service = GestureRecognitionService(

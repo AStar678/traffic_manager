@@ -47,7 +47,7 @@
       <aside class="side-panel">
         <section class="panel">
           <div class="panel-head">
-            <h2>已录入动作</h2>
+            <h2>手势库</h2>
             <span id="prototypeCount">0 个</span>
           </div>
           <div class="prototype-list" id="prototypeList"></div>
@@ -93,7 +93,7 @@
           <section class="manager-section record-section">
             <div class="panel-head">
               <h3>录入手势</h3>
-              <span id="sampleCount">0 / 105 帧</span>
+              <span id="sampleCount">0 / 45 帧</span>
             </div>
             <label>
               动作名称
@@ -101,8 +101,11 @@
             </label>
             <div class="field-grid">
               <label>
-                识别类型
-                <span class="auto-kind-value" id="gestureKindStatus">自动判定</span>
+                手势类型
+                <select id="gestureKindSelect">
+                  <option value="static" selected>静态姿态</option>
+                  <option value="dynamic">动态轨迹</option>
+                </select>
               </label>
               <label>
                 触发持续时间
@@ -117,7 +120,7 @@
               <button class="primary" id="recordBtn" type="button" disabled @click="startCountdownRecording">录入新手势</button>
               <button id="cancelRecordBtn" type="button" disabled @click="stopRecording">取消录入</button>
             </div>
-            <p class="hint" id="recordHint">点击录入后会先倒数 3 秒，再采集 60 帧判断动态/静态，随后采集 45 帧保存手势。</p>
+            <p class="hint" id="recordHint">先选择静态姿态或动态轨迹，点击录入后倒数 3 秒并采集 45 帧保存手势。</p>
           </section>
 
           <section class="manager-section gesture-management-panel">
@@ -133,8 +136,15 @@
 
     <div class="countdown-screen" v-show="isCountdownOpen" role="status" aria-live="assertive">
       <div class="countdown-panel">
-        <span>准备录入</span>
-        <strong>{{ recordingCountdown }}</strong>
+        <div class="countdown-preview">
+          <video id="countdownWebcam" autoplay playsinline muted></video>
+          <div class="countdown-badge">摄像头已打开</div>
+        </div>
+        <div class="countdown-info">
+          <span>准备录入</span>
+          <strong>{{ recordingCountdown }}</strong>
+          <p>保持手势在画面中央</p>
+        </div>
       </div>
     </div>
   </div>
@@ -151,10 +161,29 @@ import {
   saveOwnerGestureControlSettings
 } from '@/api/ownerGestures'
 import { OWNER_GESTURE_ACTIONS } from '@/utils/constants'
-import { extractFeatureVector } from '@/utils/ownerGesturePrototype'
+import {
+  OWNER_GESTURE_RECOGNITION_CONFIG,
+  extractFeatureVector,
+  sequenceMotion
+} from '@/utils/ownerGesturePrototype'
 import { useVehicleStore } from '@/stores/vehicle'
 
 const MODEL_PATH = '/models/gesture_recognizer.task'
+const GESTURE_FRAME_INTERVAL_MS = 33
+const BUILT_IN_GESTURE_THRESHOLD = 0.7
+const BUILT_IN_GESTURE_FALLBACK_HOLD_MS = 1200
+const BUILT_IN_GESTURE_COOLDOWN_MS = 1500
+const BUILT_IN_DISPLAY_GRACE_MS = 500
+const BUILT_IN_GESTURE_LABELS = {
+  Closed_Fist: '握拳',
+  Open_Palm: '手掌张开',
+  Pointing_Up: '单指向上',
+  Thumb_Down: '拇指向下',
+  Thumb_Up: '拇指向上',
+  Victory: '胜利手势',
+  ILoveYou: 'I Love You',
+  None: '未识别'
+}
 
 const pageRef = ref(null)
 const vehicleStore = useVehicleStore()
@@ -169,6 +198,7 @@ let recognizer
 let mediaStream
 let animationFrame
 let lastVideoTime = -1
+let lastPredictFrameAt = 0
 let prototypes = []
 let isRecording = false
 let recognitionSocket
@@ -177,6 +207,12 @@ let shouldReconnectSocket = true
 let controlSettings = []
 let actionOptions = OWNER_GESTURE_ACTIONS
 let countdownTimer
+let lastBuiltInGestureCode = ''
+let lastBuiltInGestureAt = 0
+let lastBuiltInMatchAt = 0
+let builtInGestureStableCode = ''
+let builtInGestureStableSince = 0
+let builtInGestureVectors = []
 
 onMounted(async () => {
   await nextTick()
@@ -198,6 +234,7 @@ function bindElements() {
   els = {
     modelStatus: find('#modelStatus'),
     webcam: find('#webcam'),
+    countdownWebcam: find('#countdownWebcam'),
     overlay: find('#overlay'),
     cameraEmpty: find('#cameraEmpty'),
     startCameraBtn: find('#startCameraBtn'),
@@ -207,7 +244,7 @@ function bindElements() {
     similarityScore: find('#similarityScore'),
     triggerState: find('#triggerState'),
     gestureNameInput: find('#gestureNameInput'),
-    gestureKindStatus: find('#gestureKindStatus'),
+    gestureKindSelect: find('#gestureKindSelect'),
     holdMsSelect: find('#holdMsSelect'),
     recordBtn: find('#recordBtn'),
     cancelRecordBtn: find('#cancelRecordBtn'),
@@ -298,6 +335,9 @@ async function startCamera() {
       audio: false
     })
     els.webcam.srcObject = mediaStream
+    if (els.countdownWebcam) {
+      els.countdownWebcam.srcObject = mediaStream
+    }
     await els.webcam.play()
     resizeCanvas()
     els.cameraEmpty.hidden = true
@@ -318,10 +358,23 @@ function stopCamera() {
     cancelAnimationFrame(animationFrame)
   }
   animationFrame = undefined
+  window.clearInterval(countdownTimer)
+  isCountdownOpen.value = false
+  recordingCountdown.value = 3
+  lastPredictFrameAt = 0
+  lastBuiltInGestureCode = ''
+  lastBuiltInGestureAt = 0
+  lastBuiltInMatchAt = 0
+  builtInGestureStableCode = ''
+  builtInGestureStableSince = 0
+  builtInGestureVectors = []
   mediaStream?.getTracks().forEach(track => track.stop())
   mediaStream = undefined
   if (els.webcam) {
     els.webcam.srcObject = null
+  }
+  if (els.countdownWebcam) {
+    els.countdownWebcam.srcObject = null
   }
   if (ctx && els.overlay) {
     ctx.clearRect(0, 0, els.overlay.width, els.overlay.height)
@@ -340,18 +393,31 @@ function stopCamera() {
 function predictLoop() {
   if (!recognizer || !mediaStream) return
 
-  if (els.webcam.videoWidth && els.webcam.videoHeight) {
-    resizeCanvas()
-  }
+  try {
+    const now = performance.now()
+    if (now - lastPredictFrameAt < GESTURE_FRAME_INTERVAL_MS) {
+      return
+    }
+    lastPredictFrameAt = now
 
-  if (els.webcam.currentTime !== lastVideoTime) {
-    lastVideoTime = els.webcam.currentTime
-    const result = recognizer.recognizeForVideo(els.webcam, performance.now())
-    drawResult(result)
-    updateRecognition(result)
-  }
+    if (els.webcam.videoWidth && els.webcam.videoHeight) {
+      resizeCanvas()
+    }
 
-  animationFrame = requestAnimationFrame(predictLoop)
+    if (els.webcam.currentTime !== lastVideoTime) {
+      lastVideoTime = els.webcam.currentTime
+      const result = recognizer.recognizeForVideo(els.webcam, now)
+      drawResult(result)
+      updateRecognition(result)
+    }
+  } catch (error) {
+    console.error('Gesture recognition frame failed.', error)
+    els.triggerState.textContent = '识别帧异常，正在恢复'
+  } finally {
+    if (recognizer && mediaStream) {
+      animationFrame = requestAnimationFrame(predictLoop)
+    }
+  }
 }
 
 function drawResult(result) {
@@ -374,6 +440,7 @@ function drawResult(result) {
 function updateRecognition(result) {
   const landmarks = result.landmarks?.[0]
   if (!landmarks) {
+    resetBuiltInGestureState()
     els.prototypeMatch.textContent = prototypes.length ? 'unknown' : '未录入'
     els.similarityScore.textContent = '--'
     els.triggerState.textContent = '未检测到手'
@@ -381,7 +448,93 @@ function updateRecognition(result) {
   }
 
   const vector = extractFeatureVector(landmarks, result.worldLandmarks?.[0])
+  handleBuiltInRecognition(result.gestures?.[0]?.[0], vector)
   sendRecognitionFrame(vector)
+}
+
+function handleBuiltInRecognition(category, vector) {
+  if (isRecording) return
+  const gestureCode = category?.categoryName
+  const score = Number(category?.score || 0)
+  const now = performance.now()
+  if (!gestureCode || gestureCode === 'None' || score < BUILT_IN_GESTURE_THRESHOLD) {
+    resetBuiltInGestureState()
+    return
+  }
+
+  const config = builtInGestureConfig()
+  const gestureName = translateBuiltin(gestureCode)
+  const recognitionHoldMs = builtInStaticRecognitionHoldMs(config)
+  const triggerHoldMs = builtInGestureHoldMs(gestureCode)
+  const motion = trackBuiltInGestureMotion(gestureCode, vector, config)
+  lastBuiltInMatchAt = now
+
+  if (motion > builtInStaticMotionLimit(config)) {
+    builtInGestureStableSince = 0
+    els.prototypeMatch.textContent = '静态确认中'
+    els.similarityScore.textContent = '--'
+    els.triggerState.textContent = '请保持静止'
+    return
+  }
+
+  if (!builtInGestureStableSince) {
+    builtInGestureStableSince = now
+  }
+  const stableElapsed = now - builtInGestureStableSince
+  if (stableElapsed < recognitionHoldMs) {
+    els.prototypeMatch.textContent = '静态确认中'
+    els.similarityScore.textContent = '--'
+    els.triggerState.textContent = builtInGestureHoldLabel(recognitionHoldMs - stableElapsed)
+    return
+  }
+
+  lastBuiltInMatchAt = now
+  els.prototypeMatch.textContent = gestureName
+  els.similarityScore.textContent = formatGestureScore(score)
+
+  if (gestureCode === lastBuiltInGestureCode && now - lastBuiltInGestureAt < BUILT_IN_GESTURE_COOLDOWN_MS) {
+    return
+  }
+
+  const binding = controlSettings.find(item => String(item.gestureCode) === String(gestureCode))
+  if (!binding?.enabled || binding.actionType === 'NONE') {
+    els.triggerState.textContent = '已识别，未关联车辆功能'
+    return
+  }
+
+  if (stableElapsed < triggerHoldMs) {
+    els.triggerState.textContent = `稳定中 ${formatHoldSeconds(triggerHoldMs - stableElapsed)}s`
+    return
+  }
+
+  lastBuiltInGestureCode = gestureCode
+  lastBuiltInGestureAt = now
+  void executeRecognizedGesture({
+    gestureCode,
+    name: gestureName,
+    score
+  })
+}
+
+function trackBuiltInGestureMotion(gestureCode, vector, config) {
+  if (gestureCode !== builtInGestureStableCode) {
+    builtInGestureStableCode = gestureCode
+    builtInGestureStableSince = 0
+    builtInGestureVectors = []
+  }
+  builtInGestureVectors.push(vector)
+  const sampleTarget = positiveMs(config.sampleTarget, OWNER_GESTURE_RECOGNITION_CONFIG.sampleTarget)
+  if (builtInGestureVectors.length > sampleTarget) {
+    builtInGestureVectors = builtInGestureVectors.slice(-sampleTarget)
+  }
+  return sequenceMotion(builtInGestureVectors, config)
+}
+
+function resetBuiltInGestureState() {
+  lastBuiltInMatchAt = 0
+  builtInGestureStableCode = ''
+  builtInGestureStableSince = 0
+  builtInGestureVectors = []
 }
 
 function openManagementDialog() {
@@ -414,6 +567,7 @@ async function startCountdownRecording() {
   window.clearInterval(countdownTimer)
   recordingCountdown.value = 3
   isCountdownOpen.value = true
+  await syncCountdownPreview()
   updateRecordButton()
   countdownTimer = window.setInterval(async () => {
     recordingCountdown.value -= 1
@@ -423,6 +577,18 @@ async function startCountdownRecording() {
     updateRecordButton()
     await beginRecording()
   }, 1000)
+}
+
+async function syncCountdownPreview() {
+  if (!els.countdownWebcam || !mediaStream) return
+  if (els.countdownWebcam.srcObject !== mediaStream) {
+    els.countdownWebcam.srcObject = mediaStream
+  }
+  try {
+    await els.countdownWebcam.play()
+  } catch (error) {
+    console.warn('Countdown camera preview could not autoplay.', error)
+  }
 }
 
 async function beginRecording() {
@@ -438,10 +604,17 @@ async function beginRecording() {
       method: 'POST',
       body: {
         name,
+        kind: els.gestureKindSelect.value,
         holdMs: Number(els.holdMsSelect.value)
       }
     })
-    els.recordHint.textContent = recordingPhaseHint({ active: true, phase: 'detecting', detectCount: 0, detectTarget: warmupTarget() })
+    els.recordHint.textContent = recordingPhaseHint({
+      active: true,
+      phase: 'sampling',
+      kind: els.gestureKindSelect.value,
+      sampleCount: 0,
+      sampleTarget: sampleTarget()
+    })
     applyServiceState(state)
   } catch (error) {
     console.error(error)
@@ -462,7 +635,7 @@ async function stopRecording(options = {}) {
 }
 
 function recordingHint() {
-  return `点击录入后会先倒数 3 秒，再采集 ${warmupTarget()} 帧判断动态/静态，随后采集 ${sampleTarget()} 帧保存手势。`
+  return `先选择静态姿态或动态轨迹，点击录入后倒数 3 秒并采集 ${sampleTarget()} 帧保存手势。`
 }
 
 function sendRecognitionFrame(vector) {
@@ -501,7 +674,9 @@ function applyServiceState(state) {
   if (state.recording) {
     isRecording = state.recording.active
     els.sampleCount.textContent = recordingProgressText(state.recording)
-    els.gestureKindStatus.textContent = isRecording ? kindLabel(state.recording.kind) : '自动判定'
+    if (isRecording && state.recording.kind && els.gestureKindSelect) {
+      els.gestureKindSelect.value = state.recording.kind
+    }
     els.cancelRecordBtn.disabled = !isRecording
     updateRecordButton()
     if (isRecording) {
@@ -511,19 +686,27 @@ function applyServiceState(state) {
 
   if (state.recordingComplete) {
     els.recordHint.textContent = `已录入“${state.recordingComplete.name}”为${kindLabel(state.recordingComplete.kind)}。`
-    els.gestureKindStatus.textContent = kindLabel(state.recordingComplete.kind)
+    if (els.gestureKindSelect) {
+      els.gestureKindSelect.value = state.recordingComplete.kind || els.gestureKindSelect.value
+    }
     els.gestureNameInput.value = ''
     void loadControlSettings()
   }
 
   if (state.recognition) {
     const recognition = state.recognition
-    els.prototypeMatch.textContent = recognition.name
-    els.similarityScore.textContent =
-      recognition.score === null || recognition.score === undefined
-        ? recognition.motionLabel || '--'
-        : `${recognition.score.toFixed(3)} · ${recognition.motionLabel}`
-    els.triggerState.textContent = recognition.triggerState
+    const shouldKeepBuiltInDisplay =
+      !recognition.accepted &&
+      lastBuiltInMatchAt &&
+      performance.now() - lastBuiltInMatchAt < BUILT_IN_DISPLAY_GRACE_MS
+    if (!shouldKeepBuiltInDisplay) {
+      els.prototypeMatch.textContent = recognition.name
+      els.similarityScore.textContent =
+        recognition.score === null || recognition.score === undefined
+          ? recognition.motionLabel || '--'
+          : formatGestureScore(recognition.score)
+      els.triggerState.textContent = recognition.triggerState
+    }
     if (recognition.triggered) {
       void executeRecognizedGesture(recognition)
     }
@@ -534,7 +717,49 @@ function applyServiceState(state) {
   }
 }
 
+function formatGestureScore(score) {
+  const numericScore = Number(score)
+  return Number.isFinite(numericScore) ? numericScore.toFixed(3) : '--'
+}
+
+function translateBuiltin(name) {
+  return BUILT_IN_GESTURE_LABELS[name] || name
+}
+
+function builtInGestureHoldMs(gestureCode) {
+  const setting = controlSettings.find(item => String(item.gestureCode) === String(gestureCode))
+  return positiveMs(setting?.holdMs, positiveMs(serviceConfig?.defaultHoldMs, BUILT_IN_GESTURE_FALLBACK_HOLD_MS))
+}
+
+function builtInStaticRecognitionHoldMs(config) {
+  return positiveMs(config.staticRecognitionHoldMs, OWNER_GESTURE_RECOGNITION_CONFIG.staticRecognitionHoldMs)
+}
+
+function builtInStaticMotionLimit(config) {
+  return positiveMs(config.staticMotionHardLimit, positiveMs(config.staticStillMotionLimit, OWNER_GESTURE_RECOGNITION_CONFIG.staticStillMotionLimit))
+}
+
+function builtInGestureConfig() {
+  return { ...OWNER_GESTURE_RECOGNITION_CONFIG, ...(serviceConfig || {}) }
+}
+
+function builtInGestureHoldLabel(remainingMs) {
+  return `静态保持 ${formatHoldSeconds(remainingMs)}s`
+}
+
+function formatHoldSeconds(ms) {
+  return (Math.ceil(Math.max(ms, 0) / 100) / 10).toFixed(1).replace(/\.0$/, '')
+}
+
+function positiveMs(value, fallback) {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback
+}
+
 function applyControlSettings(data = {}) {
+  if (data.config) {
+    serviceConfig = { ...(serviceConfig || {}), ...data.config }
+  }
   actionOptions = Array.isArray(data.actions) && data.actions.length ? data.actions : OWNER_GESTURE_ACTIONS
   controlSettings = Array.isArray(data.settings) ? data.settings : []
   renderPrototypes()
@@ -544,6 +769,9 @@ function applyControlSettings(data = {}) {
 function updateRecordButton() {
   if (els.recordBtn) {
     els.recordBtn.disabled = isRecording || isCountdownOpen.value || !recognizer
+  }
+  if (els.gestureKindSelect) {
+    els.gestureKindSelect.disabled = isRecording || isCountdownOpen.value
   }
 }
 
@@ -572,20 +800,21 @@ async function createRecognizer(vision) {
 }
 
 function renderPrototypes() {
-  els.prototypeCount.textContent = `${prototypes.length} 个`
-  if (!prototypes.length) {
+  const rows = gestureManagementRows()
+  els.prototypeCount.textContent = `${rows.length} 个`
+  if (!rows.length) {
     els.prototypeList.innerHTML = '<div class="empty-list">暂无动作，录入后会显示在这里。</div>'
     return
   }
 
   els.prototypeList.innerHTML = ''
-  for (const prototype of prototypes) {
+  for (const row of rows) {
     const item = document.createElement('div')
     item.className = 'prototype-item'
     item.innerHTML = `
       <div>
-        <strong>${escapeHtml(prototype.name)}</strong>
-        <span>${kindLabel(prototype.kind)} · ${controlLabelForGesture(prototype)}</span>
+        <strong>${escapeHtml(row.gestureName)}</strong>
+        <span>${sourceLabel(row.gestureSource)} · ${kindLabel(row.gestureKind)} · ${row.enabled ? escapeHtml(row.actionLabel) : '未关联控制'}</span>
       </div>
       <button type="button">管理</button>
     `
@@ -632,13 +861,15 @@ function renderGestureMappings() {
       item.classList.toggle('bound', event.target.value !== 'NONE')
     })
     item.querySelector('.delete-gesture-button').addEventListener('click', () => {
-      void deleteGesture(row.gestureCode)
+      void deleteGesture(row)
     })
     els.gestureMappingList.append(item)
   }
 }
 
-async function deleteGesture(gestureCode) {
+async function deleteGesture(row) {
+  if (isSystemGesture(row)) return
+  const gestureCode = row?.gestureCode
   if (!gestureCode) return
   try {
     applyServiceState(await apiRequest(`/api/prototypes/${encodeURIComponent(gestureCode)}`, { method: 'DELETE' }))
@@ -658,6 +889,7 @@ function gestureManagementRows() {
       gestureName: prototype.name || prototype.gestureName || String(gestureCode),
       gestureKind: prototype.kind || 'static',
       gestureSource: prototype.source || 'custom',
+      holdMs: positiveMs(prototype.holdMs, positiveMs(serviceConfig?.defaultHoldMs, BUILT_IN_GESTURE_FALLBACK_HOLD_MS)),
       actionType: 'NONE',
       actionLabel: '不触发控制',
       enabled: false
@@ -671,6 +903,7 @@ function gestureManagementRows() {
       ...setting,
       gestureCode,
       gestureName: setting.gestureName || rows.get(gestureCode)?.gestureName || gestureCode,
+      holdMs: positiveMs(setting.holdMs, rows.get(gestureCode)?.holdMs || positiveMs(serviceConfig?.defaultHoldMs, BUILT_IN_GESTURE_FALLBACK_HOLD_MS)),
       actionType: setting.actionType || 'NONE',
       actionLabel: setting.actionLabel || actionLabel(setting.actionType),
       enabled: Boolean(setting.enabled) && setting.actionType !== 'NONE'
@@ -702,6 +935,7 @@ async function saveControlBindings() {
     gestureName: row.gestureName,
     gestureKind: row.gestureKind,
     gestureSource: row.gestureSource,
+    holdMs: positiveMs(row.holdMs, positiveMs(serviceConfig?.defaultHoldMs, BUILT_IN_GESTURE_FALLBACK_HOLD_MS)),
     actionType: row.actionType || 'NONE',
     enabled: Boolean(row.actionType && row.actionType !== 'NONE')
   }))
@@ -788,7 +1022,6 @@ function isSystemGesture(row) {
 }
 
 function kindLabel(kind) {
-  if (kind === 'pending') return '自动判定中'
   return kind === 'dynamic' ? '动态轨迹' : '静态姿态'
 }
 
@@ -796,30 +1029,18 @@ function sampleTarget() {
   return serviceConfig?.sampleTarget || 45
 }
 
-function warmupTarget() {
-  return serviceConfig?.recordingWarmupFrames || 60
-}
-
 function recordingProgressText(recording) {
   if (!recording?.active) {
-    return `0 / ${warmupTarget() + sampleTarget()} 帧`
-  }
-  if (recording.phase === 'detecting') {
-    return `判定 ${recording.detectCount ?? recording.count ?? 0} / ${recording.detectTarget ?? warmupTarget()} 帧`
+    return `0 / ${sampleTarget()} 帧`
   }
   return `采样 ${recording.sampleCount ?? recording.count ?? 0} / ${recording.sampleTarget ?? sampleTarget()} 帧`
 }
 
 function recordingPhaseHint(recording) {
-  if (recording?.phase === 'detecting') {
-    const count = recording.detectCount ?? 0
-    const target = recording.detectTarget ?? warmupTarget()
-    return `正在判断动态/静态：${count} / ${target} 帧。`
-  }
   if (recording?.phase === 'sampling') {
     const count = recording.sampleCount ?? 0
     const target = recording.sampleTarget ?? sampleTarget()
-    return `已判定为${kindLabel(recording.kind)}，正在采样建立原型：${count} / ${target} 帧。`
+    return `正在录入${kindLabel(recording.kind)}：${count} / ${target} 帧。`
   }
   return recordingHint()
 }
@@ -1126,8 +1347,7 @@ label {
 }
 
 input[type="text"],
-select,
-.auto-kind-value {
+select {
   width: 100%;
   min-height: 40px;
   border: 1px solid #cbd5d0;
@@ -1135,13 +1355,6 @@ select,
   padding: 0 11px;
   color: #24302f;
   background: #ffffff;
-}
-
-.auto-kind-value {
-  display: flex;
-  align-items: center;
-  color: #245c58;
-  font-weight: 800;
 }
 
 input[type="text"]:focus,
@@ -1433,25 +1646,67 @@ input[type="range"] {
 
 .countdown-panel {
   display: grid;
-  place-items: center;
-  width: min(360px, calc(100vw - 48px));
-  min-height: 260px;
+  grid-template-columns: minmax(0, 1fr) 180px;
+  gap: 16px;
+  align-items: stretch;
+  width: min(780px, calc(100vw - 48px));
   border: 1px solid rgba(226, 238, 233, 0.24);
   border-radius: 8px;
+  padding: 16px;
   color: #f5fbf8;
   background: #172321;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
 }
 
-.countdown-panel span {
+.countdown-preview {
+  position: relative;
+  overflow: hidden;
+  min-height: 280px;
+  border-radius: 6px;
+  background: #0d1514;
+  aspect-ratio: 16 / 9;
+}
+
+.countdown-badge {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  border: 1px solid rgba(189, 215, 205, 0.36);
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: #d9ede6;
+  background: rgba(12, 22, 20, 0.7);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.countdown-info {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  min-width: 0;
+  border-left: 1px solid rgba(226, 238, 233, 0.14);
+  padding-left: 16px;
+  text-align: center;
+}
+
+.countdown-info span {
   color: #b8c9c3;
   font-size: 15px;
   font-weight: 800;
 }
 
-.countdown-panel strong {
+.countdown-info strong {
   font-size: 96px;
   line-height: 1;
+}
+
+.countdown-info p {
+  margin: 0;
+  color: #d3e1dc;
+  font-size: 14px;
+  line-height: 1.45;
 }
 
 @media (max-width: 1100px) {
@@ -1509,6 +1764,31 @@ input[type="range"] {
   .gesture-manager {
     width: calc(100vw - 24px);
     max-height: calc(100vh - 32px);
+  }
+
+  .countdown-screen {
+    padding: 12px;
+  }
+
+  .countdown-panel {
+    grid-template-columns: 1fr;
+    width: 100%;
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .countdown-preview {
+    min-height: 0;
+  }
+
+  .countdown-info {
+    border-left: 0;
+    border-top: 1px solid rgba(226, 238, 233, 0.14);
+    padding: 12px 0 0;
+  }
+
+  .countdown-info strong {
+    font-size: 72px;
   }
 
   .readout {

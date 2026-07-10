@@ -24,7 +24,7 @@ Content-Type: application/json
 
 {
   "staticRecognitionHoldMs": 300,
-  "staticMatchThreshold": 0.84
+  "staticMatchThreshold": 0.7
 }
 ```
 

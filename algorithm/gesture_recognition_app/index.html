@@ -56,7 +56,7 @@
           <section class="panel">
             <div class="panel-head">
               <h2>录入动作</h2>
-              <span id="sampleCount">0 / 105 帧</span>
+              <span id="sampleCount">0 / 45 帧</span>
             </div>
             <label>
               动作名称
@@ -77,8 +77,11 @@
             </label>
             <div class="field-grid">
               <label>
-                识别类型
-                <span class="auto-kind-value" id="gestureKindStatus">自动判定</span>
+                手势类型
+                <select id="gestureKindSelect">
+                  <option value="static" selected>静态姿态</option>
+                  <option value="dynamic">动态轨迹</option>
+                </select>
               </label>
               <label>
                 触发持续时间
@@ -93,7 +96,7 @@
               <button class="primary" id="recordBtn" disabled>开始录入</button>
               <button id="cancelRecordBtn" disabled>取消</button>
             </div>
-            <p class="hint" id="recordHint">录入时先采集 60 帧判断动态/静态，再采集 45 帧建立手势原型。</p>
+            <p class="hint" id="recordHint">先选择静态姿态或动态轨迹，点击录入后倒数 3 秒并采集 45 帧建立手势原型。</p>
           </section>
 
           <section class="panel">
@@ -129,6 +132,20 @@
           </section>
         </aside>
       </main>
+
+      <div class="countdown-screen" id="countdownScreen" hidden role="status" aria-live="assertive">
+        <div class="countdown-panel">
+          <div class="countdown-preview">
+            <video id="countdownWebcam" autoplay playsinline muted></video>
+            <div class="countdown-badge">摄像头已打开</div>
+          </div>
+          <div class="countdown-info">
+            <span>准备录入</span>
+            <strong id="countdownValue">3</strong>
+            <p>保持手势在画面中央</p>
+          </div>
+        </div>
+      </div>
     </div>
 
     <script type="module" src="/src/main.js"></script>

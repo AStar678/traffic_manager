@@ -195,11 +195,13 @@ public class OwnerGestureControlService {
             source = "custom";
         }
         String kind = firstNonBlank(item.get("gestureKind"), item.get("kind"));
+        Integer holdMs = normalizeHoldMs(firstNonNull(item.get("holdMs"), item.get("hold_ms")), 1200);
         Map<String, Object> gesture = new LinkedHashMap<>();
         gesture.put("gestureCode", gestureCode);
         gesture.put("gestureName", gestureName);
         gesture.put("gestureKind", kind);
         gesture.put("gestureSource", source);
+        gesture.put("holdMs", holdMs);
         return gesture;
     }
 
@@ -211,6 +213,7 @@ public class OwnerGestureControlService {
         setting.put("actionLabel", ACTION_LABELS.getOrDefault(actionType, actionType));
         setting.put("enabled", enabled);
         setting.put("bound", enabled);
+        setting.put("holdMs", normalizeHoldMs(setting.get("holdMs"), 1200));
         return setting;
     }
 
@@ -242,6 +245,32 @@ public class OwnerGestureControlService {
 
     private static String defaultIfBlank(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value;
+    }
+
+    private static Object firstNonNull(Object... values) {
+        for (Object value : values) {
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private static Integer normalizeHoldMs(Object value, Integer fallback) {
+        if (value instanceof Number number) {
+            int numeric = number.intValue();
+            return numeric > 0 ? numeric : fallback;
+        }
+        String text = stringValue(value).trim();
+        if (!text.isBlank()) {
+            try {
+                int numeric = Integer.parseInt(text);
+                return numeric > 0 ? numeric : fallback;
+            } catch (NumberFormatException ignored) {
+                return fallback;
+            }
+        }
+        return fallback;
     }
 
     private static String stringValue(Object value) {

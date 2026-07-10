@@ -1,7 +1,7 @@
 export const OWNER_GESTURE_RECOGNITION_CONFIG = {
   sampleTarget: 45,
-  staticMatchThreshold: 0.84,
-  dynamicMatchThreshold: 0.78,
+  staticMatchThreshold: 0.7,
+  dynamicMatchThreshold: 0.7,
   palmDirectionThreshold: 0.28,
   palmWorldDirectionThreshold: 0.62,
   palmWorldMismatchPenalty: 0.45,

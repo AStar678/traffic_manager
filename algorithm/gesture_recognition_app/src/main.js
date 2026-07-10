@@ -7,6 +7,9 @@ const MODEL_PATH = "/models/gesture_recognizer.task";
 const els = {
   modelStatus: document.querySelector("#modelStatus"),
   webcam: document.querySelector("#webcam"),
+  countdownWebcam: document.querySelector("#countdownWebcam"),
+  countdownScreen: document.querySelector("#countdownScreen"),
+  countdownValue: document.querySelector("#countdownValue"),
   overlay: document.querySelector("#overlay"),
   cameraEmpty: document.querySelector("#cameraEmpty"),
   startCameraBtn: document.querySelector("#startCameraBtn"),
@@ -18,7 +21,7 @@ const els = {
   triggerState: document.querySelector("#triggerState"),
   gestureNameInput: document.querySelector("#gestureNameInput"),
   actionSelect: document.querySelector("#actionSelect"),
-  gestureKindStatus: document.querySelector("#gestureKindStatus"),
+  gestureKindSelect: document.querySelector("#gestureKindSelect"),
   holdMsSelect: document.querySelector("#holdMsSelect"),
   recordBtn: document.querySelector("#recordBtn"),
   cancelRecordBtn: document.querySelector("#cancelRecordBtn"),
@@ -42,8 +45,10 @@ let animationFrame;
 let lastVideoTime = -1;
 let prototypes = [];
 let isRecording = false;
+let isCountdownOpen = false;
 let recognitionSocket;
 let serviceConfig;
+let countdownTimer;
 
 init();
 
@@ -67,7 +72,7 @@ async function init() {
 
 els.startCameraBtn.addEventListener("click", startCamera);
 els.stopCameraBtn.addEventListener("click", stopCamera);
-els.recordBtn.addEventListener("click", beginRecording);
+els.recordBtn.addEventListener("click", startCountdownRecording);
 els.cancelRecordBtn.addEventListener("click", () => stopRecording());
 els.clearStorageBtn.addEventListener("click", clearPrototypes);
 
@@ -105,12 +110,16 @@ function connectRecognitionStream() {
 }
 
 async function startCamera() {
+  if (mediaStream) return true;
   try {
     mediaStream = await navigator.mediaDevices.getUserMedia({
       video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
       audio: false
     });
     els.webcam.srcObject = mediaStream;
+    if (els.countdownWebcam) {
+      els.countdownWebcam.srcObject = mediaStream;
+    }
     await els.webcam.play();
     resizeCanvas();
     els.cameraEmpty.hidden = true;
@@ -118,18 +127,28 @@ async function startCamera() {
     els.stopCameraBtn.disabled = false;
     updateRecordButton();
     predictLoop();
+    return true;
   } catch (error) {
     console.error(error);
     els.recordHint.textContent = "摄像头启动失败：请在浏览器里允许摄像头权限。";
+    return false;
   }
 }
 
 function stopCamera() {
   cancelAnimationFrame(animationFrame);
   animationFrame = undefined;
+  window.clearInterval(countdownTimer);
+  isCountdownOpen = false;
+  if (els.countdownScreen) {
+    els.countdownScreen.hidden = true;
+  }
   mediaStream?.getTracks().forEach((track) => track.stop());
   mediaStream = undefined;
   els.webcam.srcObject = null;
+  if (els.countdownWebcam) {
+    els.countdownWebcam.srcObject = null;
+  }
   ctx.clearRect(0, 0, els.overlay.width, els.overlay.height);
   els.cameraEmpty.hidden = false;
   els.startCameraBtn.disabled = false;
@@ -190,6 +209,56 @@ function updateRecognition(result) {
   sendRecognitionFrame(vector);
 }
 
+async function startCountdownRecording() {
+  const name = els.gestureNameInput.value.trim();
+  if (!name) {
+    els.recordHint.textContent = "请先输入动作名称。";
+    els.gestureNameInput.focus();
+    return;
+  }
+  if (!recognizer) {
+    els.recordHint.textContent = "模型仍在加载，请稍后再录入。";
+    return;
+  }
+  if (!mediaStream) {
+    const started = await startCamera();
+    if (!started) return;
+  }
+
+  window.clearInterval(countdownTimer);
+  let remaining = 3;
+  isCountdownOpen = true;
+  els.countdownValue.textContent = String(remaining);
+  els.countdownScreen.hidden = false;
+  await syncCountdownPreview();
+  updateRecordButton();
+
+  countdownTimer = window.setInterval(async () => {
+    remaining -= 1;
+    if (remaining > 0) {
+      els.countdownValue.textContent = String(remaining);
+      return;
+    }
+    window.clearInterval(countdownTimer);
+    isCountdownOpen = false;
+    els.countdownScreen.hidden = true;
+    updateRecordButton();
+    await beginRecording();
+  }, 1000);
+}
+
+async function syncCountdownPreview() {
+  if (!els.countdownWebcam || !mediaStream) return;
+  if (els.countdownWebcam.srcObject !== mediaStream) {
+    els.countdownWebcam.srcObject = mediaStream;
+  }
+  try {
+    await els.countdownWebcam.play();
+  } catch (error) {
+    console.warn("Countdown camera preview could not autoplay.", error);
+  }
+}
+
 async function beginRecording() {
   const name = els.gestureNameInput.value.trim();
   if (!name) {
@@ -204,14 +273,16 @@ async function beginRecording() {
       body: {
         name,
         action: els.actionSelect.value,
+        kind: els.gestureKindSelect.value,
         holdMs: Number(els.holdMsSelect.value)
       }
     });
     els.recordHint.textContent = recordingPhaseHint({
       active: true,
-      phase: "detecting",
-      detectCount: 0,
-      detectTarget: warmupTarget()
+      phase: "sampling",
+      kind: els.gestureKindSelect.value,
+      sampleCount: 0,
+      sampleTarget: sampleTarget()
     });
     applyServiceState(state);
   } catch (error) {
@@ -233,7 +304,7 @@ async function stopRecording(options = {}) {
 }
 
 function recordingHint() {
-  return `录入时先采集 ${warmupTarget()} 帧判断动态/静态，再采集 ${sampleTarget()} 帧建立手势原型。`;
+  return `先选择静态姿态或动态轨迹，点击录入后倒数 3 秒并采集 ${sampleTarget()} 帧建立手势原型。`;
 }
 
 function sendRecognitionFrame(vector) {
@@ -271,7 +342,9 @@ function applyServiceState(state) {
   if (state.recording) {
     isRecording = state.recording.active;
     els.sampleCount.textContent = recordingProgressText(state.recording);
-    els.gestureKindStatus.textContent = isRecording ? kindLabel(state.recording.kind) : "自动判定";
+    if (isRecording && state.recording.kind && els.gestureKindSelect) {
+      els.gestureKindSelect.value = state.recording.kind;
+    }
     els.cancelRecordBtn.disabled = !isRecording;
     updateRecordButton();
     if (isRecording) {
@@ -281,7 +354,9 @@ function applyServiceState(state) {
 
   if (state.recordingComplete) {
     els.recordHint.textContent = `已录入“${state.recordingComplete.name}”为${kindLabel(state.recordingComplete.kind)}，现在可直接识别。`;
-    els.gestureKindStatus.textContent = kindLabel(state.recordingComplete.kind);
+    if (els.gestureKindSelect) {
+      els.gestureKindSelect.value = state.recordingComplete.kind || els.gestureKindSelect.value;
+    }
     els.gestureNameInput.value = "";
   }
 
@@ -301,7 +376,10 @@ function applyServiceState(state) {
 }
 
 function updateRecordButton() {
-  els.recordBtn.disabled = isRecording || !mediaStream || !recognizer;
+  els.recordBtn.disabled = isRecording || isCountdownOpen || !recognizer;
+  if (els.gestureKindSelect) {
+    els.gestureKindSelect.disabled = isRecording || isCountdownOpen;
+  }
 }
 
 async function createRecognizer(vision) {
@@ -414,7 +492,6 @@ function actionLabel(action) {
 }
 
 function kindLabel(kind) {
-  if (kind === "pending") return "自动判定中";
   return kind === "dynamic" ? "动态轨迹" : "静态姿态";
 }
 
@@ -422,30 +499,18 @@ function sampleTarget() {
   return serviceConfig?.sampleTarget || 45;
 }
 
-function warmupTarget() {
-  return serviceConfig?.recordingWarmupFrames || 60;
-}
-
 function recordingProgressText(recording) {
   if (!recording?.active) {
-    return `0 / ${warmupTarget() + sampleTarget()} 帧`;
-  }
-  if (recording.phase === "detecting") {
-    return `判定 ${recording.detectCount ?? recording.count ?? 0} / ${recording.detectTarget ?? warmupTarget()} 帧`;
+    return `0 / ${sampleTarget()} 帧`;
   }
   return `采样 ${recording.sampleCount ?? recording.count ?? 0} / ${recording.sampleTarget ?? sampleTarget()} 帧`;
 }
 
 function recordingPhaseHint(recording) {
-  if (recording?.phase === "detecting") {
-    const count = recording.detectCount ?? 0;
-    const target = recording.detectTarget ?? warmupTarget();
-    return `正在判断动态/静态：${count} / ${target} 帧。`;
-  }
   if (recording?.phase === "sampling") {
     const count = recording.sampleCount ?? 0;
     const target = recording.sampleTarget ?? sampleTarget();
-    return `已判定为${kindLabel(recording.kind)}，正在采样建立原型：${count} / ${target} 帧。`;
+    return `正在录入${kindLabel(recording.kind)}：${count} / ${target} 帧。`;
   }
   return recordingHint();
 }

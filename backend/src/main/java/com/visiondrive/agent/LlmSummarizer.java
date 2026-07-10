@@ -1,21 +1,56 @@
 package com.visiondrive.agent;
 
+import com.visiondrive.service.SystemLogService;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class LlmSummarizer {
 
+    private final RestTemplate restTemplate;
+    private final SystemLogService systemLogService;
+
+    @Value("${llm.api-key:}")
+    private String apiKey;
+
+    @Value("${llm.model:deepseek-chat}")
+    private String model;
+
+    @Value("${llm.base-url:https://api.deepseek.com/v1}")
+    private String baseUrl;
+
     /**
-     * 生成告警摘要（模拟 LLM 调用，实际可接入 DeepSeek API）
+     * 生成告警摘要。配置 LLM_API_KEY 后优先调用 LLM，失败时回退到本地模板。
      */
     public Map<String, Object> generateSummary(AnomalyEvent event) {
+        Map<String, Object> summary = generateTemplateSummary(event);
+        String llmAnalysis = generateLlmAnalysis(event);
+        if (llmAnalysis != null && !llmAnalysis.isBlank()) {
+            summary.put("llmAnalysis", llmAnalysis);
+        }
+        return summary;
+    }
+
+    private Map<String, Object> generateTemplateSummary(AnomalyEvent event) {
         Map<String, Object> summary = new HashMap<>();
 
         // 生成告警ID
@@ -49,19 +84,62 @@ public class LlmSummarizer {
     }
 
     /**
-     * 实际调用 LLM API 生成摘要（后续接入 DeepSeek）
+     * 实际调用 LLM API 生成摘要
      */
     public Map<String, Object> generateSummaryWithLLM(AnomalyEvent event) {
-        // 先使用模板生成
-        Map<String, Object> summary = generateSummary(event);
+        return generateSummary(event);
+    }
 
-        // TODO: 实际调用 LLM API
-        // 示例：
-        // String prompt = buildPrompt(event);
-        // String llmResponse = deepSeekClient.call(prompt);
-        // summary.put("llmAnalysis", llmResponse);
+    private String generateLlmAnalysis(AnomalyEvent event) {
+        if (apiKey == null || apiKey.isBlank()) {
+            return "";
+        }
 
-        return summary;
+        long startTime = System.currentTimeMillis();
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("anomalyType", event.getType().name());
+        detail.put("model", model);
+
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.setBearerAuth(apiKey);
+
+            Map<String, Object> requestBody = new LinkedHashMap<>();
+            requestBody.put("model", model);
+            requestBody.put("temperature", 0.2);
+            requestBody.put("messages", List.of(
+                    Map.of("role", "system", "content", "你是车载视觉系统的运维告警分析助手，请输出简洁、可执行的中文告警摘要。"),
+                    Map.of("role", "user", "content", buildPrompt(event))
+            ));
+
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    llmEndpoint(),
+                    HttpMethod.POST,
+                    new HttpEntity<>(requestBody, headers),
+                    Map.class
+            );
+
+            Map<?, ?> responseBody = response.getBody();
+            String content = extractContent(responseBody);
+            long totalTokens = extractTotalTokens(responseBody);
+
+            detail.put("latencyMs", System.currentTimeMillis() - startTime);
+            detail.put("tokens", totalTokens);
+            systemLogService.info("llm", "token_usage", detail);
+            return content;
+        } catch (ResourceAccessException e) {
+            detail.put("latencyMs", System.currentTimeMillis() - startTime);
+            detail.put("errorMessage", Objects.toString(e.getMessage(), ""));
+            systemLogService.warn("llm", "timeout", detail);
+            log.warn("LLM 告警摘要生成超时，使用本地模板: {}", e.getMessage());
+        } catch (Exception e) {
+            detail.put("latencyMs", System.currentTimeMillis() - startTime);
+            detail.put("errorMessage", Objects.toString(e.getMessage(), ""));
+            systemLogService.warn("llm", "failure", detail);
+            log.warn("LLM 告警摘要生成失败，使用本地模板: {}", e.getMessage());
+        }
+        return "";
     }
 
     private String buildPrompt(AnomalyEvent event) {
@@ -82,5 +160,40 @@ public class LlmSummarizer {
                 event.getMetrics(),
                 event.getSuggestedActions()
         );
+    }
+
+    private String llmEndpoint() {
+        String normalized = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        return normalized + "/chat/completions";
+    }
+
+    private String extractContent(Map<?, ?> responseBody) {
+        if (responseBody == null) {
+            return "";
+        }
+        Object choices = responseBody.get("choices");
+        if (choices instanceof List<?> choiceList && !choiceList.isEmpty() && choiceList.get(0) instanceof Map<?, ?> choice) {
+            Object message = choice.get("message");
+            if (message instanceof Map<?, ?> messageMap) {
+                return Objects.toString(messageMap.get("content"), "");
+            }
+            return Objects.toString(choice.get("text"), "");
+        }
+        return "";
+    }
+
+    private long extractTotalTokens(Map<?, ?> responseBody) {
+        if (responseBody == null || !(responseBody.get("usage") instanceof Map<?, ?> usage)) {
+            return 0;
+        }
+        Object totalTokens = usage.get("total_tokens");
+        if (totalTokens instanceof Number number) {
+            return number.longValue();
+        }
+        try {
+            return Long.parseLong(Objects.toString(totalTokens, "0"));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 }

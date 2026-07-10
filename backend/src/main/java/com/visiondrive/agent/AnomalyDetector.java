@@ -1,14 +1,20 @@
 package com.visiondrive.agent;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.visiondrive.model.entity.SystemLog;
 import com.visiondrive.repository.SystemLogRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.lang.management.ManagementFactory;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 
 @Slf4j
 @Component
@@ -16,6 +22,16 @@ import java.util.List;
 public class AnomalyDetector {
 
     private final SystemLogRepository systemLogRepository;
+    private final ObjectMapper objectMapper;
+
+    @Value("${alert.agent.failure-rate-threshold:0.3}")
+    private double failureRateThreshold;
+
+    @Value("${alert.agent.low-confidence-threshold:0.5}")
+    private double lowConfidenceThreshold;
+
+    @Value("${alert.agent.token-limit:1000000}")
+    private long tokenLimit;
 
     /**
      * 检测所有类型的异常
@@ -65,12 +81,13 @@ public class AnomalyDetector {
                 .count();
 
         double failureRate = (double) failures / total;
-        if (failureRate > 0.3) {
+        if (failureRate > failureRateThreshold) {
             AnomalyEvent event = new AnomalyEvent();
             event.setType(AnomalyType.LICENSE_PLATE_FAILURE_RATE);
             event.setSeverity(AlertSeverity.WARNING);
             event.setTitle("车牌识别失败率过高");
-            event.setSummary(String.format("过去1分钟内车牌识别失败率 %.1f%%，超过30%%阈值", failureRate * 100));
+            event.setSummary(String.format("过去1分钟内车牌识别失败率 %.1f%%，超过 %.0f%% 阈值",
+                    failureRate * 100, failureRateThreshold * 100));
             event.setMetrics(String.format("{\"total\":%d,\"failures\":%d,\"rate\":%.2f}", total, failures, failureRate));
             event.setSuggestedActions("1. 检查输入图片质量\n2. 确认算法服务是否正常运行\n3. 检查模型是否加载成功");
             events.add(event);
@@ -109,29 +126,34 @@ public class AnomalyDetector {
     // ============================================================
     private void detectGestureConfidenceLow(List<AnomalyEvent> events) {
         LocalDateTime fiveMinutesAgo = LocalDateTime.now().minusMinutes(5);
-        List<SystemLog> logs = systemLogRepository.findByModuleAndCreatedAtAfter("gesture", fiveMinutesAgo);
+        List<SystemLog> logs = findByModulesAndCreatedAtAfter(
+                List.of("gesture", "owner_gesture", "police_gesture"),
+                fiveMinutesAgo
+        );
 
         if (logs.isEmpty()) return;
 
-        double avgConfidence = logs.stream()
-                .mapToDouble(log -> {
-                    try {
-                        // 假设日志中有 confidence 字段
-                        return Double.parseDouble(log.getDetail());
-                    } catch (Exception e) {
-                        return 0.5;
-                    }
-                })
-                .average()
-                .orElse(0.5);
+        List<Double> confidences = logs.stream()
+                .map(this::extractConfidence)
+                .filter(Objects::nonNull)
+                .toList();
 
-        if (avgConfidence < 0.5) {
+        if (confidences.isEmpty()) return;
+
+        double avgConfidence = confidences.stream()
+                .mapToDouble(Double::doubleValue)
+                .average()
+                .orElse(lowConfidenceThreshold);
+
+        if (avgConfidence < lowConfidenceThreshold) {
             AnomalyEvent event = new AnomalyEvent();
             event.setType(AnomalyType.GESTURE_CONFIDENCE_LOW);
             event.setSeverity(AlertSeverity.WARNING);
             event.setTitle("手势识别置信度持续偏低");
-            event.setSummary(String.format("过去5分钟内手势识别平均置信度 %.2f，低于0.5阈值", avgConfidence));
-            event.setMetrics(String.format("{\"avgConfidence\":%.2f,\"sampleCount\":%d}", avgConfidence, logs.size()));
+            event.setSummary(String.format("过去5分钟内手势识别平均置信度 %.2f，低于 %.2f 阈值",
+                    avgConfidence, lowConfidenceThreshold));
+            event.setMetrics(String.format("{\"avgConfidence\":%.2f,\"sampleCount\":%d}",
+                    avgConfidence, confidences.size()));
             event.setSuggestedActions("1. 检查摄像头画面是否清晰\n2. 调整手势识别参数\n3. 确认手部关键点检测是否正常");
             events.add(event);
         }
@@ -168,18 +190,12 @@ public class AnomalyDetector {
         List<SystemLog> todayLogs = systemLogRepository.findByModuleAndCreatedAtAfter("llm", today);
 
         long totalTokens = todayLogs.stream()
-                .mapToLong(log -> {
-                    try {
-                        return Long.parseLong(log.getDetail());
-                    } catch (Exception e) {
-                        return 0;
-                    }
-                })
+                .mapToLong(this::extractTokenUsage)
                 .sum();
 
-        // 假设配额是 500万 token
-        long quota = 5_000_000;
-        double usage = (double) totalTokens / quota;
+        if (tokenLimit <= 0) return;
+
+        double usage = (double) totalTokens / tokenLimit;
 
         if (usage >= 0.8) {
             AlertSeverity severity = usage >= 1.0 ? AlertSeverity.CRITICAL : AlertSeverity.WARNING;
@@ -187,8 +203,8 @@ public class AnomalyDetector {
             event.setType(AnomalyType.LLM_TOKEN_EXCEEDED);
             event.setSeverity(severity);
             event.setTitle(usage >= 1.0 ? "LLM Token 已用完" : "LLM Token 接近限额");
-            event.setSummary(String.format("今日 LLM Token 使用量 %.1f%%（%d / %d）", usage * 100, totalTokens, quota));
-            event.setMetrics(String.format("{\"used\":%d,\"quota\":%d,\"usage\":%.2f}", totalTokens, quota, usage));
+            event.setSummary(String.format("今日 LLM Token 使用量 %.1f%%（%d / %d）", usage * 100, totalTokens, tokenLimit));
+            event.setMetrics(String.format("{\"used\":%d,\"quota\":%d,\"usage\":%.2f}", totalTokens, tokenLimit, usage));
             event.setSuggestedActions("1. 减少不必要的 LLM 调用\n2. 优化 Prompt 减少 Token 消耗\n3. 联系管理员增加配额");
             events.add(event);
         }
@@ -263,9 +279,12 @@ public class AnomalyDetector {
     // ============================================================
 
     private double getCpuUsage() {
-        // 简化实现：返回模拟值
-        // 实际可以使用 OperatingSystemMXBean
-        return Math.random() * 40 + 20;  // 20-60%
+        java.lang.management.OperatingSystemMXBean osBean = ManagementFactory.getOperatingSystemMXBean();
+        double loadAverage = osBean.getSystemLoadAverage();
+        if (loadAverage < 0) {
+            return 0;
+        }
+        return Math.min(100, (loadAverage / osBean.getAvailableProcessors()) * 100);
     }
 
     private double getMemoryUsage() {
@@ -275,5 +294,72 @@ public class AnomalyDetector {
         long usedMemory = runtime.totalMemory() - runtime.freeMemory();
         long maxMemory = runtime.maxMemory();
         return (double) usedMemory / maxMemory * 100;
+    }
+
+    private List<SystemLog> findByModulesAndCreatedAtAfter(Collection<String> modules, LocalDateTime after) {
+        List<SystemLog> logs = new ArrayList<>();
+        for (String module : modules) {
+            logs.addAll(systemLogRepository.findByModuleAndCreatedAtAfter(module, after));
+        }
+        return logs;
+    }
+
+    private Double extractConfidence(SystemLog log) {
+        String detail = log.getDetail();
+        if (detail == null || detail.isBlank()) {
+            return null;
+        }
+
+        Double numericDetail = parseDouble(detail);
+        if (numericDetail != null) {
+            return numericDetail;
+        }
+
+        try {
+            JsonNode node = objectMapper.readTree(detail);
+            for (String field : List.of("confidence", "avgConfidence", "ocrConfidence", "detectionConfidence")) {
+                JsonNode value = node.get(field);
+                if (value != null && value.isNumber()) {
+                    return value.asDouble();
+                }
+            }
+        } catch (Exception ignored) {
+            return null;
+        }
+        return null;
+    }
+
+    private long extractTokenUsage(SystemLog log) {
+        String detail = log.getDetail();
+        if (detail == null || detail.isBlank()) {
+            return 0;
+        }
+
+        try {
+            return Long.parseLong(detail);
+        } catch (NumberFormatException ignored) {
+            // 继续尝试 JSON 解析
+        }
+
+        try {
+            JsonNode node = objectMapper.readTree(detail);
+            for (String field : List.of("tokens", "totalTokens", "tokenUsage", "total_tokens")) {
+                JsonNode value = node.get(field);
+                if (value != null && value.canConvertToLong()) {
+                    return value.asLong();
+                }
+            }
+        } catch (Exception ignored) {
+            return 0;
+        }
+        return 0;
+    }
+
+    private Double parseDouble(String value) {
+        try {
+            return Double.parseDouble(value);
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 }

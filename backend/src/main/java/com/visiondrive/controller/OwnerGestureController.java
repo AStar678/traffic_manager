@@ -3,6 +3,7 @@ package com.visiondrive.controller;
 import com.visiondrive.client.AlgorithmClient;
 import com.visiondrive.model.dto.ApiResponse;
 import com.visiondrive.service.OwnerGestureControlService;
+import com.visiondrive.service.SystemLogService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -17,7 +18,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 @Slf4j
 @RestController
@@ -28,6 +32,7 @@ public class OwnerGestureController {
 
     private final AlgorithmClient algorithmClient;
     private final OwnerGestureControlService ownerGestureControlService;
+    private final SystemLogService systemLogService;
 
     @GetMapping
     @Operation(summary = "查询手势库", description = "兼容入口，返回新原型库与识别配置")
@@ -39,7 +44,12 @@ public class OwnerGestureController {
     @Operation(summary = "直接录入手势", description = "使用前端采集的关键点特征向量写入新原型库")
     public ApiResponse<Map<String, Object>> enrollGesture(@RequestBody Map<String, Object> request) {
         log.info("收到新手势录入请求: gestureName={}", request.get("gestureName"));
-        return ApiResponse.success(algorithmClient.enrollOwnerGesture(request));
+        Map<String, Object> result = algorithmClient.enrollOwnerGesture(request);
+        systemLogService.info("user_operation", "owner_gesture_enroll", Map.of(
+                "gestureName", Objects.toString(request.get("gestureName"), ""),
+                "prototypeId", Objects.toString(result.get("prototypeId"), "")
+        ));
+        return ApiResponse.success(result);
     }
 
     @PutMapping("/{prototypeId}")
@@ -48,7 +58,12 @@ public class OwnerGestureController {
             @PathVariable String prototypeId,
             @RequestBody Map<String, Object> request
     ) {
-        return ApiResponse.success(algorithmClient.updateOwnerGesture(prototypeId, request));
+        Map<String, Object> result = algorithmClient.updateOwnerGesture(prototypeId, request);
+        systemLogService.info("user_operation", "owner_gesture_update", Map.of(
+                "prototypeId", prototypeId,
+                "gestureName", Objects.toString(request.get("gestureName"), "")
+        ));
+        return ApiResponse.success(result);
     }
 
     @DeleteMapping("/{prototypeId}")
@@ -56,6 +71,7 @@ public class OwnerGestureController {
     public ApiResponse<Map<String, Object>> deleteGesture(@PathVariable String prototypeId) {
         Map<String, Object> result = algorithmClient.deleteOwnerGesture(prototypeId);
         ownerGestureControlService.deleteBinding(prototypeId);
+        systemLogService.warn("user_operation", "owner_gesture_delete", Map.of("prototypeId", prototypeId));
         return ApiResponse.success(result);
     }
 
@@ -118,7 +134,19 @@ public class OwnerGestureController {
     @PostMapping("/recognize")
     @Operation(summary = "单次识别", description = "输入关键点特征向量，返回原型匹配结果")
     public ApiResponse<Map<String, Object>> recognize(@RequestBody Map<String, Object> request) {
-        return ApiResponse.success(algorithmClient.recognizeOwnerGesture(request));
+        try {
+            Map<String, Object> result = algorithmClient.recognizeOwnerGesture(request);
+            Map<String, Object> detail = new LinkedHashMap<>();
+            detail.put("gestureCode", firstString(result, "gestureCode", "gesture_code", "id"));
+            detail.put("gestureName", firstString(result, "gestureName", "gesture_name", "label", "name"));
+            detail.put("confidence", extractConfidence(result));
+            detail.put("matched", result.getOrDefault("matched", result.getOrDefault("recognized", true)));
+            systemLogService.info("owner_gesture", "success", detail);
+            return ApiResponse.success(result);
+        } catch (Exception e) {
+            systemLogService.error("owner_gesture", "failure", Map.of("errorMessage", Objects.toString(e.getMessage(), "")));
+            throw e;
+        }
     }
 
     @GetMapping("/control-settings")
@@ -130,12 +158,71 @@ public class OwnerGestureController {
     @PostMapping("/control-settings")
     @Operation(summary = "保存控制动作", description = "将手势与车辆功能的绑定关系保存到数据库")
     public ApiResponse<Map<String, Object>> saveControlSettings(@RequestBody Map<String, Object> request) {
-        return ApiResponse.success(ownerGestureControlService.saveControlSettings(request));
+        Map<String, Object> result = ownerGestureControlService.saveControlSettings(request);
+        systemLogService.info("user_operation", "owner_gesture_control_settings_save", Map.of(
+                "settingsCount", settingsCount(result.get("settings"))
+        ));
+        return ApiResponse.success(result);
     }
 
     @PostMapping("/control/execute")
     @Operation(summary = "执行手势控制", description = "根据识别出的手势查询数据库绑定，只有已启用绑定才返回车辆控制动作")
     public ApiResponse<Map<String, Object>> executeControl(@RequestBody Map<String, Object> request) {
-        return ApiResponse.success(ownerGestureControlService.executeControl(request));
+        Map<String, Object> result = ownerGestureControlService.executeControl(request);
+        systemLogService.info("user_operation", "owner_gesture_control_execute", Map.of(
+                "gestureCode", Objects.toString(result.get("gestureCode"), ""),
+                "gestureName", Objects.toString(result.get("gestureName"), ""),
+                "actionType", Objects.toString(result.get("actionType"), ""),
+                "enabled", result.getOrDefault("enabled", false)
+        ));
+        return ApiResponse.success(result);
+    }
+
+    private String firstString(Map<String, Object> result, String... keys) {
+        for (String key : keys) {
+            Object value = result.get(key);
+            if (value != null && !Objects.toString(value, "").isBlank()) {
+                return Objects.toString(value);
+            }
+        }
+        return "";
+    }
+
+    private Double extractConfidence(Map<String, Object> result) {
+        for (String key : List.of("confidence", "score", "similarity", "avgConfidence")) {
+            Object value = result.get(key);
+            Double parsed = toDouble(value);
+            if (parsed != null) {
+                return parsed;
+            }
+        }
+        Object recognition = result.get("recognition");
+        if (recognition instanceof Map<?, ?> recognitionMap) {
+            for (String key : List.of("confidence", "score", "similarity")) {
+                Double parsed = toDouble(recognitionMap.get(key));
+                if (parsed != null) {
+                    return parsed;
+                }
+            }
+        }
+        return null;
+    }
+
+    private Double toDouble(Object value) {
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        if (value != null) {
+            try {
+                return Double.parseDouble(Objects.toString(value));
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private int settingsCount(Object settings) {
+        return settings instanceof List<?> list ? list.size() : 0;
     }
 }

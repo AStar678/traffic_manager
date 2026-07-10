@@ -34,6 +34,12 @@ spring:
     port: ${MAIL_PORT:587}
     username: ${MAIL_USERNAME:}
     password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: ${MAIL_SMTP_AUTH:true}
+          starttls:
+            enable: ${MAIL_SMTP_STARTTLS:true}
 
 # 算法服务地址
 algorithm:
@@ -55,7 +61,13 @@ llm:
 # 告警Agent
 alert:
   agent:
+    enabled: ${ALERT_AGENT_ENABLED:true}
     poll-interval: 30000  # 轮询间隔(毫秒)
+    cooldown: ${ALERT_AGENT_COOLDOWN:300000}  # 同类告警冷却时间(毫秒)
     failure-rate-threshold: 0.3
     low-confidence-threshold: 0.5
     token-limit: 1000000
+  email:
+    enabled: ${ALERT_EMAIL_ENABLED:true}
+    recipients: ${ALERT_EMAIL_RECIPIENTS:}
+    from: ${ALERT_EMAIL_FROM:${MAIL_USERNAME:}}

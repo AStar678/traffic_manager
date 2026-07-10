@@ -3,6 +3,7 @@ package com.visiondrive.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.visiondrive.model.dto.ApiResponse;
 import com.visiondrive.service.JobService;
+import com.visiondrive.service.SystemLogService;
 import com.visiondrive.websocket.AlertWebSocketHandler;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -14,7 +15,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 
 @Slf4j
 @RestController
@@ -26,6 +29,7 @@ public class AlgorithmCallbackController {
     private final JobService jobService;
     private final AlertWebSocketHandler webSocketHandler;
     private final ObjectMapper objectMapper;
+    private final SystemLogService systemLogService;
 
     @Operation(summary = "接收算法回调")
     @PostMapping("/events")
@@ -68,6 +72,7 @@ public class AlgorithmCallbackController {
             }
             // 调用 jobService 的 updateJobStatus 不需要传 totalFrames 时置 null 即可
             jobService.updateJobStatus(jobId, "completed", 100, null, totalFrames, resultUrl, null);
+            systemLogService.info("algorithm_callback", "job_completed", callbackDetail(jobId, eventType, data));
 
             // 推送完成消息给前端
             Map<String, Object> pushData = new HashMap<>();
@@ -81,6 +86,9 @@ public class AlgorithmCallbackController {
             Map<String, Object> data = (Map<String, Object>) event.get("data");
             String errorMessage = (String) data.get("errorMessage");
             jobService.updateJobStatus(jobId, "failed", null, null, null, null, errorMessage);
+            Map<String, Object> detail = callbackDetail(jobId, eventType, data);
+            detail.put("errorMessage", Objects.toString(errorMessage, ""));
+            systemLogService.error("algorithm_callback", "job_failed", detail);
 
             // 推送失败消息
             Map<String, Object> pushData = new HashMap<>();
@@ -91,10 +99,27 @@ public class AlgorithmCallbackController {
 
         } else {
             log.warn("未知事件类型: {}", eventType);
+            systemLogService.warn("algorithm_callback", "unknown_event", Map.of(
+                    "jobId", Objects.toString(jobId, ""),
+                    "eventType", Objects.toString(eventType, "")
+            ));
         }
 
         Map<String, String> response = new HashMap<>();
         response.put("status", "received");
         return ApiResponse.success(response);
+    }
+
+    private Map<String, Object> callbackDetail(String jobId, String eventType, Map<String, Object> data) {
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("jobId", Objects.toString(jobId, ""));
+        detail.put("eventType", Objects.toString(eventType, ""));
+        if (data != null) {
+            detail.put("progress", data.get("progress"));
+            detail.put("processedFrames", data.get("processedFrames"));
+            detail.put("totalFrames", data.get("totalFrames"));
+            detail.put("resultUrl", Objects.toString(data.get("resultUrl"), ""));
+        }
+        return detail;
     }
 }

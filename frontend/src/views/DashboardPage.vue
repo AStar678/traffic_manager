@@ -40,13 +40,23 @@
       <!-- 中央：前置摄像头画面 -->
       <div class="camera-feed card">
         <div class="camera-inner">
-          <img
-            v-if="cameraStreamUrl"
+          <video
+            v-show="cameraVideoReady"
+            ref="cameraVideoRef"
             class="camera-stream"
-            :src="cameraStreamUrl"
-            alt="前置摄像头画面"
+            autoplay
+            muted
+            playsinline
+            @loadeddata="markCameraVideoReady"
+            @playing="markCameraVideoReady"
+          ></video>
+          <img
+            v-if="!cameraVideoReady && cameraDisplayUrl"
+            class="camera-stream"
+            :src="cameraDisplayUrl"
+            alt="前置摄像头降级预览"
           >
-          <div v-else class="camera-placeholder">
+          <div v-if="!cameraVideoReady && !cameraDisplayUrl" class="camera-placeholder">
             <el-icon :size="42"><Camera /></el-icon>
             <span>{{ cameraError || '等待摄像头服务' }}</span>
           </div>
@@ -80,7 +90,7 @@
     <!-- 第二行：车辆状态 + 快捷操作 -->
     <div class="secondary-row">
       <!-- 胎压 + 空调 -->
-      <div class="card status-grid">
+      <div class="card status-grid" :class="{ active: lastGestureControl?.actionType?.startsWith('CLIMATE') }">
         <h3 class="card-title">车辆状态</h3>
         <div class="status-items">
           <div
@@ -109,7 +119,7 @@
       </div>
 
       <!-- 多媒体卡片 -->
-      <div class="card media-card">
+      <div class="card media-card" :class="{ active: ['VOLUME_UP', 'VOLUME_DOWN', 'NEXT_MEDIA'].includes(lastGestureControl?.actionType) }">
         <h3 class="card-title">正在播放</h3>
         <div class="media-art">
           <el-icon :size="40"><Headset /></el-icon>
@@ -123,13 +133,27 @@
       </div>
 
       <!-- 电话状态 -->
-      <div class="card phone-card">
+      <div class="card phone-card" :class="{ active: ['ANSWER_CALL', 'HANG_UP'].includes(lastGestureControl?.actionType) }">
         <h3 class="card-title">电话</h3>
         <div class="phone-status">
           <el-icon :size="36"><Phone /></el-icon>
           <strong>{{ vehicle.phone.status }}</strong>
           <span>{{ vehicle.phone.caller }}</span>
         </div>
+      </div>
+
+      <div class="card gesture-control-card" :class="{ active: lastGestureControl }">
+        <h3 class="card-title">手势控制</h3>
+        <div v-if="lastGestureControl" class="gesture-control-state">
+          <span class="gesture-badge">{{ lastGestureControl.gestureName }}</span>
+          <strong>{{ lastGestureControl.actionLabel }}</strong>
+          <small>{{ lastControlTime }} · 置信度 {{ Math.round(lastGestureControl.confidence * 100) }}%</small>
+        </div>
+        <div v-else class="gesture-control-empty">
+          <el-icon :size="32"><Pointer /></el-icon>
+          <span>等待手势控制</span>
+        </div>
+        <button class="gesture-open-button" type="button" @click="$router.push('/owner-gesture')">打开手势控车</button>
       </div>
 
       <!-- 告警快捷入口 -->
@@ -150,24 +174,35 @@
 
 <script setup>
 import { computed, onMounted } from 'vue'
-import { mockVehicleState, mockSystemHealth, mockAlerts } from '@/utils/mockData'
+import { mockSystemHealth, mockAlerts } from '@/utils/mockData'
 import { useAlertStore } from '@/stores/alert'
 import { useCameraSource } from '@/composables/useCameraSource'
+import { useVehicleStore } from '@/stores/vehicle'
 
 const alertStore = useAlertStore()
-const vehicle = mockVehicleState
+const vehicleStore = useVehicleStore()
+const vehicle = vehicleStore.vehicle
 const health = mockSystemHealth
 const {
   selectedCameraSource,
   cameraStatus,
   cameraError,
-  cameraStreamUrl,
+  cameraDisplayUrl,
+  cameraVideoRef,
+  cameraVideoReady,
+  markCameraVideoReady,
   refreshCameraPreview
 } = useCameraSource()
 
 const cameraStatusText = computed(() => {
   const labels = { idle: '待机', loading: '连接中', ready: 'LIVE', empty: '无源', offline: '离线' }
   return labels[cameraStatus.value] || cameraStatus.value
+})
+const lastGestureControl = computed(() => vehicleStore.lastGestureControl)
+const lastControlTime = computed(() => {
+  const timestamp = lastGestureControl.value?.triggeredAt
+  if (!timestamp) return '--'
+  return new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 })
 
 onMounted(() => {
@@ -405,8 +440,13 @@ const recentAlerts = computed(() => mockAlerts.slice(0, 2))
 /* ===== 第二行 ===== */
 .secondary-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 16px;
+}
+
+.secondary-row .card.active {
+  border-color: rgba(0,180,216,0.35);
+  box-shadow: 0 0 22px var(--primary-glow);
 }
 
 .card-title {
@@ -550,6 +590,68 @@ const recentAlerts = computed(() => mockAlerts.slice(0, 2))
 .phone-status span {
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* 手势控制 */
+.gesture-control-card {
+  min-height: 180px;
+}
+
+.gesture-control-state,
+.gesture-control-empty {
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.gesture-badge {
+  max-width: 100%;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,180,216,0.3);
+  background: var(--primary-soft);
+  color: var(--primary-color);
+  font-size: 12px;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gesture-control-state strong {
+  font-size: 17px;
+  color: var(--text-primary);
+}
+
+.gesture-control-state small,
+.gesture-control-empty span {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.gesture-control-empty .el-icon {
+  color: var(--text-muted);
+}
+
+.gesture-open-button {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid rgba(0, 180, 216, 0.34);
+  border-radius: 8px;
+  color: var(--primary-color);
+  background: rgba(0, 180, 216, 0.1);
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.gesture-open-button:hover {
+  border-color: rgba(0, 180, 216, 0.56);
+  background: rgba(0, 180, 216, 0.16);
 }
 
 /* 告警快捷卡片 */

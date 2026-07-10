@@ -1,0 +1,54 @@
+{
+  "sampleTarget": 45,
+  "recordingWarmupFrames": 60,
+  "staticMatchThreshold": 0.84,
+  "dynamicMatchThreshold": 0.78,
+  "palmDirectionThreshold": 0.28,
+  "palmWorldDirectionThreshold": 0.62,
+  "palmWorldMismatchPenalty": 0.45,
+  "minDynamicMotion": 0.28,
+  "staticStillMotionLimit": 0.55,
+  "staticMotionHardLimit": 0.9,
+  "staticMotionPenaltyMax": 0.12,
+  "dynamicMotionRatio": 0.45,
+  "staticRecognitionHoldMs": 300,
+  "triggerCooldownMs": 1500,
+  "defaultHoldMs": 1200,
+  "sequencePoseWeight": 0.45,
+  "sequencePathWeight": 0.55,
+  "vehicleVolumeStep": 8,
+  "vehicleVolumeMin": 0,
+  "vehicleVolumeMax": 100,
+  "motionTrackedIndexes": [
+    [
+      66,
+      67
+    ],
+    [
+      24,
+      25
+    ],
+    [
+      12,
+      13
+    ],
+    [
+      36,
+      37
+    ]
+  ],
+  "vehicleFeatureNames": [
+    "主页",
+    "音乐",
+    "空调",
+    "电话",
+    "导航"
+  ],
+  "defaultVehicleState": {
+    "power": "待唤醒",
+    "volume": 35,
+    "temperature": 24,
+    "phone": "空闲",
+    "featureIndex": 0
+  }
+}

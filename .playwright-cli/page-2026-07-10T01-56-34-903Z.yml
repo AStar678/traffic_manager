@@ -1,0 +1,327 @@
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: VC
+      - generic [ref=e6]:
+        - strong [ref=e7]: 虚拟摄像头管理
+        - generic [ref=e8]: 独立服务 · WebRTC 预览 · PNG/JPEG 抓拍
+    - generic [ref=e9]: 服务在线
+  - main [ref=e12]:
+    - generic [ref=e13]:
+      - generic [ref=e14]:
+        - generic [ref=e15]:
+          - generic [ref=e16]:
+            - heading "实时预览" [level=1] [ref=e17]
+            - paragraph [ref=e18]: 交警测试视频 002.mp4 · video
+          - generic [ref=e19]:
+            - button "启动摄像头" [ref=e20] [cursor=pointer]
+            - button "停止摄像头" [disabled] [ref=e21]
+            - button "刷新" [ref=e22] [cursor=pointer]
+            - button "打开截图" [ref=e23] [cursor=pointer]
+            - button "复制截图地址" [ref=e24] [cursor=pointer]
+        - generic [ref=e25]:
+          - img "摄像头兼容预览" [ref=e27]
+          - generic [ref=e29]:
+            - strong [ref=e30]: 等待摄像头源
+            - text: 选择一个源后会显示实时画面
+          - generic [ref=e31]:
+            - generic [ref=e32]: LIVE
+            - generic [ref=e33]: 交警测试视频 002.mp4
+      - generic [ref=e34]:
+        - generic [ref=e36]:
+          - heading "服务概览" [level=2] [ref=e37]
+          - paragraph [ref=e38]: 当前活动源和源数量来自摄像头微服务运行时状态
+        - generic [ref=e39]:
+          - generic [ref=e40]:
+            - generic [ref=e41]: 源数量
+            - strong [ref=e42]: "22"
+          - generic [ref=e43]:
+            - generic [ref=e44]: 活动源
+            - strong [ref=e45]: police-gesture-002
+          - generic [ref=e46]:
+            - generic [ref=e47]: 服务地址
+            - strong [ref=e48]: http://127.0.0.1:8010
+        - generic [ref=e49]: 主系统前端只消费摄像头服务的流和截图地址；这个管理台独立托管在摄像头微服务内。
+    - complementary [ref=e50]:
+      - generic [ref=e51]:
+        - generic [ref=e53]:
+          - heading "摄像头源" [level=2] [ref=e54]
+          - paragraph [ref=e55]: 切换后所有消费者会读取新的活动源
+        - generic [ref=e56]:
+          - generic [ref=e57]:
+            - generic [ref=e58]:
+              - generic [ref=e59]:
+                - generic [ref=e60]: browser
+                - strong [ref=e61]: 本机前置摄像头（浏览器推流）
+              - generic [ref=e62]:
+                - generic [ref=e63]: browser-camera
+                - generic [ref=e64]: 浏览器授权后推流到微服务
+                - generic [ref=e65]: built-in
+                - generic [ref=e66]: license_plate
+                - generic [ref=e67]: police_gesture
+                - generic [ref=e68]: owner_gesture
+            - button "启动" [ref=e70] [cursor=pointer]
+          - generic [ref=e71]:
+            - generic [ref=e72]:
+              - generic [ref=e73]:
+                - generic [ref=e74]: device
+                - strong [ref=e75]: OpenCV 摄像头 0（备用）
+              - generic [ref=e76]:
+                - generic [ref=e77]: front-camera-0
+                - generic [ref=e78]: deviceIndex=0
+                - generic [ref=e79]: built-in
+                - generic [ref=e80]: license_plate
+                - generic [ref=e81]: police_gesture
+                - generic [ref=e82]: owner_gesture
+            - button "启用" [ref=e84] [cursor=pointer]
+          - generic [ref=e85]:
+            - generic [ref=e86]:
+              - generic [ref=e87]:
+                - generic [ref=e88]: image
+                - strong [ref=e89]: 车牌测试图 1.jpg
+              - generic [ref=e90]:
+                - generic [ref=e91]: license-plate-1
+                - generic [ref=e92]: /Users/aoxiang/Desktop/软件工程学期实训/车牌识别/image/1.jpg
+                - generic [ref=e93]: built-in
+                - generic [ref=e94]: license_plate
+            - button "启用" [ref=e96] [cursor=pointer]
+          - generic [ref=e97]:
+            - generic [ref=e98]:
+              - generic [ref=e99]:
+                - generic [ref=e100]: image
+                - strong [ref=e101]: 车牌测试图 10.jpg
+              - generic [ref=e102]:
+                - generic [ref=e103]: license-plate-10
+                - generic [ref=e104]: /Users/aoxiang/Desktop/软件工程学期实训/车牌识别/image/10.jpg
+                - generic [ref=e105]: built-in
+                - generic [ref=e106]: license_plate
+            - button "启用" [ref=e108] [cursor=pointer]
+          - generic [ref=e109]:
+            - generic [ref=e110]:
+              - generic [ref=e111]:
+                - generic [ref=e112]: image
+                - strong [ref=e113]: 车牌测试图 2.jpg
+              - generic [ref=e114]:
+                - generic [ref=e115]: license-plate-2
+                - generic [ref=e116]: /Users/aoxiang/Desktop/软件工程学期实训/车牌识别/image/2.jpg
+                - generic [ref=e117]: built-in
+                - generic [ref=e118]: license_plate
+            - button "启用" [ref=e120] [cursor=pointer]
+          - generic [ref=e121]:
+            - generic [ref=e122]:
+              - generic [ref=e123]:
+                - generic [ref=e124]: image
+                - strong [ref=e125]: 车牌测试图 3.jpg
+              - generic [ref=e126]:
+                - generic [ref=e127]: license-plate-3
+                - generic [ref=e128]: /Users/aoxiang/Desktop/软件工程学期实训/车牌识别/image/3.jpg
+                - generic [ref=e129]: built-in
+                - generic [ref=e130]: license_plate
+            - button "启用" [ref=e132] [cursor=pointer]
+          - generic [ref=e133]:
+            - generic [ref=e134]:
+              - generic [ref=e135]:
+                - generic [ref=e136]: image
+                - strong [ref=e137]: 车牌测试图 4.jpg
+              - generic [ref=e138]:
+                - generic [ref=e139]: license-plate-4
+                - generic [ref=e140]: /Users/aoxiang/Desktop/软件工程学期实训/车牌识别/image/4.jpg
+                - generic [ref=e141]: built-in
+                - generic [ref=e142]: license_plate
+            - button "启用" [ref=e144] [cursor=pointer]
+          - generic [ref=e145]:
+            - generic [ref=e146]:
+              - generic [ref=e147]:
+                - generic [ref=e148]: image
+                - strong [ref=e149]: 车牌测试图 5.jpg
+              - generic [ref=e150]:
+                - generic [ref=e151]: license-plate-5
+                - generic [ref=e152]: /Users/aoxiang/Desktop/软件工程学期实训/车牌识别/image/5.jpg
+                - generic [ref=e153]: built-in
+                - generic [ref=e154]: license_plate
+            - button "启用" [ref=e156] [cursor=pointer]
+          - generic [ref=e157]:
+            - generic [ref=e158]:
+              - generic [ref=e159]:
+                - generic [ref=e160]: image
+                - strong [ref=e161]: 车牌测试图 6.jpg
+              - generic [ref=e162]:
+                - generic [ref=e163]: license-plate-6
+                - generic [ref=e164]: /Users/aoxiang/Desktop/软件工程学期实训/车牌识别/image/6.jpg
+                - generic [ref=e165]: built-in
+                - generic [ref=e166]: license_plate
+            - button "启用" [ref=e168] [cursor=pointer]
+          - generic [ref=e169]:
+            - generic [ref=e170]:
+              - generic [ref=e171]:
+                - generic [ref=e172]: image
+                - strong [ref=e173]: 车牌测试图 7.jpg
+              - generic [ref=e174]:
+                - generic [ref=e175]: license-plate-7
+                - generic [ref=e176]: /Users/aoxiang/Desktop/软件工程学期实训/车牌识别/image/7.jpg
+                - generic [ref=e177]: built-in
+                - generic [ref=e178]: license_plate
+            - button "启用" [ref=e180] [cursor=pointer]
+          - generic [ref=e181]:
+            - generic [ref=e182]:
+              - generic [ref=e183]:
+                - generic [ref=e184]: image
+                - strong [ref=e185]: 车牌测试图 8.jpg
+              - generic [ref=e186]:
+                - generic [ref=e187]: license-plate-8
+                - generic [ref=e188]: /Users/aoxiang/Desktop/软件工程学期实训/车牌识别/image/8.jpg
+                - generic [ref=e189]: built-in
+                - generic [ref=e190]: license_plate
+            - button "启用" [ref=e192] [cursor=pointer]
+          - generic [ref=e193]:
+            - generic [ref=e194]:
+              - generic [ref=e195]:
+                - generic [ref=e196]: image
+                - strong [ref=e197]: 车牌测试图 9.jpg
+              - generic [ref=e198]:
+                - generic [ref=e199]: license-plate-9
+                - generic [ref=e200]: /Users/aoxiang/Desktop/软件工程学期实训/车牌识别/image/9.jpg
+                - generic [ref=e201]: built-in
+                - generic [ref=e202]: license_plate
+            - button "启用" [ref=e204] [cursor=pointer]
+          - generic [ref=e205]:
+            - generic [ref=e206]:
+              - generic [ref=e207]:
+                - generic [ref=e208]: ACTIVE
+                - strong [ref=e209]: 交警测试视频 002.mp4
+              - generic [ref=e210]:
+                - generic [ref=e211]: police-gesture-002
+                - generic [ref=e212]: /Users/aoxiang/Desktop/软件工程学期实训/交警指令识别/test/002.mp4
+                - generic [ref=e213]: built-in
+                - generic [ref=e214]: police_gesture
+            - button "重新启动" [ref=e216] [cursor=pointer]
+          - generic [ref=e217]:
+            - generic [ref=e218]:
+              - generic [ref=e219]:
+                - generic [ref=e220]: video
+                - strong [ref=e221]: 交警测试视频 004.mp4
+              - generic [ref=e222]:
+                - generic [ref=e223]: police-gesture-004
+                - generic [ref=e224]: /Users/aoxiang/Desktop/软件工程学期实训/交警指令识别/test/004.mp4
+                - generic [ref=e225]: built-in
+                - generic [ref=e226]: police_gesture
+            - button "启用" [ref=e228] [cursor=pointer]
+          - generic [ref=e229]:
+            - generic [ref=e230]:
+              - generic [ref=e231]:
+                - generic [ref=e232]: video
+                - strong [ref=e233]: 交警测试视频 008.mp4
+              - generic [ref=e234]:
+                - generic [ref=e235]: police-gesture-008
+                - generic [ref=e236]: /Users/aoxiang/Desktop/软件工程学期实训/交警指令识别/test/008.mp4
+                - generic [ref=e237]: built-in
+                - generic [ref=e238]: police_gesture
+            - button "启用" [ref=e240] [cursor=pointer]
+          - generic [ref=e241]:
+            - generic [ref=e242]:
+              - generic [ref=e243]:
+                - generic [ref=e244]: video
+                - strong [ref=e245]: 交警测试视频 010.mp4
+              - generic [ref=e246]:
+                - generic [ref=e247]: police-gesture-010
+                - generic [ref=e248]: /Users/aoxiang/Desktop/软件工程学期实训/交警指令识别/test/010.mp4
+                - generic [ref=e249]: built-in
+                - generic [ref=e250]: police_gesture
+            - button "启用" [ref=e252] [cursor=pointer]
+          - generic [ref=e253]:
+            - generic [ref=e254]:
+              - generic [ref=e255]:
+                - generic [ref=e256]: video
+                - strong [ref=e257]: 交警测试视频 012.mp4
+              - generic [ref=e258]:
+                - generic [ref=e259]: police-gesture-012
+                - generic [ref=e260]: /Users/aoxiang/Desktop/软件工程学期实训/交警指令识别/test/012.mp4
+                - generic [ref=e261]: built-in
+                - generic [ref=e262]: police_gesture
+            - button "启用" [ref=e264] [cursor=pointer]
+          - generic [ref=e265]:
+            - generic [ref=e266]:
+              - generic [ref=e267]:
+                - generic [ref=e268]: video
+                - strong [ref=e269]: 交警测试视频 014.mp4
+              - generic [ref=e270]:
+                - generic [ref=e271]: police-gesture-014
+                - generic [ref=e272]: /Users/aoxiang/Desktop/软件工程学期实训/交警指令识别/test/014.mp4
+                - generic [ref=e273]: built-in
+                - generic [ref=e274]: police_gesture
+            - button "启用" [ref=e276] [cursor=pointer]
+          - generic [ref=e277]:
+            - generic [ref=e278]:
+              - generic [ref=e279]:
+                - generic [ref=e280]: video
+                - strong [ref=e281]: 交警测试视频 016.mp4
+              - generic [ref=e282]:
+                - generic [ref=e283]: police-gesture-016
+                - generic [ref=e284]: /Users/aoxiang/Desktop/软件工程学期实训/交警指令识别/test/016.mp4
+                - generic [ref=e285]: built-in
+                - generic [ref=e286]: police_gesture
+            - button "启用" [ref=e288] [cursor=pointer]
+          - generic [ref=e289]:
+            - generic [ref=e290]:
+              - generic [ref=e291]:
+                - generic [ref=e292]: video
+                - strong [ref=e293]: 交警测试视频 018.mp4
+              - generic [ref=e294]:
+                - generic [ref=e295]: police-gesture-018
+                - generic [ref=e296]: /Users/aoxiang/Desktop/软件工程学期实训/交警指令识别/test/018.mp4
+                - generic [ref=e297]: built-in
+                - generic [ref=e298]: police_gesture
+            - button "启用" [ref=e300] [cursor=pointer]
+          - generic [ref=e301]:
+            - generic [ref=e302]:
+              - generic [ref=e303]:
+                - generic [ref=e304]: video
+                - strong [ref=e305]: 交警测试视频 102.mp4
+              - generic [ref=e306]:
+                - generic [ref=e307]: police-gesture-102
+                - generic [ref=e308]: /Users/aoxiang/Desktop/软件工程学期实训/交警指令识别/test/102.mp4
+                - generic [ref=e309]: built-in
+                - generic [ref=e310]: police_gesture
+            - button "启用" [ref=e312] [cursor=pointer]
+          - generic [ref=e313]:
+            - generic [ref=e314]:
+              - generic [ref=e315]:
+                - generic [ref=e316]: video
+                - strong [ref=e317]: 交警测试视频 104.mp4
+              - generic [ref=e318]:
+                - generic [ref=e319]: police-gesture-104
+                - generic [ref=e320]: /Users/aoxiang/Desktop/软件工程学期实训/交警指令识别/test/104.mp4
+                - generic [ref=e321]: built-in
+                - generic [ref=e322]: police_gesture
+            - button "启用" [ref=e324] [cursor=pointer]
+      - generic [ref=e325]:
+        - generic [ref=e327]:
+          - heading "添加自定义源" [level=2] [ref=e328]
+          - paragraph [ref=e329]: 支持本机设备编号、图片路径或视频路径
+        - generic [ref=e330]:
+          - generic [ref=e331]:
+            - generic [ref=e332]: 源类型
+            - combobox "源类型" [ref=e333]:
+              - option "图片文件" [selected]
+              - option "视频文件"
+              - option "OpenCV 设备编号（备用）"
+          - generic [ref=e334]:
+            - generic [ref=e335]: 显示名称
+            - textbox "显示名称" [ref=e336]:
+              - /placeholder: 例如：车内手势测试源
+          - generic [ref=e337]:
+            - generic [ref=e338]: 本机文件路径
+            - textbox "本机文件路径" [ref=e339]:
+              - /placeholder: /Users/.../sample.mp4
+          - generic [ref=e340]:
+            - generic [ref=e341]: 设备编号
+            - spinbutton "设备编号" [ref=e342]: "0"
+          - generic [ref=e343]:
+            - generic [ref=e344]:
+              - generic [ref=e345]: 帧率
+              - spinbutton "帧率" [ref=e346]: "8"
+            - generic [ref=e347]:
+              - generic [ref=e348]: 视频循环
+              - checkbox "视频循环" [checked] [ref=e349]
+          - button "添加并启用" [ref=e350] [cursor=pointer]
+          - generic [ref=e351]: 推荐使用“启动摄像头”由浏览器授权推流；图片源会自动等比补边到 16:9。

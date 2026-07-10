@@ -24,7 +24,7 @@ public class Job {
     private String jobId;
 
     @Column(nullable = false)
-    private String taskType;  // license_plate / police_gesture / owner_gesture
+    private String taskType;  // license_plate / owner_gesture
 
     @Column(columnDefinition = "TEXT")
     private String inputUrl;

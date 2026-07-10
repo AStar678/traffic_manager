@@ -26,7 +26,7 @@ public class RecordController {
     @Operation(summary = "查询识别记录（分页）")
     @GetMapping
     public ApiResponse<Page<InferenceRecord>> queryRecords(
-            @Parameter(description = "任务类型: license_plate/police_gesture/owner_gesture")
+            @Parameter(description = "任务类型: license_plate/owner_gesture")
             @RequestParam(required = false) String taskType,
 
             @Parameter(description = "是否成功")

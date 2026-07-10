@@ -15,11 +15,8 @@ torchvision>=0.15.0
 opencv-python>=4.8.0
 pillow>=10.0.0
 
-# --- 交警手势：ctpgr-pytorch Pose + LSTM ---
-# 使用 ../交警指令识别/checkpoints 与 ctpgr-pytorch-master 源码，无需安装 MMPose/MMAction2。
-
-# --- 车主手势：MediaPipe Hands + 几何/时序规则 ---
-mediapipe>=0.10.0     # 手部关键点备用方案
+# --- 手势识别：替换为前端 MediaPipe 关键点 + 原型网络服务 ---
+# 算法服务只接收关键点特征向量，不再依赖旧 Python 手势模型。
 
 # --- 通用 ---
 numpy>=1.24.0

@@ -15,14 +15,11 @@ async def health_check():
                 "clprnetModel": str(config.CLPRNET_MODEL_PATH),
                 "modelExists": config.CLPRNET_MODEL_PATH.exists(),
             },
-            "policeGesture": {
-                "sourceDir": str(config.POLICE_GESTURE_SOURCE_DIR),
-                "checkpointDir": str(config.POLICE_GESTURE_SOURCE_DIR / "checkpoints"),
-                "checkpointExists": (config.POLICE_GESTURE_SOURCE_DIR / "checkpoints" / "lstm.pt").exists(),
-            },
-            "ownerGesture": {
-                "sourceDir": str(config.OWNER_GESTURE_SOURCE_DIR),
-                "mode": "MediaPipe Hands + geometry classifier",
+            "gestureRecognition": {
+                "appDir": str(config.GESTURE_RECOGNITION_APP_DIR),
+                "configPath": str(config.GESTURE_CONFIG_PATH),
+                "configExists": config.GESTURE_CONFIG_PATH.exists(),
+                "mode": "MediaPipe keypoints + prototype matching engine",
             },
         },
     }

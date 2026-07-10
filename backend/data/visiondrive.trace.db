@@ -445,3 +445,9 @@ Caused by: org.h2.mvstore.MVStoreException: The file is locked: /Users/aoxiang/D
 	at org.h2.mvstore.SingleFileStore.open(SingleFileStore.java:81)
 	at org.h2.mvstore.MVStore.<init>(MVStore.java:286)
 	... 58 more
+2026-07-09 16:53:01.927262+08:00 jdbc[43]: exception
+org.h2.jdbc.JdbcSQLDataException: Value too long for column "INPUT_URL CHARACTER VARYING(255)": "'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAyAAAAQGCAIAAABAQEmaAAAMTWlDQ1BJQ... (919738)"; SQL statement:
+insert into inference_record (created_at,detection_count,error_message,input_type,input_url,latency_ms,result_json,result_url,success,task_type,trace_id,user_id,id) values (?,?,?,?,?,?,?,?,?,?,?,?,default) [22001-224]
+2026-07-09 16:53:51.009982+08:00 jdbc[43]: exception
+org.h2.jdbc.JdbcSQLDataException: Value too long for column "INPUT_URL CHARACTER VARYING(255)": "'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAyAAAAQGCAIAAABAQEmaAAAMTWlDQ1BJQ... (919738)"; SQL statement:
+insert into inference_record (created_at,detection_count,error_message,input_type,input_url,latency_ms,result_json,result_url,success,task_type,trace_id,user_id,id) values (?,?,?,?,?,?,?,?,?,?,?,?,default) [22001-224]

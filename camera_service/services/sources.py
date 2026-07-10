@@ -38,7 +38,12 @@ ALL_TASK_TYPES = ["license_plate", "police_gesture", "owner_gesture"]
 MAX_OPEN_READERS = 12
 _BROWSER_FRAME_LOCK = threading.RLock()
 _BROWSER_FRAME: np.ndarray | None = None
+_BROWSER_FRAME_BYTES: bytes | None = None
+_BROWSER_FRAME_CONTENT_TYPE = "image/jpeg"
 _BROWSER_FRAME_UPDATED_AT = 0.0
+_BROWSER_FRAME_INDEX = -1
+_BROWSER_FRAME_WIDTH = 0
+_BROWSER_FRAME_HEIGHT = 0
 
 
 @dataclass
@@ -192,24 +197,78 @@ class CameraManager:
                 self._save_state()
             return self.sources[source_id]
 
+    def warm_source(self, source_id: str) -> None:
+        with self._lock:
+            source = self.sources.get(source_id)
+            if not source or source.sourceType == "browser":
+                return
+            reader = self._reader_for(source)
+        reader.meta()
+
     def read_frame(self, source_id: str | None = None) -> np.ndarray:
+        frame, _ = self.read_frame_with_meta(source_id)
+        return frame
+
+    def read_frame_with_meta(self, source_id: str | None = None) -> tuple[np.ndarray, dict]:
         with self._lock:
             source = self._get_read_source(source_id)
             if not source:
-                return placeholder_frame("未配置摄像头源")
+                frame = placeholder_frame("未配置摄像头源")
+                return frame, frame_meta(None, frame, 0)
+            if source.sourceType == "browser":
+                return read_browser_frame_with_meta(source)
             reader = self._reader_for(source)
-        return reader.read()
+        return reader.read_with_meta()
 
     def read_snapshot_frame(self, source_id: str | None = None) -> np.ndarray:
+        frame, _ = self.read_snapshot_frame_with_meta(source_id)
+        return frame
+
+    def read_snapshot_frame_with_meta(self, source_id: str | None = None) -> tuple[np.ndarray, dict]:
         with self._lock:
             source = self._get_read_source(source_id)
             if not source:
-                return placeholder_frame("未配置摄像头源")
+                frame = placeholder_frame("未配置摄像头源")
+                return frame, frame_meta(None, frame, 0)
             snapshot_source = source
 
         if snapshot_source.sourceType == "image" and snapshot_source.path:
-            return read_image(snapshot_source.path)
-        return self.read_frame(snapshot_source.id)
+            frame = read_image(snapshot_source.path)
+            return frame, frame_meta(snapshot_source, frame, 0)
+        return self.read_frame_with_meta(snapshot_source.id)
+
+    def read_jpeg_frame_with_meta(
+        self,
+        source_id: str | None = None,
+        quality: int | None = None,
+        *,
+        preview: bool = False,
+    ) -> tuple[bytes, dict]:
+        with self._lock:
+            source = self._get_read_source(source_id)
+            if not source:
+                frame = placeholder_frame("未配置摄像头源")
+                return encode_jpeg_frame(frame, quality), frame_meta(None, frame, 0)
+            if source.sourceType == "browser":
+                return read_browser_jpeg_with_meta(source, quality)
+            resolved_source_id = source.id
+
+        frame, meta = self.read_frame_with_meta(resolved_source_id)
+        if preview:
+            frame = resize_to_canvas(frame)
+            meta = {**meta, "width": int(frame.shape[1]), "height": int(frame.shape[0])}
+        return self.encode_jpeg(frame, quality), meta
+
+    def get_frame_info(self, source_id: str | None = None) -> dict:
+        with self._lock:
+            source = self._get_read_source(source_id)
+            if not source:
+                return frame_meta(None, placeholder_frame("未配置摄像头源"), 0)
+            if source.sourceType == "browser":
+                _, meta = read_browser_frame_with_meta(source)
+                return meta
+            reader = self._reader_for(source)
+        return reader.meta()
 
     def get_snapshot_image_path(self, source_id: str | None = None) -> Path | None:
         with self._lock:
@@ -234,11 +293,56 @@ class CameraManager:
                 self._save_state()
             return source
 
+    def update_browser_frame_bytes(
+        self,
+        raw: bytes,
+        source_id: str = BROWSER_CAMERA_SOURCE_ID,
+        *,
+        content_type: str = "image/jpeg",
+        width: int = DEFAULT_WIDTH,
+        height: int = DEFAULT_HEIGHT,
+    ) -> CameraSource:
+        with self._lock:
+            source = self.sources.get(source_id)
+            if not source:
+                raise KeyError(f"未知摄像头源: {source_id}")
+            if source.sourceType != "browser":
+                raise ValueError("浏览器帧只能写入浏览器摄像头源")
+            update_browser_frame_bytes(
+                raw,
+                content_type=content_type,
+                width=width,
+                height=height,
+            )
+            if self.active_source_id != source_id:
+                self.active_source_id = source_id
+                self._save_state()
+            return source
+
+    def update_browser_video_frame(
+        self,
+        frame: np.ndarray,
+        source_id: str = BROWSER_CAMERA_SOURCE_ID,
+    ) -> CameraSource:
+        with self._lock:
+            source = self.sources.get(source_id)
+            if not source:
+                raise KeyError(f"未知摄像头源: {source_id}")
+            if source.sourceType != "browser":
+                raise ValueError("WebRTC 视频轨道只能写入浏览器摄像头源")
+            update_browser_video_frame(frame)
+            if self.active_source_id != source_id:
+                self.active_source_id = source_id
+                self._save_state()
+            return source
+
     def encode_jpeg(self, frame: np.ndarray, quality: int | None = None) -> bytes:
-        jpeg_quality = max(1, min(100, JPEG_QUALITY if quality is None else quality))
-        ok, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality])
+        return encode_jpeg_frame(frame, quality)
+
+    def encode_png(self, frame: np.ndarray) -> bytes:
+        ok, buffer = cv2.imencode(".png", frame, [int(cv2.IMWRITE_PNG_COMPRESSION), 1])
         if not ok:
-            raise RuntimeError("JPEG 编码失败")
+            raise RuntimeError("PNG 编码失败")
         return buffer.tobytes()
 
     def _reader_for(self, source: CameraSource) -> FrameReader:
@@ -341,21 +445,27 @@ class CameraManager:
 class FrameReader:
     def __init__(self, source: CameraSource) -> None:
         self._lock = threading.RLock()
+        self._stop_event = threading.Event()
         self.source = source
         self.capture: cv2.VideoCapture | None = None
         self.image_frame: np.ndarray | None = None
         self.last_frame: np.ndarray | None = None
+        self.frame_index = -1
         self.last_read_at = 0.0
+        self.last_timestamp_ms = 0
+        self._thread: threading.Thread | None = None
         self._open()
 
     def _open(self) -> None:
         if self.source.sourceType == "browser":
             self.last_frame = read_browser_frame()
+            self._touch_frame(self.last_frame)
             return
 
         if self.source.sourceType == "image":
             self.image_frame = read_image(self.source.path or "")
             self.last_frame = self.image_frame
+            self._touch_frame(self.last_frame, frame_index=0)
             return
 
         target = self.source.deviceIndex if self.source.sourceType == "device" else self.source.path
@@ -363,42 +473,92 @@ class FrameReader:
         self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, DEFAULT_WIDTH)
         self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, DEFAULT_HEIGHT)
         self.capture.set(cv2.CAP_PROP_FPS, self.source.fps)
+        if self.source.sourceType == "video":
+            detected_fps = self.capture.get(cv2.CAP_PROP_FPS) if self.capture else 0
+            if detected_fps and np.isfinite(detected_fps):
+                self.source.fps = max(1, min(30, int(round(detected_fps))))
+        with self._lock:
+            self._read_next_locked()
+        self._thread = threading.Thread(target=self._run, name=f"camera-reader-{self.source.id}", daemon=True)
+        self._thread.start()
 
     def read(self) -> np.ndarray:
+        frame, _ = self.read_with_meta()
+        return frame
+
+    def read_with_meta(self) -> tuple[np.ndarray, dict]:
         with self._lock:
-            min_interval = 1 / max(1, self.source.fps)
-            elapsed = time.time() - self.last_read_at
-            if self.last_frame is not None and elapsed < min_interval:
-                return self.last_frame.copy()
+            if self.last_frame is None:
+                self._read_next_locked()
+            frame = self.last_frame.copy() if self.last_frame is not None else placeholder_frame("视频源读取失败")
+            return frame, self.meta(frame=frame)
 
-            self.last_read_at = time.time()
-
-            if self.source.sourceType == "browser":
-                self.last_frame = read_browser_frame()
-                return self.last_frame.copy()
-
-            if self.source.sourceType == "image":
-                return self.image_frame.copy() if self.image_frame is not None else placeholder_frame("图片源读取失败")
-
-            if not self.capture or not self.capture.isOpened():
-                return placeholder_frame(f"{self.source.name} 不可用")
-
-            ok, frame = self.capture.read()
-            if not ok or frame is None:
-                if self.source.sourceType == "video" and self.source.loop:
-                    self.capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    ok, frame = self.capture.read()
-                if not ok or frame is None:
-                    return self.last_frame.copy() if self.last_frame is not None else placeholder_frame("视频源读取结束")
-
-            self.last_frame = resize_to_canvas(frame)
-            return self.last_frame.copy()
+    def meta(self, frame: np.ndarray | None = None) -> dict:
+        with self._lock:
+            frame = frame if frame is not None else self.last_frame
+            if frame is None:
+                frame = placeholder_frame("视频源读取失败")
+            return frame_meta(
+                self.source,
+                frame,
+                max(0, self.frame_index),
+                timestamp_ms=self.last_timestamp_ms or int(time.time() * 1000),
+            )
 
     def close(self) -> None:
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
         with self._lock:
             if self.capture:
                 self.capture.release()
                 self.capture = None
+
+    def _run(self) -> None:
+        while not self._stop_event.is_set():
+            started = time.time()
+            with self._lock:
+                self._read_next_locked()
+            interval = 1 / max(1, self.source.fps)
+            self._stop_event.wait(max(0.001, interval - (time.time() - started)))
+
+    def _read_next_locked(self) -> None:
+        if self.source.sourceType == "browser":
+            self._touch_frame(read_browser_frame())
+            return
+
+        if self.source.sourceType == "image":
+            frame = self.image_frame if self.image_frame is not None else placeholder_frame("图片源读取失败")
+            self._touch_frame(frame, frame_index=0)
+            return
+
+        if not self.capture or not self.capture.isOpened():
+            self._touch_frame(placeholder_frame(f"{self.source.name} 不可用"))
+            return
+
+        ok, frame = self.capture.read()
+        if not ok or frame is None:
+            if self.source.sourceType == "video" and self.source.loop:
+                self.capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                ok, frame = self.capture.read()
+            if not ok or frame is None:
+                if self.last_frame is None:
+                    self._touch_frame(placeholder_frame("视频源读取结束"))
+                return
+
+        frame_index = None
+        if self.source.sourceType == "video":
+            frame_index = max(0, int(self.capture.get(cv2.CAP_PROP_POS_FRAMES)) - 1)
+        self._touch_frame(resize_to_canvas(frame), frame_index=frame_index)
+
+    def _touch_frame(self, frame: np.ndarray, frame_index: int | None = None) -> None:
+        self.last_frame = frame
+        self.last_read_at = time.time()
+        self.last_timestamp_ms = int(self.last_read_at * 1000)
+        if frame_index is None:
+            self.frame_index = self.frame_index + 1 if self.frame_index >= 0 else 0
+        else:
+            self.frame_index = frame_index
 
 
 def read_image(path: str, *, resize: bool = True) -> np.ndarray:
@@ -425,21 +585,132 @@ def decode_image_bytes(raw: bytes) -> np.ndarray:
 
 
 def update_browser_frame(frame: np.ndarray) -> None:
-    global _BROWSER_FRAME, _BROWSER_FRAME_UPDATED_AT
+    global _BROWSER_FRAME, _BROWSER_FRAME_BYTES, _BROWSER_FRAME_CONTENT_TYPE
+    global _BROWSER_FRAME_UPDATED_AT, _BROWSER_FRAME_INDEX, _BROWSER_FRAME_WIDTH, _BROWSER_FRAME_HEIGHT
+    frame = resize_to_canvas(frame)
     with _BROWSER_FRAME_LOCK:
-        _BROWSER_FRAME = resize_to_canvas(frame)
+        _BROWSER_FRAME = frame
+        _BROWSER_FRAME_BYTES = encode_jpeg_frame(frame, 96)
+        _BROWSER_FRAME_CONTENT_TYPE = "image/jpeg"
         _BROWSER_FRAME_UPDATED_AT = time.time()
+        _BROWSER_FRAME_INDEX += 1
+        _BROWSER_FRAME_WIDTH = int(frame.shape[1])
+        _BROWSER_FRAME_HEIGHT = int(frame.shape[0])
+
+
+def update_browser_frame_bytes(
+    raw: bytes,
+    *,
+    content_type: str = "image/jpeg",
+    width: int = DEFAULT_WIDTH,
+    height: int = DEFAULT_HEIGHT,
+) -> None:
+    global _BROWSER_FRAME, _BROWSER_FRAME_BYTES, _BROWSER_FRAME_CONTENT_TYPE
+    global _BROWSER_FRAME_UPDATED_AT, _BROWSER_FRAME_INDEX, _BROWSER_FRAME_WIDTH, _BROWSER_FRAME_HEIGHT
+    if not raw:
+        raise ValueError("浏览器摄像头帧为空")
+    with _BROWSER_FRAME_LOCK:
+        _BROWSER_FRAME = None
+        _BROWSER_FRAME_BYTES = bytes(raw)
+        _BROWSER_FRAME_CONTENT_TYPE = content_type.split(";", 1)[0].strip().lower() or "image/jpeg"
+        _BROWSER_FRAME_UPDATED_AT = time.time()
+        _BROWSER_FRAME_INDEX += 1
+        _BROWSER_FRAME_WIDTH = int(width or DEFAULT_WIDTH)
+        _BROWSER_FRAME_HEIGHT = int(height or DEFAULT_HEIGHT)
+
+
+def update_browser_video_frame(frame: np.ndarray) -> None:
+    global _BROWSER_FRAME, _BROWSER_FRAME_BYTES, _BROWSER_FRAME_CONTENT_TYPE
+    global _BROWSER_FRAME_UPDATED_AT, _BROWSER_FRAME_INDEX, _BROWSER_FRAME_WIDTH, _BROWSER_FRAME_HEIGHT
+    frame = resize_to_canvas(frame)
+    with _BROWSER_FRAME_LOCK:
+        _BROWSER_FRAME = frame
+        _BROWSER_FRAME_BYTES = None
+        _BROWSER_FRAME_CONTENT_TYPE = "video/raw"
+        _BROWSER_FRAME_UPDATED_AT = time.time()
+        _BROWSER_FRAME_INDEX += 1
+        _BROWSER_FRAME_WIDTH = int(frame.shape[1])
+        _BROWSER_FRAME_HEIGHT = int(frame.shape[0])
+
+
+def browser_frame_status() -> dict:
+    with _BROWSER_FRAME_LOCK:
+        return {
+            "hasFrame": _BROWSER_FRAME is not None or _BROWSER_FRAME_BYTES is not None,
+            "timestampMs": int(_BROWSER_FRAME_UPDATED_AT * 1000) if _BROWSER_FRAME_UPDATED_AT else 0,
+            "frameIndex": _BROWSER_FRAME_INDEX,
+            "width": int(_BROWSER_FRAME_WIDTH),
+            "height": int(_BROWSER_FRAME_HEIGHT),
+        }
+
+
+def read_browser_frame_with_meta(source: CameraSource) -> tuple[np.ndarray, dict]:
+    global _BROWSER_FRAME
+    with _BROWSER_FRAME_LOCK:
+        if _BROWSER_FRAME is None and _BROWSER_FRAME_BYTES is not None:
+            decoded = decode_image_bytes(_BROWSER_FRAME_BYTES)
+            _BROWSER_FRAME = resize_to_canvas(decoded)
+        frame = (
+            _BROWSER_FRAME.copy()
+            if _BROWSER_FRAME is not None
+            else placeholder_frame("等待管理台启动浏览器摄像头")
+        )
+        return frame, frame_meta(
+            source,
+            frame,
+            max(0, _BROWSER_FRAME_INDEX),
+            timestamp_ms=int(_BROWSER_FRAME_UPDATED_AT * 1000) if _BROWSER_FRAME_UPDATED_AT else None,
+        )
+
+
+def read_browser_jpeg_with_meta(source: CameraSource, quality: int | None = None) -> tuple[bytes, dict]:
+    with _BROWSER_FRAME_LOCK:
+        if _BROWSER_FRAME_BYTES is not None and _BROWSER_FRAME_CONTENT_TYPE == "image/jpeg":
+            frame = _BROWSER_FRAME if _BROWSER_FRAME is not None else None
+            if frame is not None:
+                height, width = frame.shape[:2]
+            else:
+                width = _BROWSER_FRAME_WIDTH or DEFAULT_WIDTH
+                height = _BROWSER_FRAME_HEIGHT or DEFAULT_HEIGHT
+            meta = {
+                "sourceId": source.id,
+                "sourceName": source.name,
+                "sourceType": source.sourceType,
+                "frameIndex": max(0, int(_BROWSER_FRAME_INDEX)),
+                "timestampMs": int(_BROWSER_FRAME_UPDATED_AT * 1000) if _BROWSER_FRAME_UPDATED_AT else int(time.time() * 1000),
+                "fps": int(source.fps),
+                "width": int(width),
+                "height": int(height),
+            }
+            return bytes(_BROWSER_FRAME_BYTES), meta
+
+    frame, meta = read_browser_frame_with_meta(source)
+    return encode_jpeg_frame(frame, quality), meta
 
 
 def read_browser_frame() -> np.ndarray:
+    global _BROWSER_FRAME
     with _BROWSER_FRAME_LOCK:
+        if _BROWSER_FRAME is None and _BROWSER_FRAME_BYTES is not None:
+            decoded = decode_image_bytes(_BROWSER_FRAME_BYTES)
+            _BROWSER_FRAME = resize_to_canvas(decoded)
         if _BROWSER_FRAME is None:
             return placeholder_frame("等待管理台启动浏览器摄像头")
         return _BROWSER_FRAME.copy()
 
 
+def encode_jpeg_frame(frame: np.ndarray, quality: int | None = None) -> bytes:
+    jpeg_quality = max(1, min(100, JPEG_QUALITY if quality is None else quality))
+    ok, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality])
+    if not ok:
+        raise RuntimeError("JPEG 编码失败")
+    return buffer.tobytes()
+
+
 def resize_to_canvas(frame: np.ndarray) -> np.ndarray:
     height, width = frame.shape[:2]
+    if width == DEFAULT_WIDTH and height == DEFAULT_HEIGHT:
+        return frame
     scale = min(DEFAULT_WIDTH / width, DEFAULT_HEIGHT / height)
     new_width = max(1, int(width * scale))
     new_height = max(1, int(height * scale))
@@ -481,6 +752,26 @@ def placeholder_frame(message: str) -> np.ndarray:
     return frame
 
 
+def frame_meta(
+    source: CameraSource | None,
+    frame: np.ndarray,
+    frame_index: int,
+    *,
+    timestamp_ms: int | None = None,
+) -> dict:
+    height, width = frame.shape[:2]
+    return {
+        "sourceId": source.id if source else "",
+        "sourceName": source.name if source else "",
+        "sourceType": source.sourceType if source else "",
+        "frameIndex": int(frame_index),
+        "timestampMs": int(timestamp_ms or time.time() * 1000),
+        "fps": int(source.fps if source else DEFAULT_FPS),
+        "width": int(width),
+        "height": int(height),
+    }
+
+
 def _scan_media_sources(
     root: Path,
     *,
@@ -500,13 +791,14 @@ def _scan_media_sources(
     sources: list[CameraSource] = []
     for path in files:
         source_type = _source_type_from_path(path)
+        fps = media_fps(path) if source_type == "video" else DEFAULT_FPS
         sources.append(CameraSource(
             id=f"{prefix}-{path.stem}",
             name=f"{title} {path.name}",
             sourceType=source_type,
             taskTypes=[task_type],
             path=str(path),
-            fps=DEFAULT_FPS,
+            fps=fps,
             loop=True,
             builtIn=True,
         ))
@@ -520,3 +812,14 @@ def _source_type_from_path(path: Path) -> SourceType:
     if suffix in VIDEO_EXTENSIONS:
         return "video"
     raise ValueError(f"不支持的媒体类型: {suffix}")
+
+
+def media_fps(path: Path) -> int:
+    cap = cv2.VideoCapture(str(path))
+    try:
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        if fps and np.isfinite(fps):
+            return max(1, min(30, int(round(fps))))
+    finally:
+        cap.release()
+    return DEFAULT_FPS

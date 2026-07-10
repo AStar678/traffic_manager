@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>车主手势控车原型网络</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Owner Gesture Control</p>
+          <h1>车主手势控车原型网络</h1>
+        </div>
+        <div class="status-pill" id="modelStatus">模型加载中</div>
+      </header>
+
+      <main class="layout">
+        <section class="camera-panel">
+          <div class="video-shell">
+            <video id="webcam" autoplay playsinline muted></video>
+            <canvas id="overlay"></canvas>
+            <div class="camera-empty" id="cameraEmpty">
+              <strong>摄像头未启动</strong>
+              <span>点击“启动摄像头”后开始录入或识别动作</span>
+            </div>
+          </div>
+
+          <div class="toolbar">
+            <button class="primary" id="startCameraBtn">启动摄像头</button>
+            <button id="stopCameraBtn" disabled>停止</button>
+            <button id="clearStorageBtn">清空原型库</button>
+          </div>
+
+          <div class="readout-grid">
+            <div class="readout">
+              <span>MediaPipe 手势</span>
+              <strong id="builtinGesture">--</strong>
+            </div>
+            <div class="readout">
+              <span>原型匹配</span>
+              <strong id="prototypeMatch">未录入</strong>
+            </div>
+            <div class="readout">
+              <span>相似度</span>
+              <strong id="similarityScore">--</strong>
+            </div>
+            <div class="readout">
+              <span>误触发状态</span>
+              <strong id="triggerState">等待</strong>
+            </div>
+          </div>
+        </section>
+
+        <aside class="side-panel">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>录入动作</h2>
+              <span id="sampleCount">0 / 105 帧</span>
+            </div>
+            <label>
+              动作名称
+              <input id="gestureNameInput" type="text" placeholder="例如：挥手返回主页" />
+            </label>
+            <label>
+              绑定车辆操作
+              <select id="actionSelect">
+                <option value="wake">启动 / 唤醒</option>
+                <option value="confirm">确认 / 执行</option>
+                <option value="volume_up">音量增加</option>
+                <option value="volume_down">音量降低</option>
+                <option value="next_feature">切换功能</option>
+                <option value="answer_call">接听电话</option>
+                <option value="hangup_call">挂断电话</option>
+                <option value="home">返回主页</option>
+              </select>
+            </label>
+            <div class="field-grid">
+              <label>
+                识别类型
+                <span class="auto-kind-value" id="gestureKindStatus">自动判定</span>
+              </label>
+              <label>
+                触发持续时间
+                <select id="holdMsSelect">
+                  <option value="900">0.9 秒</option>
+                  <option value="1200" selected>1.2 秒</option>
+                  <option value="1800">1.8 秒</option>
+                </select>
+              </label>
+            </div>
+            <div class="button-row">
+              <button class="primary" id="recordBtn" disabled>开始录入</button>
+              <button id="cancelRecordBtn" disabled>取消</button>
+            </div>
+            <p class="hint" id="recordHint">录入时先采集 60 帧判断动态/静态，再采集 45 帧建立手势原型。</p>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>已录入动作</h2>
+              <span id="prototypeCount">0 个</span>
+            </div>
+            <div class="prototype-list" id="prototypeList"></div>
+          </section>
+
+          <section class="panel vehicle-panel">
+            <h2>模拟车辆控制</h2>
+            <div class="vehicle-state">
+              <span>系统</span>
+              <strong id="vehiclePower">待唤醒</strong>
+            </div>
+            <label>
+              音量
+              <input id="volumeSlider" type="range" min="0" max="100" value="35" />
+            </label>
+            <label>
+              空调温度
+              <input id="tempSlider" type="range" min="16" max="30" value="24" />
+            </label>
+            <div class="vehicle-state">
+              <span>电话</span>
+              <strong id="phoneState">空闲</strong>
+            </div>
+            <div class="vehicle-state">
+              <span>当前功能</span>
+              <strong id="featureState">主页</strong>
+            </div>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

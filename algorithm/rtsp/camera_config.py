@@ -20,7 +20,7 @@ CAMERAS = {
         "name": "行人检测",
         "rtsp_url": "rtsp://10.126.59.120:8554/live/live3",
         "scene": "pedestrian",
-        "use_for": ["police_gesture"]
+        "use_for": ["owner_gesture"]
     },
     "live4": {
         "name": "消防车识别",

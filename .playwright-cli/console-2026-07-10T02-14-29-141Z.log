@@ -1,0 +1,22 @@
+[     167ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://127.0.0.1:5173/favicon.ico:0
+[     254ms] [VERBOSE] [DOM] Password field is not contained in a form: (More info: https://goo.gl/9p2vKq) @ http://127.0.0.1:5173/login:0
+[   14973ms] [WARNING] W0710 02:14:44.112999 2136208 gesture_recognizer_graph.cc:134] Hand Gesture Recognizer contains CPU only ops. Sets HandGestureRecognizerGraph acceleration to Xnnpack. @ http://127.0.0.1:5173/wasm/vision_wasm_internal.js:8350
+[   14980ms] [LOG] I0710 02:14:44.120000 2136208 hand_gesture_recognizer_graph.cc:257] Custom gesture classifier is not defined. @ http://127.0.0.1:5173/wasm/vision_wasm_internal.js:4659
+[   15089ms] [LOG] I0710 02:14:44.228999 2136208 gl_context.cc:407] GL version: 3.0 (OpenGL ES 3.0 (WebGL 2.0 (OpenGL ES 3.0 Chromium))), renderer: WebKit WebGL @ http://127.0.0.1:5173/wasm/vision_wasm_internal.js:4659
+[   15089ms] [WARNING] W0710 02:14:44.230000 2136208 gl_context.cc:1118] OpenGL error checking is disabled @ http://127.0.0.1:5173/wasm/vision_wasm_internal.js:8350
+[   15091ms] [LOG] Graph successfully started running. @ http://127.0.0.1:5173/wasm/vision_wasm_internal.js:1370
+[   23780ms] [WARNING] W0710 02:14:52.920000 2136208 gesture_recognizer_graph.cc:134] Hand Gesture Recognizer contains CPU only ops. Sets HandGestureRecognizerGraph acceleration to Xnnpack. @ http://127.0.0.1:5173/wasm/vision_wasm_internal.js:8350
+[   23781ms] [LOG] I0710 02:14:52.920999 2136208 hand_gesture_recognizer_graph.cc:257] Custom gesture classifier is not defined. @ http://127.0.0.1:5173/wasm/vision_wasm_internal.js:4659
+[   23791ms] [LOG] I0710 02:14:52.932000 2136208 gl_context.cc:407] GL version: 3.0 (OpenGL ES 3.0 (WebGL 2.0 (OpenGL ES 3.0 Chromium))), renderer: WebKit WebGL @ http://127.0.0.1:5173/wasm/vision_wasm_internal.js:4659
+[   23791ms] [WARNING] W0710 02:14:52.932000 2136208 gl_context.cc:1118] OpenGL error checking is disabled @ http://127.0.0.1:5173/wasm/vision_wasm_internal.js:8350
+[   23792ms] [LOG] Graph successfully started running. @ http://127.0.0.1:5173/wasm/vision_wasm_internal.js:1370
+[   39757ms] [WARNING] W0710 02:15:08.896999 2136208 gesture_recognizer_graph.cc:134] Hand Gesture Recognizer contains CPU only ops. Sets HandGestureRecognizerGraph acceleration to Xnnpack. @ http://127.0.0.1:5173/wasm/vision_wasm_internal.js:8350
+[   39762ms] [LOG] I0710 02:15:08.903000 2136208 hand_gesture_recognizer_graph.cc:257] Custom gesture classifier is not defined. @ http://127.0.0.1:5173/wasm/vision_wasm_internal.js:4659
+[   39779ms] [LOG] I0710 02:15:08.920000 2136208 gl_context.cc:407] GL version: 3.0 (OpenGL ES 3.0 (WebGL 2.0 (OpenGL ES 3.0 Chromium))), renderer: WebKit WebGL @ http://127.0.0.1:5173/wasm/vision_wasm_internal.js:4659
+[   39780ms] [WARNING] W0710 02:15:08.920000 2136208 gl_context.cc:1118] OpenGL error checking is disabled @ http://127.0.0.1:5173/wasm/vision_wasm_internal.js:8350
+[   39781ms] [LOG] Graph successfully started running. @ http://127.0.0.1:5173/wasm/vision_wasm_internal.js:1370
+[  590155ms] [WARNING] W0710 02:24:19.295000 2136208 gesture_recognizer_graph.cc:134] Hand Gesture Recognizer contains CPU only ops. Sets HandGestureRecognizerGraph acceleration to Xnnpack. @ http://127.0.0.1:5173/wasm/vision_wasm_internal.js:8350
+[  590159ms] [LOG] I0710 02:24:19.300000 2136208 hand_gesture_recognizer_graph.cc:257] Custom gesture classifier is not defined. @ http://127.0.0.1:5173/wasm/vision_wasm_internal.js:4659
+[  590175ms] [LOG] I0710 02:24:19.315000 2136208 gl_context.cc:407] GL version: 3.0 (OpenGL ES 3.0 (WebGL 2.0 (OpenGL ES 3.0 Chromium))), renderer: WebKit WebGL @ http://127.0.0.1:5173/wasm/vision_wasm_internal.js:4659
+[  590175ms] [WARNING] W0710 02:24:19.316000 2136208 gl_context.cc:1118] OpenGL error checking is disabled @ http://127.0.0.1:5173/wasm/vision_wasm_internal.js:8350
+[  590177ms] [LOG] Graph successfully started running. @ http://127.0.0.1:5173/wasm/vision_wasm_internal.js:1370

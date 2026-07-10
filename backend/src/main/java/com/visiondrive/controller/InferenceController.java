@@ -18,14 +18,14 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/inference")
 @RequiredArgsConstructor
-@Tag(name = "推理接口", description = "调用算法服务进行车牌/交警手势/车主手势识别")
+@Tag(name = "推理接口", description = "调用算法服务进行图片推理；手势识别使用车主手势接口")
 public class InferenceController {
 
     private final InferenceService inferenceService;
 
     @Operation(
             summary = "图片推理",
-            description = "支持三种任务类型: license_plate / police_gesture / owner_gesture"
+            description = "图片接口保留 license_plate；手势识别使用 /api/v1/owner-gestures"
     )
     @PostMapping("/image")
     public ApiResponse<InferenceResponse> imageInference(

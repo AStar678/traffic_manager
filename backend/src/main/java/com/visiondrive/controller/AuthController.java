@@ -35,13 +35,24 @@ public class AuthController {
         return ApiResponse.success();
     }
 
+    @Operation(summary = "检查手机号是否已注册")
+    @GetMapping("/check-phone")
+    public ApiResponse<Map<String, Object>> checkPhone(@RequestParam String phone) {
+        boolean exists = authService.isPhoneRegistered(phone);
+        Map<String, Object> data = new java.util.HashMap<>();
+        data.put("registered", exists);
+        if (exists) data.put("message", "该手机号已注册，可直接验证码登录");
+        return ApiResponse.success(data);
+    }
+
     @Operation(summary = "发送短信验证码")
     @PostMapping("/send-code")
     public ApiResponse<Map<String, Object>> sendCode(@Valid @RequestBody SendCodeRequest request) {
         VerificationCodeService.SendResult result = verificationCodeService.sendCode(request.getPhone());
         if (result.success) {
             Map<String, Object> data = new java.util.HashMap<>();
-            data.put("retryAfter", 60);
+            data.put("retryAfter", 30);
+            data.put("alreadyRegistered", authService.isPhoneRegistered(request.getPhone()));
             if (result.mockCode != null) data.put("mockCode", result.mockCode);
             return ApiResponse.success(data);
         }

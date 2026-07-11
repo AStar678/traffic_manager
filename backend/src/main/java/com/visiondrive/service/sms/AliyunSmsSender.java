@@ -32,6 +32,9 @@ public class AliyunSmsSender implements SmsSender {
     @PostConstruct
     public void init() {
         DefaultProfile profile = DefaultProfile.getProfile(regionId, accessKeyId, accessKeySecret);
+        // 设置超时：连接5秒，读取10秒（默认无限制导致hang住）
+        System.setProperty("sun.net.client.defaultConnectTimeout", "5000");
+        System.setProperty("sun.net.client.defaultReadTimeout", "10000");
         this.client = new DefaultAcsClient(profile);
         log.info("阿里云号码认证服务初始化成功, region={}", regionId);
     }

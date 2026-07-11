@@ -14,7 +14,7 @@ public class VerificationCodeStore {
 
     private static final long CODE_TTL_SECONDS = 300;
     private static final int MAX_ATTEMPTS = 5;
-    private static final long RESEND_INTERVAL_SECONDS = 60;
+    private static final long RESEND_INTERVAL_SECONDS = 30;
     private static final int DAILY_LIMIT = 10;
 
     private final ConcurrentHashMap<String, CodeEntry> codeMap = new ConcurrentHashMap<>();

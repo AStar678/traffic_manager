@@ -36,6 +36,7 @@
             />
           </div>
           <p v-if="form.phone && !phoneOk" class="field-error">请输入正确的11位手机号</p>
+          <p v-if="phoneRegistered" class="field-warning">⚠ 该手机号已注册，可直接使用验证码登录</p>
         </div>
 
         <!-- 验证码 -->
@@ -132,10 +133,10 @@
 </template>
 
 <script setup>
-import { reactive, ref, computed, onBeforeUnmount } from 'vue'
+import { reactive, ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { sendCode as apiSendCode, register as apiRegister } from '@/api/auth'
+import { sendCode as apiSendCode, register as apiRegister, checkPhone as apiCheckPhone } from '@/api/auth'
 
 const router = useRouter()
 
@@ -145,7 +146,23 @@ const showCfm = ref(false)
 const countdown = ref(0)
 const sending = ref(false)
 const submitting = ref(false)
+const phoneRegistered = ref(false)
 let timer = null
+let checkTimer = null
+
+// 手机号变化时延迟检测是否已注册
+watch(() => form.phone, (val) => {
+  phoneRegistered.value = false
+  clearTimeout(checkTimer)
+  if (/^1[3-9]\d{9}$/.test(val)) {
+    checkTimer = setTimeout(async () => {
+      try {
+        const res = await apiCheckPhone(val)
+        phoneRegistered.value = res?.data?.registered || false
+      } catch { /* 静默失败 */ }
+    }, 600)
+  }
+})
 
 const form = reactive({
   phone: '',
@@ -177,13 +194,17 @@ async function sendCode() {
   try {
     const res = await apiSendCode(form.phone)
     const data = res.data || res
+    if (data?.alreadyRegistered) {
+      phoneRegistered.value = true
+      ElMessage.warning('该手机号已注册，可直接去登录页使用验证码登录')
+    }
     if (data?.mockCode) {
       ElMessage.success(`验证码：${data.mockCode}`)
     } else {
       const masked = form.phone.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2')
       ElMessage.success(`验证码已发送至 ${masked}`)
     }
-    startCountdown(data?.retryAfter || 60)
+    startCountdown(data?.retryAfter || 30)
   } catch (e) {
     const retryAfter = e?.response?.data?.data?.retryAfter
     if (retryAfter) startCountdown(retryAfter)
@@ -228,6 +249,7 @@ async function handleRegister() {
 
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer)
+  if (checkTimer) clearTimeout(checkTimer)
 })
 </script>
 
@@ -392,6 +414,12 @@ onBeforeUnmount(() => {
   margin-top: 6px;
   font-size: 12px;
   color: var(--danger-color);
+  line-height: 1;
+}
+.field-warning {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--warning-color);
   line-height: 1;
 }
 

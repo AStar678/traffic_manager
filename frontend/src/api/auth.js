@@ -19,3 +19,7 @@ export function loginByCode(phone, code) {
 export function resetPassword(data) {
   return request.post('/auth/reset-password', data, { showError: false })
 }
+
+export function checkPhone(phone) {
+  return request.get('/auth/check-phone', { params: { phone }, showError: false })
+}

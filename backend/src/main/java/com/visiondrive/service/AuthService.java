@@ -115,4 +115,8 @@ public class AuthService {
     private String maskPhone(String phone) {
         return phone != null && phone.length() >= 7 ? phone.substring(0, 3) + "****" + phone.substring(phone.length() - 4) : phone;
     }
+
+    public boolean isPhoneRegistered(String phone) {
+        return phone != null && userRepository.findByPhone(phone).isPresent();
+    }
 }

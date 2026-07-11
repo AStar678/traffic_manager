@@ -7,7 +7,7 @@ spring:
 
   # 数据库 (开发阶段使用H2)
   datasource:
-    url: jdbc:h2:file:./data/visiondrive
+    url: jdbc:h2:file:./data/visiondrive;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
     driver-class-name: org.h2.Driver
     username: sa
     password:
@@ -20,8 +20,13 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update
-    show-sql: false
-
+    show-sql: true
+    database-platform: org.hibernate.dialect.H2Dialect  # ← 显式指定方言
+    properties:
+      hibernate:
+        format_sql: true
+        hbm2ddl:
+          auto: update
   # 文件上传
   servlet:
     multipart:

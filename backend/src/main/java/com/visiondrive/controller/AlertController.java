@@ -18,7 +18,7 @@ import java.util.Map;
 
 @Slf4j
 @RestController
-@RequestMapping({"/api/alerts", "/api/v1/alerts"})
+@RequestMapping({"/api/v1/alerts"})
 @RequiredArgsConstructor
 @Tag(name = "告警管理", description = "告警列表和统计")
 public class AlertController {

@@ -13,6 +13,11 @@ const routes = [
     component: () => import('@/views/RegisterPage.vue')
   },
   {
+    path: '/forgot-password',
+    name: 'ForgotPassword',
+    component: () => import('@/views/ForgotPasswordPage.vue')
+  },
+  {
     path: '/',
     component: () => import('@/views/MainLayout.vue'),
     redirect: '/dashboard',
@@ -63,7 +68,7 @@ const router = createRouter({
 
 router.beforeEach(to => {
   const authStore = useAuthStore()
-  if (to.path === '/login' || to.path === '/register') {
+  if (to.path === '/login' || to.path === '/register' || to.path === '/forgot-password') {
     return authStore.isAuthenticated ? '/dashboard' : true
   }
   if (!authStore.isAuthenticated) {

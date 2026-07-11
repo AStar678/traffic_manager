@@ -124,6 +124,16 @@ public class AuthService {
         return r;
     }
 
+    public void resetPassword(String phone, String code, String newPassword) {
+        String error = verificationCodeService.verifyCode(phone, code);
+        if (error != null) throw new RuntimeException(error);
+        User user = userRepository.findByPhone(phone)
+                .orElseThrow(() -> new RuntimeException("该手机号未注册"));
+        user.setPassword(newPassword);
+        userRepository.save(user);
+        log.info("密码重置成功: phone={}", maskPhone(phone));
+    }
+
     private String maskPhone(String phone) {
         return phone != null && phone.length() >= 7 ? phone.substring(0, 3) + "****" + phone.substring(phone.length() - 4) : phone;
     }

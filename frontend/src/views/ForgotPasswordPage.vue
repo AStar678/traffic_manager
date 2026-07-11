@@ -16,115 +16,146 @@
       </div>
     </div>
 
-    <!-- 右侧：注册面板 -->
+    <!-- 右侧：忘记密码面板 -->
     <div class="login-panel">
       <div class="login-card">
-        <h2>创建账号</h2>
-        <p class="hint">手机号即账号，验证后设置密码</p>
-
-        <!-- 手机号 -->
-        <div class="form-group">
-          <label>手机号</label>
-          <div :class="['input-wrapper', { 'has-error': form.phone && !phoneOk }]">
-            <el-icon><Phone /></el-icon>
-            <input
-              v-model="form.phone"
-              type="tel"
-              maxlength="11"
-              placeholder="请输入手机号"
-              class="auto-input"
-            />
+        <!-- 步骤指示器 -->
+        <div class="steps">
+          <div :class="['step', { active: step >= 1, done: step > 1 }]">
+            <span class="step-num">1</span>
+            <span class="step-label">验证身份</span>
           </div>
-          <p v-if="form.phone && !phoneOk" class="field-error">请输入正确的11位手机号</p>
+          <div class="step-line" :class="{ done: step > 1 }"></div>
+          <div :class="['step', { active: step >= 2 }]">
+            <span class="step-num">2</span>
+            <span class="step-label">设置新密码</span>
+          </div>
         </div>
 
-        <!-- 验证码 -->
-        <div class="form-group">
-          <label>验证码</label>
-          <div class="code-row">
-            <div :class="['input-wrapper code-input-wrap', { 'has-error': form.code && codeIncomplete }]">
-              <el-icon><Message /></el-icon>
+        <!-- 步骤1：验证手机号 -->
+        <div v-show="step === 1" class="form-body">
+          <h2>忘记密码</h2>
+          <p class="hint">请输入注册时使用的手机号，获取验证码</p>
+
+          <div class="form-group">
+            <label>手机号</label>
+            <div :class="['input-wrapper', { 'has-error': form.phone && !phoneOk }]">
+              <el-icon><Phone /></el-icon>
               <input
-                v-model="form.code"
-                type="text"
-                maxlength="6"
-                placeholder="6位验证码"
+                v-model="form.phone"
+                type="tel"
+                maxlength="11"
+                placeholder="请输入手机号"
                 class="auto-input"
               />
             </div>
-            <button
-              class="send-code-btn"
-              :disabled="!phoneOk || countdown > 0 || sending"
-              @click="sendCode"
-            >
-              <template v-if="sending">
-                <el-icon class="is-loading"><Loading /></el-icon> 发送中
-              </template>
-              <template v-else-if="countdown > 0">
-                {{ countdown }}s 后重发
-              </template>
-              <template v-else>
-                获取验证码
-              </template>
-            </button>
+            <p v-if="form.phone && !phoneOk" class="field-error">请输入正确的11位手机号</p>
           </div>
-          <p v-if="form.code && codeIncomplete" class="field-error">验证码为6位数字</p>
+
+          <div class="form-group">
+            <label>验证码</label>
+            <div class="code-row">
+              <div :class="['input-wrapper code-input-wrap', { 'has-error': form.code && codeIncomplete }]">
+                <el-icon><Message /></el-icon>
+                <input
+                  v-model="form.code"
+                  type="text"
+                  maxlength="6"
+                  placeholder="6位验证码"
+                  class="auto-input"
+                  @keyup.enter="verifyAndNext"
+                />
+              </div>
+              <button
+                class="send-code-btn"
+                :disabled="!phoneOk || countdown > 0 || sending"
+                @click="sendCode"
+              >
+                <template v-if="sending">
+                  <el-icon class="is-loading"><Loading /></el-icon> 发送中
+                </template>
+                <template v-else-if="countdown > 0">
+                  {{ countdown }}s 后重发
+                </template>
+                <template v-else>
+                  获取验证码
+                </template>
+              </button>
+            </div>
+            <p v-if="form.code && codeIncomplete" class="field-error">验证码为6位数字</p>
+          </div>
+
+          <button
+            class="login-btn"
+            :disabled="!canNext || verifying"
+            @click="verifyAndNext"
+          >
+            <template v-if="verifying">
+              <el-icon class="is-loading"><Loading /></el-icon> 验证中...
+            </template>
+            <template v-else>
+              下一步
+            </template>
+          </button>
         </div>
 
-        <!-- 设置密码 -->
-        <div class="form-group">
-          <label>设置密码</label>
-          <div :class="['input-wrapper', { 'has-error': form.password && !pwdOk }]">
-            <el-icon><Lock /></el-icon>
-            <input
-              v-model="form.password"
-              :type="showPwd ? 'text' : 'password'"
-              placeholder="至少6位，含字母和数字"
-              class="auto-input"
-            />
-            <button type="button" class="pwd-toggle" @click="showPwd = !showPwd">
-              <el-icon><Hide v-if="showPwd" /><View v-else /></el-icon>
-            </button>
-          </div>
-          <p v-if="form.password && !pwdOk" class="field-error">至少6位，需包含字母和数字</p>
-        </div>
+        <!-- 步骤2：设置新密码 -->
+        <div v-show="step === 2" class="form-body">
+          <h2>设置新密码</h2>
+          <p class="hint">为 {{ maskedPhone }} 设置新密码</p>
 
-        <!-- 确认密码 -->
-        <div class="form-group">
-          <label>确认密码</label>
-          <div :class="['input-wrapper', { 'has-error': form.confirmPwd && !matchOk }]">
-            <el-icon><Lock /></el-icon>
-            <input
-              v-model="form.confirmPwd"
-              :type="showCfm ? 'text' : 'password'"
-              placeholder="再次输入密码"
-              class="auto-input"
-              @keyup.enter="handleRegister"
-            />
-            <button type="button" class="pwd-toggle" @click="showCfm = !showCfm">
-              <el-icon><Hide v-if="showCfm" /><View v-else /></el-icon>
-            </button>
+          <div class="form-group">
+            <label>新密码</label>
+            <div :class="['input-wrapper', { 'has-error': form.newPassword && !pwdOk }]">
+              <el-icon><Lock /></el-icon>
+              <input
+                v-model="form.newPassword"
+                :type="showPwd ? 'text' : 'password'"
+                placeholder="至少6位，含字母和数字"
+                class="auto-input"
+              />
+              <button type="button" class="pwd-toggle" @click="showPwd = !showPwd">
+                <el-icon><Hide v-if="showPwd" /><View v-else /></el-icon>
+              </button>
+            </div>
+            <p v-if="form.newPassword && !pwdOk" class="field-error">至少6位，需包含字母和数字</p>
           </div>
-          <p v-if="form.confirmPwd && !matchOk" class="field-error">两次密码不一致</p>
-        </div>
 
-        <!-- 注册按钮 -->
-        <button
-          class="login-btn"
-          :disabled="!canRegister || submitting"
-          @click="handleRegister"
-        >
-          <template v-if="submitting">
-            <el-icon class="is-loading"><Loading /></el-icon> 注册中...
-          </template>
-          <template v-else>
-            注 册
-          </template>
-        </button>
+          <div class="form-group">
+            <label>确认新密码</label>
+            <div :class="['input-wrapper', { 'has-error': form.confirmPwd && !matchOk }]">
+              <el-icon><Lock /></el-icon>
+              <input
+                v-model="form.confirmPwd"
+                :type="showCfm ? 'text' : 'password'"
+                placeholder="再次输入新密码"
+                class="auto-input"
+                @keyup.enter="handleReset"
+              />
+              <button type="button" class="pwd-toggle" @click="showCfm = !showCfm">
+                <el-icon><Hide v-if="showCfm" /><View v-else /></el-icon>
+              </button>
+            </div>
+            <p v-if="form.confirmPwd && !matchOk" class="field-error">两次密码不一致</p>
+          </div>
+
+          <button
+            class="login-btn"
+            :disabled="!canReset || submitting"
+            @click="handleReset"
+          >
+            <template v-if="submitting">
+              <el-icon class="is-loading"><Loading /></el-icon> 重置中...
+            </template>
+            <template v-else>
+              重置密码
+            </template>
+          </button>
+        </div>
 
         <!-- 底部链接 -->
         <div class="bottom-link">
-          已有账号？<span class="link-text" @click="$router.push('/login')">去登录 →</span>
+          <span class="link-text" @click="$router.push('/login')">← 返回登录</span>
         </div>
       </div>
     </div>
@@ -135,36 +166,42 @@
 import { reactive, ref, computed, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { sendCode as apiSendCode, register as apiRegister } from '@/api/auth'
+import { sendCode as apiSendCode, resetPassword as apiResetPassword } from '@/api/auth'
 
 const router = useRouter()
 
-// ---- 状态 ----
+// ---- 步骤 ----
+const step = ref(1)
 const showPwd = ref(false)
 const showCfm = ref(false)
 const countdown = ref(0)
 const sending = ref(false)
+const verifying = ref(false)
 const submitting = ref(false)
 let timer = null
 
 const form = reactive({
   phone: '',
   code: '',
-  password: '',
+  newPassword: '',
   confirmPwd: ''
 })
 
-// ---- 计算校验 ----
+// ---- 计算属性 ----
 const phoneOk = computed(() => /^1[3-9]\d{9}$/.test(form.phone))
 const codeIncomplete = computed(() => form.code.length > 0 && form.code.length !== 6)
+const canNext = computed(() => phoneOk.value && form.code.length === 6)
+
 const pwdOk = computed(() =>
-  form.password.length >= 6 &&
-  /[a-zA-Z]/.test(form.password) &&
-  /\d/.test(form.password)
+  form.newPassword.length >= 6 &&
+  /[a-zA-Z]/.test(form.newPassword) &&
+  /\d/.test(form.newPassword)
 )
-const matchOk = computed(() => form.password && form.password === form.confirmPwd)
-const canRegister = computed(() =>
-  phoneOk.value && form.code.length === 6 && pwdOk.value && matchOk.value
+const matchOk = computed(() => form.newPassword && form.newPassword === form.confirmPwd)
+const canReset = computed(() => pwdOk.value && matchOk.value)
+
+const maskedPhone = computed(() =>
+  form.phone.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2')
 )
 
 // ---- 发送验证码 ----
@@ -180,8 +217,7 @@ async function sendCode() {
     if (data?.mockCode) {
       ElMessage.success(`验证码：${data.mockCode}`)
     } else {
-      const masked = form.phone.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2')
-      ElMessage.success(`验证码已发送至 ${masked}`)
+      ElMessage.success(`验证码已发送至 ${maskedPhone.value}`)
     }
     startCountdown(data?.retryAfter || 60)
   } catch (e) {
@@ -206,21 +242,27 @@ function startCountdown(seconds = 60) {
   }, 1000)
 }
 
-// ---- 注册 ----
-async function handleRegister() {
-  if (!canRegister.value) return
+// ---- 验证并进入下一步 ----
+async function verifyAndNext() {
+  if (!canNext.value) return
+  // 验证码校验在下一步重置密码时由后端统一校验
+  step.value = 2
+}
+
+// ---- 重置密码 ----
+async function handleReset() {
+  if (!canReset.value || submitting.value) return
   submitting.value = true
   try {
-    await apiRegister({
+    await apiResetPassword({
       phone: form.phone,
-      smsCode: form.code,
-      password: form.password,
-      username: form.phone   // 账号默认为手机号
+      code: form.code,
+      newPassword: form.newPassword
     })
-    ElMessage.success('注册成功，请登录')
+    ElMessage.success('密码重置成功，请使用新密码登录')
     router.push('/login')
   } catch (e) {
-    ElMessage.error(e?.response?.data?.message || e?.message || '注册失败')
+    ElMessage.error(e?.response?.data?.message || e?.message || '重置失败')
   } finally {
     submitting.value = false
   }
@@ -320,7 +362,6 @@ onBeforeUnmount(() => {
   padding: 48px;
   background: var(--bg-surface);
   border-left: 1px solid var(--border-subtle);
-  overflow-y: auto;
 }
 .login-card {
   width: 100%;
@@ -336,6 +377,69 @@ onBeforeUnmount(() => {
   margin-top: 6px;
   font-size: 14px;
   color: var(--text-muted);
+}
+
+/* ---- 步骤指示器 ---- */
+.steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+.step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.step-num {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  background: var(--bg-card);
+  border: 2px solid var(--border-card);
+  color: var(--text-muted);
+  transition: all var(--duration-fast);
+}
+.step.active .step-num {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+  box-shadow: 0 0 10px var(--primary-glow);
+}
+.step.done .step-num {
+  background: var(--primary-color);
+  border-color: var(--primary-color);
+  color: #080c14;
+}
+.step-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  transition: color var(--duration-fast);
+}
+.step.active .step-label {
+  color: var(--text-secondary);
+}
+.step.done .step-label {
+  color: var(--primary-color);
+}
+.step-line {
+  width: 40px;
+  height: 2px;
+  background: var(--border-card);
+  margin: 0 10px;
+  transition: background var(--duration-fast);
+}
+.step-line.done {
+  background: var(--primary-color);
+}
+
+/* ---- 表单体 ---- */
+.form-body {
+  margin-top: 24px;
 }
 
 /* ---- 表单组 ---- */
@@ -395,7 +499,7 @@ onBeforeUnmount(() => {
   line-height: 1;
 }
 
-/* ---- 密码显示/隐藏按钮 ---- */
+/* ---- 密码显示/隐藏 ---- */
 .pwd-toggle {
   display: flex;
   align-items: center;
@@ -451,7 +555,7 @@ onBeforeUnmount(() => {
   cursor: not-allowed;
 }
 
-/* ---- 注册按钮 ---- */
+/* ---- 主按钮 ---- */
 .login-btn {
   width: 100%;
   height: 48px;

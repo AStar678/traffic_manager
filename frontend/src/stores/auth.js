@@ -1,6 +1,5 @@
 import { defineStore } from 'pinia'
 import { login as apiLogin, loginByCode as apiLoginByCode } from '@/api/auth'
-import { ElMessage } from 'element-plus'
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({
@@ -14,15 +13,10 @@ export const useAuthStore = defineStore('auth', {
   },
   actions: {
     async login(username, password) {
-      try {
-        const res = await apiLogin(username, password)
-        const data = res.data || res
-        this._applyLogin(data)
-        return data
-      } catch (e) {
-        console.warn('后端登录失败，使用 Mock 模式:', e)
-        return this.mockLogin(username)
-      }
+      const res = await apiLogin(username, password)
+      const data = res.data || res
+      this._applyLogin(data)
+      return data
     },
     async loginByCode(phone, code) {
       const res = await apiLoginByCode(phone, code)

@@ -1,0 +1,46 @@
+{
+  "settings" : [ {
+    "gestureCode" : "001",
+    "gestureName" : "手掌张开",
+    "actionType" : "WAKE_SYSTEM",
+    "actionLabel" : "启动/唤醒系统",
+    "enabled" : true
+  }, {
+    "gestureCode" : "002",
+    "gestureName" : "握拳",
+    "actionType" : "CONFIRM",
+    "actionLabel" : "确认当前操作",
+    "enabled" : true
+  }, {
+    "gestureCode" : "003",
+    "gestureName" : "单指画圈",
+    "actionType" : "VOLUME_UP",
+    "actionLabel" : "音量增加",
+    "enabled" : true
+  }, {
+    "gestureCode" : "004",
+    "gestureName" : "左右滑动",
+    "actionType" : "NEXT_MEDIA",
+    "actionLabel" : "切换下一首",
+    "enabled" : true
+  }, {
+    "gestureCode" : "005",
+    "gestureName" : "拇指向上",
+    "actionType" : "ANSWER_CALL",
+    "actionLabel" : "接听电话",
+    "enabled" : true
+  }, {
+    "gestureCode" : "006",
+    "gestureName" : "拇指向下",
+    "actionType" : "HANG_UP",
+    "actionLabel" : "挂断电话",
+    "enabled" : true
+  }, {
+    "gestureCode" : "007",
+    "gestureName" : "挥手",
+    "actionType" : "RETURN_HOME",
+    "actionLabel" : "返回驾驶主页",
+    "enabled" : true
+  } ],
+  "updatedAt" : "2026-07-09T11:34:34.215435Z"
+}

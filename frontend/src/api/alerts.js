@@ -15,3 +15,11 @@ export function updateAlertStatus(id, status) {
 export function getAlertStats() {
   return request.get('/alerts/stats')
 }
+
+export function getSystemLogs(params) {
+  return request.get('/alerts/system-logs', { params })
+}
+
+export function runAlertAgent() {
+  return request.post('/alerts/agent/run')
+}

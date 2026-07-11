@@ -27,7 +27,7 @@
 ┌─────────────────────────────────┐
 │ 虚拟摄像头服务 Python FastAPI    │  端口: 8010
 │ · 本机摄像头 · 测试视频 · 测试图片 │
-│ · MJPEG预览 · JPEG抓拍           │
+│ · WebRTC预览 · PNG/JPEG抓拍      │
 └─────────────────────────────────┘
 ```
 
@@ -47,6 +47,8 @@ vision-drive/
 
 ## 快速开始
 
+完整启动步骤、后台运行和健康检查见：[启动教程](docs/启动教程.md)。
+
 ### 1. 前端
 ```bash
 cd frontend
@@ -57,7 +59,7 @@ npm run dev
 ### 2. 后端
 ```bash
 cd backend
-./mvnw spring-boot:run
+mvn spring-boot:run
 ```
 
 ### 3. 算法服务
@@ -88,6 +90,7 @@ cd camera_service
 
 ## 文档
 
+- [启动教程](docs/启动教程.md)
 - [产品需求文档](docs/prd/产品需求文档.md)
 - [产品设计文档](docs/design/产品设计文档.md)
 - [后端算法通讯协议](docs/design/后端算法通讯协议.md)

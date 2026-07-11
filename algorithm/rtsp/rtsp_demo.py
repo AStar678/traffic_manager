@@ -72,7 +72,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="沙盘RTSP视频流测试")
     parser.add_argument("--camera", "-c", default="live1", help="摄像头ID (live1~live12)")
     parser.add_argument("--model", "-m", default=None, help="模型路径")
-    parser.add_argument("--task", "-t", default=None, help="按任务筛选摄像头（license_plate/police_gesture）")
+    parser.add_argument("--task", "-t", default=None, help="按任务筛选摄像头（license_plate/owner_gesture）")
     args = parser.parse_args()
 
     if args.task:

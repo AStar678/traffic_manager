@@ -26,17 +26,18 @@ CLPRNET_MODEL_PATH = Path(os.getenv(
     str(CLPRNET_SOURCE_DIR / "resource" / "CLPRNet.pth")
 ))
 
-POLICE_GESTURE_SOURCE_DIR = Path(os.getenv(
-    "POLICE_GESTURE_SOURCE_DIR",
-    str(TRAINING_ROOT / "交警指令识别")
+GESTURE_RECOGNITION_APP_DIR = Path(os.getenv(
+    "GESTURE_RECOGNITION_APP_DIR",
+    str(BASE_DIR / "gesture_recognition_app")
 ))
-POLICE_GESTURE_SAMPLE_ID = os.getenv("POLICE_GESTURE_SAMPLE_ID", "004")
-
-OWNER_GESTURE_SOURCE_DIR = Path(os.getenv(
-    "OWNER_GESTURE_SOURCE_DIR",
-    str(TRAINING_ROOT / "手势识别")
+GESTURE_CONFIG_PATH = Path(os.getenv(
+    "GESTURE_CONFIG_PATH",
+    str(GESTURE_RECOGNITION_APP_DIR / "config" / "gesture-config.json")
 ))
-OWNER_GESTURE_MIN_CONFIDENCE = float(os.getenv("OWNER_GESTURE_MIN_CONFIDENCE", "0.6"))
+GESTURE_PROTOTYPE_STORE = Path(os.getenv(
+    "GESTURE_PROTOTYPE_STORE",
+    str(BASE_DIR / "data" / "gesture_prototypes.json")
+))
 
 OUTPUT_DIR = Path(os.getenv("ALGORITHM_OUTPUT_DIR", str(BASE_DIR / "outputs")))
 

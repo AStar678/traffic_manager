@@ -1,159 +1,153 @@
 <template>
-  <div class="owner-page">
-    <!-- 主画面：车内摄像头 + 手势叠加 -->
-    <div class="viewport-area">
-      <div class="viewport">
-        <img v-if="viewportImageUrl" :src="viewportImageUrl" alt="cockpit" />
-        <div v-else class="viewport-placeholder">
-          <el-icon :size="48"><Pointer /></el-icon>
-          <span>车内摄像头待机</span>
-        </div>
-
-        <div class="viewport-top">
-          <span class="chip live">● LIVE</span>
-          <span class="chip">{{ cameraLabel }}</span>
-        </div>
-
-        <!-- 手部关键点叠加 -->
-        <svg class="hand-overlay" viewBox="0 0 1200 720" preserveAspectRatio="none" v-if="result.detections.length">
-          <g v-for="hand in result.detections" :key="hand.objectId">
-            <line v-for="(pair, i) in handBones" :key="i"
-              :x1="getKp(hand, pair[0]).x" :y1="getKp(hand, pair[0]).y"
-              :x2="getKp(hand, pair[1]).x" :y2="getKp(hand, pair[1]).y"
-              stroke="rgba(0,180,216,0.8)" stroke-width="3" stroke-linecap="round"
-            />
-            <circle v-for="kp in hand.keypoints" :key="kp.name"
-              :cx="kp.x" :cy="kp.y" r="5"
-              fill="#00b4d8" stroke="#080c14" stroke-width="2"
-            />
-          </g>
-        </svg>
-
-        <!-- 手势标签 -->
-        <div class="gesture-tag" v-if="gesture">
-          <span class="gesture-icon">{{ gestureIcon }}</span>
-          <span>{{ gesture.name }} → {{ gesture.action }}</span>
-        </div>
+  <div ref="pageRef" class="owner-gesture-page">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Owner Gesture Control</p>
+        <h1>车主手势控车原型网络</h1>
       </div>
-
-      <!-- 触发状态 -->
-      <div class="trigger-bar">
-        <div v-for="item in triggerItems" :key="item.label" class="trigger-item" :class="{ ok: item.ok }">
-          <span>{{ item.label }}</span>
-          <strong :class="{ pass: item.ok }">{{ item.value }}</strong>
-        </div>
+      <div class="top-actions">
+        <button class="primary" type="button" @click="openManagementDialog">管理手势</button>
+        <div class="status-pill" id="modelStatus">模型加载中</div>
       </div>
+    </header>
+
+    <main class="layout">
+      <section class="camera-panel">
+        <div class="video-shell">
+          <video id="webcam" autoplay playsinline muted></video>
+          <canvas id="overlay"></canvas>
+          <div class="camera-empty" id="cameraEmpty">
+            <strong>摄像头未启动</strong>
+            <span>点击“启动摄像头”后开始录入或识别动作</span>
+          </div>
+          <div class="viewport-top">
+            <span class="chip live">● LIVE</span>
+            <span class="chip">车内摄像头</span>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <button class="primary" id="startCameraBtn" type="button" @click="startCamera">启动摄像头</button>
+          <button id="stopCameraBtn" type="button" disabled @click="stopCamera">停止</button>
+          <button id="manageGesturesBtn" type="button" @click="openManagementDialog">手势管理</button>
+        </div>
+
+        <div class="readout-grid">
+          <div class="readout">
+            <span>原型匹配</span>
+            <strong id="prototypeMatch">未录入</strong>
+          </div>
+          <div class="readout">
+            <span>相似度</span>
+            <strong id="similarityScore">--</strong>
+          </div>
+          <div class="readout">
+            <span>误触发状态</span>
+            <strong id="triggerState">等待</strong>
+          </div>
+        </div>
+      </section>
+
+      <aside class="side-panel">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>手势库</h2>
+            <span id="prototypeCount">0 个</span>
+          </div>
+          <div class="prototype-list" id="prototypeList"></div>
+        </section>
+
+        <section class="panel vehicle-panel">
+          <h2>模拟车辆控制</h2>
+          <div class="vehicle-state">
+            <span>系统</span>
+            <strong id="vehiclePower">待唤醒</strong>
+          </div>
+          <label>
+            音量
+            <input id="volumeSlider" type="range" min="0" max="100" value="35" />
+          </label>
+          <label>
+            空调温度
+            <input id="tempSlider" type="range" min="16" max="30" value="24" />
+          </label>
+          <div class="vehicle-state">
+            <span>电话</span>
+            <strong id="phoneState">空闲</strong>
+          </div>
+          <div class="vehicle-state">
+            <span>当前功能</span>
+            <strong id="featureState">主页</strong>
+          </div>
+        </section>
+      </aside>
+    </main>
+
+    <div class="modal-backdrop" v-show="isManagementOpen" role="dialog" aria-modal="true" aria-labelledby="gestureManagerTitle">
+      <section class="gesture-manager">
+        <header class="manager-header">
+          <div>
+            <p class="eyebrow">Gesture Manager</p>
+            <h2 id="gestureManagerTitle">自定义手势管理</h2>
+          </div>
+          <button type="button" @click="closeManagementDialog">关闭</button>
+        </header>
+
+        <div class="manager-body">
+          <section class="manager-section record-section">
+            <div class="panel-head">
+              <h3>录入手势</h3>
+              <span id="sampleCount">0 / 45 帧</span>
+            </div>
+            <label>
+              动作名称
+              <input id="gestureNameInput" type="text" placeholder="例如：挥手返回主页" />
+            </label>
+            <div class="field-grid">
+              <label>
+                手势类型
+                <select id="gestureKindSelect">
+                  <option value="static" selected>静态姿态</option>
+                  <option value="dynamic">动态轨迹</option>
+                </select>
+              </label>
+              <label>
+                触发持续时间
+                <select id="holdMsSelect">
+                  <option value="900">0.9 秒</option>
+                  <option value="1200" selected>1.2 秒</option>
+                  <option value="1800">1.8 秒</option>
+                </select>
+              </label>
+            </div>
+            <div class="button-row">
+              <button class="primary" id="recordBtn" type="button" disabled @click="startCountdownRecording">录入新手势</button>
+              <button id="cancelRecordBtn" type="button" disabled @click="stopRecording">取消录入</button>
+            </div>
+            <p class="hint" id="recordHint">先选择静态姿态或动态轨迹，点击录入后倒数 3 秒并采集 45 帧保存手势。</p>
+          </section>
+
+          <section class="manager-section gesture-management-panel">
+            <div class="panel-head management-head">
+              <h3>功能关联</h3>
+              <button class="primary compact-button" id="saveControlBindingsBtn" type="button" @click="saveControlBindings">保存关联</button>
+            </div>
+            <div class="gesture-mapping-list" id="gestureMappingList"></div>
+          </section>
+        </div>
+      </section>
     </div>
 
-    <!-- 右侧面板 -->
-    <div class="side-panel">
-      <div class="card">
-        <div class="mode-tabs">
-          <button
-            :class="{ active: inputMode === 'image' }"
-            @click="setInputMode('image')"
-          >图片识别</button>
-          <button
-            :class="{ active: inputMode === 'video' }"
-            @click="setInputMode('video')"
-          >虚拟摄像头</button>
+    <div class="countdown-screen" v-show="isCountdownOpen" role="status" aria-live="assertive">
+      <div class="countdown-panel">
+        <div class="countdown-preview">
+          <video id="countdownWebcam" autoplay playsinline muted></video>
+          <div class="countdown-badge">摄像头已打开</div>
         </div>
-
-        <div v-if="inputMode === 'image'" class="upload-zone" @click="triggerUpload">
-          <input ref="fileInput" type="file" accept=".jpg,.jpeg,.png,.bmp" style="display:none" @change="onFileSelected">
-          <el-icon :size="28"><UploadFilled /></el-icon>
-          <span>上传车内手势图片</span>
-          <small>{{ selectedFileName || 'jpg / png / bmp · ≤ 10MB' }}</small>
-        </div>
-
-        <div v-if="inputMode === 'video'" class="camera-source">
-          <label>虚拟摄像头源</label>
-          <el-select
-            v-model="selectedCameraSourceId"
-            style="width:100%"
-            :loading="cameraStatus === 'loading'"
-            @change="activateCameraSource"
-          >
-            <el-option
-              v-for="source in cameraSources"
-              :key="source.id"
-              :label="source.name"
-              :value="source.id"
-            />
-          </el-select>
-          <div class="camera-meta">
-            <span class="source-kind">{{ selectedCameraSource?.sourceType || '--' }}</span>
-            <span :class="['status-dot', cameraStatus]">{{ cameraError || cameraStatusText }}</span>
-          </div>
-          <button class="action-btn secondary compact" @click="refreshCameraPreview">刷新预览</button>
-        </div>
-
-        <button class="action-btn primary" :disabled="loading" @click="runInference">
-          <el-icon v-if="loading" class="spinner"><Loading /></el-icon>
-          {{ loading ? '识别中...' : (inputMode === 'image' ? '上传并识别' : '抓拍并识别') }}
-        </button>
-      </div>
-
-      <!-- 手势指令显示 -->
-      <div class="card gesture-hero" :class="{ active: result.detections.length }">
-        <div class="gesture-code">{{ gestureCode }}</div>
-        <strong>{{ gesture?.name || '等待手势' }}</strong>
-        <p>{{ gesture?.action || '—' }}</p>
-      </div>
-
-      <!-- 车辆控制面板 -->
-      <div class="card">
-        <h3 class="card-title">车辆控制反馈</h3>
-
-        <div class="control-item" :class="{ highlight: gesture?.action === '调节音量' }">
-          <div class="control-head">
-            <el-icon><Headset /></el-icon>
-            <span>音量</span>
-            <strong>{{ controlState.volume }}%</strong>
-          </div>
-          <el-slider v-model="controlState.volume" />
-        </div>
-
-        <div class="control-item" :class="{ highlight: gesture?.action === '切换功能' }">
-          <div class="control-head">
-            <el-icon><Sunny /></el-icon>
-            <span>空调</span>
-            <strong>{{ controlState.temperature }}°C</strong>
-          </div>
-          <el-slider v-model="controlState.temperature" :min="16" :max="30" />
-        </div>
-
-        <div class="mode-btns">
-          <button
-            v-for="m in modes" :key="m"
-            :class="{ active: controlState.mode === m }"
-            @click="controlState.mode = m"
-          >{{ m }}</button>
-        </div>
-
-        <div class="phone-btns">
-          <el-button
-            :type="gesture?.action === '接听电话' ? 'success' : 'default'"
-            @click="triggerAction('接听电话')"
-          >接听</el-button>
-          <el-button
-            :type="gesture?.action === '挂断电话' ? 'danger' : 'default'"
-            @click="triggerAction('挂断电话')"
-          >挂断</el-button>
-        </div>
-      </div>
-
-      <!-- 手势映射表 -->
-      <div class="card">
-        <h3 class="card-title">手势映射</h3>
-        <div class="mapping-list">
-          <div v-for="(item, code) in OWNER_MAP" :key="code" class="mapping-item" :class="{ active: code === gestureCode }">
-            <strong>{{ code }}</strong>
-            <div>
-              <span>{{ item.name }}</span>
-              <small>{{ item.action }}</small>
-            </div>
-          </div>
+        <div class="countdown-info">
+          <span>准备录入</span>
+          <strong>{{ recordingCountdown }}</strong>
+          <p>保持手势在画面中央</p>
         </div>
       </div>
     </div>
@@ -161,198 +155,1125 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { OWNER_GESTURE_MAP, TASK_TYPES } from '@/utils/constants'
-import { uploadImage } from '@/api/files'
-import { getInferenceData, inferenceImage } from '@/api/inference'
-import { useCameraSource } from '@/composables/useCameraSource'
+import { DrawingUtils, FilesetResolver, GestureRecognizer } from '@/vendor/tasks-vision/vision_bundle.mjs'
+import {
+  executeOwnerGestureControl,
+  getOwnerGestureControlSettings,
+  getOwnerGestureData,
+  saveOwnerGestureControlSettings
+} from '@/api/ownerGestures'
+import { OWNER_GESTURE_ACTIONS } from '@/utils/constants'
+import {
+  OWNER_GESTURE_RECOGNITION_CONFIG,
+  extractFeatureVector,
+  sequenceMotion
+} from '@/utils/ownerGesturePrototype'
+import { useVehicleStore } from '@/stores/vehicle'
 
-const result = ref(emptyResult())
-const OWNER_MAP = OWNER_GESTURE_MAP
-const loading = ref(false)
-const inputMode = ref('video')
-const fileInput = ref(null)
-const selectedFile = ref(null)
-const selectedFileName = ref('')
-const {
-  cameraSources,
-  selectedCameraSourceId,
-  selectedCameraSource,
-  cameraStatus,
-  cameraError,
-  cameraStreamUrl,
-  activateCameraSource,
-  refreshCameraPreview,
-  getCameraSnapshotUrl
-} = useCameraSource(TASK_TYPES.OWNER_GESTURE)
-
-const gestureCode = computed(() => result.value.detections[0]?.gestureCode || '--')
-const gesture = computed(() => OWNER_MAP[gestureCode.value] || null)
-const viewportImageUrl = computed(() => result.value.annotatedImageUrl || cameraStreamUrl.value)
-const cameraLabel = computed(() => {
-  if (result.value.annotatedImageUrl && inputMode.value === 'image') return selectedFileName.value || '图片输入'
-  return selectedCameraSource.value?.name || '虚拟摄像头'
-})
-const cameraStatusText = computed(() => {
-  const labels = { idle: '未连接', loading: '连接中', ready: '已连接', empty: '无可用源', offline: '服务离线' }
-  return labels[cameraStatus.value] || cameraStatus.value
-})
-
-const gestureIcon = computed(() => {
-  const icons = { '001': '✋', '002': '✊', '003': '👆', '004': '👈', '005': '👍', '006': '👎', '007': '👋' }
-  return icons[gestureCode.value] || '🖐'
-})
-
-const controlState = reactive({ volume: 42, temperature: 24, mode: '音乐' })
-const modes = ['音乐', '导航', '电话', '空调']
-
-const triggerItems = computed(() => {
-  const detection = result.value.detections[0]
-  const confidence = detection?.confidence || 0
-  return [
-    { label: '输入状态', value: detection ? '已检测到手部' : '等待图片', ok: Boolean(detection) },
-    { label: '置信度', value: detection ? `${Math.round(confidence * 100)}%` : '--', ok: confidence >= 0.6 },
-    { label: '控制反馈', value: result.value.vehicleControl?.triggered ? '已触发控制反馈' : '未触发', ok: Boolean(result.value.vehicleControl?.triggered) }
-  ]
-})
-
-const handBones = [
-  ['wrist','thumb_tip'],['wrist','index_finger_tip'],['wrist','middle_finger_tip'],
-  ['wrist','ring_finger_tip'],['wrist','pinky_tip']
-]
-
-function getKp(hand, name) {
-  return hand.keypoints?.find(k => k.name === name) || { x: 0, y: 0 }
+const MODEL_PATH = '/models/gesture_recognizer.task'
+const GESTURE_FRAME_INTERVAL_MS = 33
+const BUILT_IN_GESTURE_THRESHOLD = 0.7
+const BUILT_IN_GESTURE_FALLBACK_HOLD_MS = 1200
+const BUILT_IN_GESTURE_COOLDOWN_MS = 1500
+const BUILT_IN_DISPLAY_GRACE_MS = 500
+const BUILT_IN_GESTURE_LABELS = {
+  Closed_Fist: '握拳',
+  Open_Palm: '手掌张开',
+  Pointing_Up: '单指向上',
+  Thumb_Down: '拇指向下',
+  Thumb_Up: '拇指向上',
+  Victory: '胜利手势',
+  ILoveYou: 'I Love You',
+  None: '未识别'
 }
 
-function triggerAction(action) {
-  // mock触发
-}
+const pageRef = ref(null)
+const vehicleStore = useVehicleStore()
+const isManagementOpen = ref(false)
+const isCountdownOpen = ref(false)
+const recordingCountdown = ref(3)
 
-function setInputMode(mode) {
-  inputMode.value = mode
-  result.value = emptyResult()
-  refreshCameraPreview()
-}
+let els = {}
+let ctx
+let drawingUtils
+let recognizer
+let mediaStream
+let animationFrame
+let lastVideoTime = -1
+let lastPredictFrameAt = 0
+let prototypes = []
+let isRecording = false
+let recognitionSocket
+let serviceConfig
+let shouldReconnectSocket = true
+let controlSettings = []
+let actionOptions = OWNER_GESTURE_ACTIONS
+let countdownTimer
+let lastBuiltInGestureCode = ''
+let lastBuiltInGestureAt = 0
+let lastBuiltInMatchAt = 0
+let builtInGestureStableCode = ''
+let builtInGestureStableSince = 0
+let builtInGestureVectors = []
 
-function triggerUpload() {
-  fileInput.value?.click()
-}
+onMounted(async () => {
+  await nextTick()
+  bindElements()
+  await init()
+})
 
-function onFileSelected(event) {
-  const file = event.target.files?.[0]
-  if (!file) return
-  selectedFile.value = file
-  selectedFileName.value = file.name
-  result.value = {
-    ...emptyResult(),
-    annotatedImageUrl: URL.createObjectURL(file)
+onBeforeUnmount(() => {
+  shouldReconnectSocket = false
+  window.clearInterval(countdownTimer)
+  stopCamera()
+  recognitionSocket?.close()
+  recognitionSocket = undefined
+})
+
+function bindElements() {
+  const root = pageRef.value
+  const find = selector => root.querySelector(selector)
+  els = {
+    modelStatus: find('#modelStatus'),
+    webcam: find('#webcam'),
+    countdownWebcam: find('#countdownWebcam'),
+    overlay: find('#overlay'),
+    cameraEmpty: find('#cameraEmpty'),
+    startCameraBtn: find('#startCameraBtn'),
+    stopCameraBtn: find('#stopCameraBtn'),
+    manageGesturesBtn: find('#manageGesturesBtn'),
+    prototypeMatch: find('#prototypeMatch'),
+    similarityScore: find('#similarityScore'),
+    triggerState: find('#triggerState'),
+    gestureNameInput: find('#gestureNameInput'),
+    gestureKindSelect: find('#gestureKindSelect'),
+    holdMsSelect: find('#holdMsSelect'),
+    recordBtn: find('#recordBtn'),
+    cancelRecordBtn: find('#cancelRecordBtn'),
+    recordHint: find('#recordHint'),
+    sampleCount: find('#sampleCount'),
+    prototypeCount: find('#prototypeCount'),
+    prototypeList: find('#prototypeList'),
+    gestureMappingList: find('#gestureMappingList'),
+    saveControlBindingsBtn: find('#saveControlBindingsBtn'),
+    vehiclePower: find('#vehiclePower'),
+    volumeSlider: find('#volumeSlider'),
+    tempSlider: find('#tempSlider'),
+    phoneState: find('#phoneState'),
+    featureState: find('#featureState')
   }
-  ElMessage.success(`已选择：${file.name}`)
+  ctx = els.overlay.getContext('2d')
+  drawingUtils = new DrawingUtils(ctx)
 }
 
-async function runInference() {
-  if (inputMode.value === 'image' && !selectedFile.value) {
-    ElMessage.warning('请先选择一张车内手势图片')
-    return
-  }
-  if (inputMode.value === 'video' && !selectedCameraSourceId.value) {
-    ElMessage.warning('请先选择一个虚拟摄像头源')
-    return
-  }
-  loading.value = true
+async function init() {
+  await loadServiceState()
+  await loadControlSettings()
+  syncVehiclePanel()
+  connectRecognitionStream()
+
   try {
-    let imageUrl
-    if (inputMode.value === 'image') {
-      const uploaded = await uploadImage(selectedFile.value)
-      imageUrl = uploaded.data?.url
-    } else {
-      const connected = await activateCameraSource()
-      if (!connected) throw new Error('摄像头源连接失败')
-      imageUrl = getCameraSnapshotUrl()
-    }
-    const response = await inferenceImage(TASK_TYPES.OWNER_GESTURE, imageUrl)
-    result.value = getInferenceData(response)
-    applyVehicleControl(result.value.vehicleControl)
-    ElMessage.success('识别完成')
+    const vision = await FilesetResolver.forVisionTasks('/wasm')
+    recognizer = await createRecognizer(vision)
+    els.modelStatus.textContent = '模型已就绪'
+    els.modelStatus.classList.add('ready')
+    updateRecordButton()
   } catch (error) {
     console.error(error)
-    ElMessage.error('识别失败，请检查后端和算法服务是否已启动')
+    els.modelStatus.textContent = '模型加载失败'
+    els.modelStatus.classList.add('error')
+    els.recordHint.textContent = '请确认已安装依赖并通过本地服务器访问页面。'
+  }
+}
+
+async function loadServiceState() {
+  try {
+    applyServiceState(await apiRequest('/api/state'))
+  } catch (error) {
+    console.error(error)
+    renderPrototypes()
+    els.triggerState.textContent = '识别服务未连接'
+    els.recordHint.textContent = recordingHint()
+  }
+}
+
+async function loadControlSettings() {
+  try {
+    applyControlSettings(getOwnerGestureData(await getOwnerGestureControlSettings()))
+  } catch (error) {
+    console.error(error)
+    renderGestureMappings()
+  }
+}
+
+function connectRecognitionStream() {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  recognitionSocket = new WebSocket(`${protocol}//${location.host}/api/recognition/stream`)
+
+  recognitionSocket.addEventListener('open', () => {
+    els.triggerState.textContent = '识别服务已连接'
+  })
+
+  recognitionSocket.addEventListener('message', event => {
+    try {
+      applyServiceState(JSON.parse(event.data))
+    } catch (error) {
+      console.error(error)
+    }
+  })
+
+  recognitionSocket.addEventListener('close', () => {
+    if (!shouldReconnectSocket) return
+    els.triggerState.textContent = '识别服务重连中'
+    window.setTimeout(connectRecognitionStream, 1000)
+  })
+}
+
+async function startCamera() {
+  if (mediaStream) return true
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+      audio: false
+    })
+    els.webcam.srcObject = mediaStream
+    if (els.countdownWebcam) {
+      els.countdownWebcam.srcObject = mediaStream
+    }
+    await els.webcam.play()
+    resizeCanvas()
+    els.cameraEmpty.hidden = true
+    els.startCameraBtn.disabled = true
+    els.stopCameraBtn.disabled = false
+    updateRecordButton()
+    predictLoop()
+    return true
+  } catch (error) {
+    console.error(error)
+    els.recordHint.textContent = '摄像头启动失败：请在浏览器里允许摄像头权限。'
+    return false
+  }
+}
+
+function stopCamera() {
+  if (animationFrame) {
+    cancelAnimationFrame(animationFrame)
+  }
+  animationFrame = undefined
+  window.clearInterval(countdownTimer)
+  isCountdownOpen.value = false
+  recordingCountdown.value = 3
+  lastPredictFrameAt = 0
+  lastBuiltInGestureCode = ''
+  lastBuiltInGestureAt = 0
+  lastBuiltInMatchAt = 0
+  builtInGestureStableCode = ''
+  builtInGestureStableSince = 0
+  builtInGestureVectors = []
+  mediaStream?.getTracks().forEach(track => track.stop())
+  mediaStream = undefined
+  if (els.webcam) {
+    els.webcam.srcObject = null
+  }
+  if (els.countdownWebcam) {
+    els.countdownWebcam.srcObject = null
+  }
+  if (ctx && els.overlay) {
+    ctx.clearRect(0, 0, els.overlay.width, els.overlay.height)
+  }
+  if (els.cameraEmpty) {
+    els.cameraEmpty.hidden = false
+    els.startCameraBtn.disabled = false
+    els.stopCameraBtn.disabled = true
+    updateRecordButton()
+  }
+  if (isRecording) {
+    void stopRecording({ keepHint: true })
+  }
+}
+
+function predictLoop() {
+  if (!recognizer || !mediaStream) return
+
+  try {
+    const now = performance.now()
+    if (now - lastPredictFrameAt < GESTURE_FRAME_INTERVAL_MS) {
+      return
+    }
+    lastPredictFrameAt = now
+
+    if (els.webcam.videoWidth && els.webcam.videoHeight) {
+      resizeCanvas()
+    }
+
+    if (els.webcam.currentTime !== lastVideoTime) {
+      lastVideoTime = els.webcam.currentTime
+      const result = recognizer.recognizeForVideo(els.webcam, now)
+      drawResult(result)
+      updateRecognition(result)
+    }
+  } catch (error) {
+    console.error('Gesture recognition frame failed.', error)
+    els.triggerState.textContent = '识别帧异常，正在恢复'
   } finally {
-    loading.value = false
+    if (recognizer && mediaStream) {
+      animationFrame = requestAnimationFrame(predictLoop)
+    }
   }
 }
 
-function applyVehicleControl(vehicleControl) {
-  const action = vehicleControl?.action
-  if (action === '调节音量') controlState.volume = Math.min(100, controlState.volume + 8)
-  if (action === '切换功能') controlState.mode = modes[(modes.indexOf(controlState.mode) + 1) % modes.length]
-  if (action === '接听电话') controlState.mode = '电话'
-  if (action === '挂断电话') controlState.mode = '音乐'
+function drawResult(result) {
+  ctx.clearRect(0, 0, els.overlay.width, els.overlay.height)
+  const landmarks = result.landmarks?.[0]
+  if (!landmarks) return
+
+  drawingUtils.drawConnectors(landmarks, GestureRecognizer.HAND_CONNECTIONS, {
+    color: '#00b4d8',
+    lineWidth: 3
+  })
+  drawingUtils.drawLandmarks(landmarks, {
+    color: '#080c14',
+    fillColor: '#00e676',
+    lineWidth: 1,
+    radius: 4
+  })
 }
 
-function emptyResult() {
-  return {
-    taskType: TASK_TYPES.OWNER_GESTURE,
-    latencyMs: 0,
-    image: { width: 1200, height: 720 },
-    detections: [],
-    detectionCount: 0,
-    annotatedImageUrl: '',
-    vehicleControl: null
+function updateRecognition(result) {
+  const landmarks = result.landmarks?.[0]
+  if (!landmarks) {
+    resetBuiltInGestureState()
+    els.prototypeMatch.textContent = prototypes.length ? 'unknown' : '未录入'
+    els.similarityScore.textContent = '--'
+    els.triggerState.textContent = '未检测到手'
+    return
   }
+
+  const vector = extractFeatureVector(landmarks, result.worldLandmarks?.[0])
+  handleBuiltInRecognition(result.gestures?.[0]?.[0], vector)
+  sendRecognitionFrame(vector)
+}
+
+function handleBuiltInRecognition(category, vector) {
+  if (isRecording) return
+  const gestureCode = category?.categoryName
+  const score = Number(category?.score || 0)
+  const now = performance.now()
+  if (!gestureCode || gestureCode === 'None' || score < BUILT_IN_GESTURE_THRESHOLD) {
+    resetBuiltInGestureState()
+    return
+  }
+
+  const config = builtInGestureConfig()
+  const gestureName = translateBuiltin(gestureCode)
+  const recognitionHoldMs = builtInStaticRecognitionHoldMs(config)
+  const triggerHoldMs = builtInGestureHoldMs(gestureCode)
+  const motion = trackBuiltInGestureMotion(gestureCode, vector, config)
+  lastBuiltInMatchAt = now
+
+  if (motion > builtInStaticMotionLimit(config)) {
+    builtInGestureStableSince = 0
+    els.prototypeMatch.textContent = '静态确认中'
+    els.similarityScore.textContent = '--'
+    els.triggerState.textContent = '请保持静止'
+    return
+  }
+
+  if (!builtInGestureStableSince) {
+    builtInGestureStableSince = now
+  }
+  const stableElapsed = now - builtInGestureStableSince
+  if (stableElapsed < recognitionHoldMs) {
+    els.prototypeMatch.textContent = '静态确认中'
+    els.similarityScore.textContent = '--'
+    els.triggerState.textContent = builtInGestureHoldLabel(recognitionHoldMs - stableElapsed)
+    return
+  }
+
+  lastBuiltInMatchAt = now
+  els.prototypeMatch.textContent = gestureName
+  els.similarityScore.textContent = formatGestureScore(score)
+
+  if (gestureCode === lastBuiltInGestureCode && now - lastBuiltInGestureAt < BUILT_IN_GESTURE_COOLDOWN_MS) {
+    return
+  }
+
+  const binding = controlSettings.find(item => String(item.gestureCode) === String(gestureCode))
+  if (!binding?.enabled || binding.actionType === 'NONE') {
+    els.triggerState.textContent = '已识别，未关联车辆功能'
+    return
+  }
+
+  if (stableElapsed < triggerHoldMs) {
+    els.triggerState.textContent = `稳定中 ${formatHoldSeconds(triggerHoldMs - stableElapsed)}s`
+    return
+  }
+
+  lastBuiltInGestureCode = gestureCode
+  lastBuiltInGestureAt = now
+  void executeRecognizedGesture({
+    gestureCode,
+    name: gestureName,
+    score
+  })
+}
+
+function trackBuiltInGestureMotion(gestureCode, vector, config) {
+  if (gestureCode !== builtInGestureStableCode) {
+    builtInGestureStableCode = gestureCode
+    builtInGestureStableSince = 0
+    builtInGestureVectors = []
+  }
+  builtInGestureVectors.push(vector)
+  const sampleTarget = positiveMs(config.sampleTarget, OWNER_GESTURE_RECOGNITION_CONFIG.sampleTarget)
+  if (builtInGestureVectors.length > sampleTarget) {
+    builtInGestureVectors = builtInGestureVectors.slice(-sampleTarget)
+  }
+  return sequenceMotion(builtInGestureVectors, config)
+}
+
+function resetBuiltInGestureState() {
+  lastBuiltInMatchAt = 0
+  builtInGestureStableCode = ''
+  builtInGestureStableSince = 0
+  builtInGestureVectors = []
+}
+
+function openManagementDialog() {
+  isManagementOpen.value = true
+  renderPrototypes()
+  renderGestureMappings()
+}
+
+function closeManagementDialog() {
+  if (isRecording || isCountdownOpen.value) return
+  isManagementOpen.value = false
+}
+
+async function startCountdownRecording() {
+  const name = els.gestureNameInput.value.trim()
+  if (!name) {
+    els.recordHint.textContent = '请先输入动作名称。'
+    els.gestureNameInput.focus()
+    return
+  }
+  if (!recognizer) {
+    els.recordHint.textContent = '模型仍在加载，请稍后再录入。'
+    return
+  }
+  if (!mediaStream) {
+    const started = await startCamera()
+    if (!started) return
+  }
+
+  window.clearInterval(countdownTimer)
+  recordingCountdown.value = 3
+  isCountdownOpen.value = true
+  await syncCountdownPreview()
+  updateRecordButton()
+  countdownTimer = window.setInterval(async () => {
+    recordingCountdown.value -= 1
+    if (recordingCountdown.value > 0) return
+    window.clearInterval(countdownTimer)
+    isCountdownOpen.value = false
+    updateRecordButton()
+    await beginRecording()
+  }, 1000)
+}
+
+async function syncCountdownPreview() {
+  if (!els.countdownWebcam || !mediaStream) return
+  if (els.countdownWebcam.srcObject !== mediaStream) {
+    els.countdownWebcam.srcObject = mediaStream
+  }
+  try {
+    await els.countdownWebcam.play()
+  } catch (error) {
+    console.warn('Countdown camera preview could not autoplay.', error)
+  }
+}
+
+async function beginRecording() {
+  const name = els.gestureNameInput.value.trim()
+  if (!name) {
+    els.recordHint.textContent = '请先输入动作名称。'
+    els.gestureNameInput.focus()
+    return
+  }
+
+  try {
+    const state = await apiRequest('/api/recordings/start', {
+      method: 'POST',
+      body: {
+        name,
+        kind: els.gestureKindSelect.value,
+        holdMs: Number(els.holdMsSelect.value)
+      }
+    })
+    els.recordHint.textContent = recordingPhaseHint({
+      active: true,
+      phase: 'sampling',
+      kind: els.gestureKindSelect.value,
+      sampleCount: 0,
+      sampleTarget: sampleTarget()
+    })
+    applyServiceState(state)
+  } catch (error) {
+    console.error(error)
+    els.recordHint.textContent = '录入启动失败，请确认识别服务正在运行。'
+  }
+}
+
+async function stopRecording(options = {}) {
+  try {
+    applyServiceState(await apiRequest('/api/recordings/cancel', { method: 'POST' }))
+  } catch (error) {
+    console.error(error)
+  } finally {
+    if (!options.keepHint) {
+      els.recordHint.textContent = recordingHint()
+    }
+  }
+}
+
+function recordingHint() {
+  return `先选择静态姿态或动态轨迹，点击录入后倒数 3 秒并采集 ${sampleTarget()} 帧保存手势。`
+}
+
+function sendRecognitionFrame(vector) {
+  if (!recognitionSocket || recognitionSocket.readyState !== WebSocket.OPEN) {
+    els.triggerState.textContent = '识别服务未连接'
+    return
+  }
+  recognitionSocket.send(JSON.stringify({ type: 'frame', vector }))
+}
+
+async function apiRequest(path, options = {}) {
+  const response = await fetch(path, {
+    method: options.method || 'GET',
+    headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
+    body: options.body ? JSON.stringify(options.body) : undefined
+  })
+
+  if (!response.ok) {
+    throw new Error(`API ${path} failed: ${response.status}`)
+  }
+
+  return response.json()
+}
+
+function applyServiceState(state) {
+  if (state.config) {
+    serviceConfig = state.config
+  }
+
+  if (state.prototypes) {
+    prototypes = state.prototypes
+    renderPrototypes()
+    renderGestureMappings()
+  }
+
+  if (state.recording) {
+    isRecording = state.recording.active
+    els.sampleCount.textContent = recordingProgressText(state.recording)
+    if (isRecording && state.recording.kind && els.gestureKindSelect) {
+      els.gestureKindSelect.value = state.recording.kind
+    }
+    els.cancelRecordBtn.disabled = !isRecording
+    updateRecordButton()
+    if (isRecording) {
+      els.recordHint.textContent = recordingPhaseHint(state.recording)
+    }
+  }
+
+  if (state.recordingComplete) {
+    els.recordHint.textContent = `已录入“${state.recordingComplete.name}”为${kindLabel(state.recordingComplete.kind)}。`
+    if (els.gestureKindSelect) {
+      els.gestureKindSelect.value = state.recordingComplete.kind || els.gestureKindSelect.value
+    }
+    els.gestureNameInput.value = ''
+    void loadControlSettings()
+  }
+
+  if (state.recognition) {
+    const recognition = state.recognition
+    const shouldKeepBuiltInDisplay =
+      !recognition.accepted &&
+      lastBuiltInMatchAt &&
+      performance.now() - lastBuiltInMatchAt < BUILT_IN_DISPLAY_GRACE_MS
+    if (!shouldKeepBuiltInDisplay) {
+      els.prototypeMatch.textContent = recognition.name
+      els.similarityScore.textContent =
+        recognition.score === null || recognition.score === undefined
+          ? recognition.motionLabel || '--'
+          : formatGestureScore(recognition.score)
+      els.triggerState.textContent = recognition.triggerState
+    }
+    if (recognition.triggered) {
+      void executeRecognizedGesture(recognition)
+    }
+  }
+
+  if (state.vehicle) {
+    syncVehiclePanel()
+  }
+}
+
+function formatGestureScore(score) {
+  const numericScore = Number(score)
+  return Number.isFinite(numericScore) ? numericScore.toFixed(3) : '--'
+}
+
+function translateBuiltin(name) {
+  return BUILT_IN_GESTURE_LABELS[name] || name
+}
+
+function builtInGestureHoldMs(gestureCode) {
+  const setting = controlSettings.find(item => String(item.gestureCode) === String(gestureCode))
+  return positiveMs(setting?.holdMs, positiveMs(serviceConfig?.defaultHoldMs, BUILT_IN_GESTURE_FALLBACK_HOLD_MS))
+}
+
+function builtInStaticRecognitionHoldMs(config) {
+  return positiveMs(config.staticRecognitionHoldMs, OWNER_GESTURE_RECOGNITION_CONFIG.staticRecognitionHoldMs)
+}
+
+function builtInStaticMotionLimit(config) {
+  return positiveMs(config.staticMotionHardLimit, positiveMs(config.staticStillMotionLimit, OWNER_GESTURE_RECOGNITION_CONFIG.staticStillMotionLimit))
+}
+
+function builtInGestureConfig() {
+  return { ...OWNER_GESTURE_RECOGNITION_CONFIG, ...(serviceConfig || {}) }
+}
+
+function builtInGestureHoldLabel(remainingMs) {
+  return `静态保持 ${formatHoldSeconds(remainingMs)}s`
+}
+
+function formatHoldSeconds(ms) {
+  return (Math.ceil(Math.max(ms, 0) / 100) / 10).toFixed(1).replace(/\.0$/, '')
+}
+
+function positiveMs(value, fallback) {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback
+}
+
+function applyControlSettings(data = {}) {
+  if (data.config) {
+    serviceConfig = { ...(serviceConfig || {}), ...data.config }
+  }
+  actionOptions = Array.isArray(data.actions) && data.actions.length ? data.actions : OWNER_GESTURE_ACTIONS
+  controlSettings = Array.isArray(data.settings) ? data.settings : []
+  renderPrototypes()
+  renderGestureMappings()
+}
+
+function updateRecordButton() {
+  if (els.recordBtn) {
+    els.recordBtn.disabled = isRecording || isCountdownOpen.value || !recognizer
+  }
+  if (els.gestureKindSelect) {
+    els.gestureKindSelect.disabled = isRecording || isCountdownOpen.value
+  }
+}
+
+async function createRecognizer(vision) {
+  const options = {
+    baseOptions: {
+      modelAssetPath: MODEL_PATH,
+      delegate: 'GPU'
+    },
+    runningMode: 'VIDEO',
+    numHands: 1
+  }
+
+  try {
+    return await GestureRecognizer.createFromOptions(vision, options)
+  } catch (error) {
+    console.warn('GPU delegate unavailable, falling back to CPU.', error)
+    return GestureRecognizer.createFromOptions(vision, {
+      ...options,
+      baseOptions: {
+        modelAssetPath: MODEL_PATH,
+        delegate: 'CPU'
+      }
+    })
+  }
+}
+
+function renderPrototypes() {
+  const rows = gestureManagementRows()
+  els.prototypeCount.textContent = `${rows.length} 个`
+  if (!rows.length) {
+    els.prototypeList.innerHTML = '<div class="empty-list">暂无动作，录入后会显示在这里。</div>'
+    return
+  }
+
+  els.prototypeList.innerHTML = ''
+  for (const row of rows) {
+    const item = document.createElement('div')
+    item.className = 'prototype-item'
+    item.innerHTML = `
+      <div>
+        <strong>${escapeHtml(row.gestureName)}</strong>
+        <span>${sourceLabel(row.gestureSource)} · ${kindLabel(row.gestureKind)} · ${row.enabled ? escapeHtml(row.actionLabel) : '未关联控制'}</span>
+      </div>
+      <button type="button">管理</button>
+    `
+    item.querySelector('button').addEventListener('click', openManagementDialog)
+    els.prototypeList.append(item)
+  }
+}
+
+async function clearPrototypes() {
+  try {
+    applyServiceState(await apiRequest('/api/prototypes', { method: 'DELETE' }))
+    await loadControlSettings()
+    els.prototypeMatch.textContent = '未录入'
+    els.similarityScore.textContent = '--'
+  } catch (error) {
+    console.error(error)
+  }
+}
+
+function renderGestureMappings() {
+  if (!els.gestureMappingList) return
+  const rows = gestureManagementRows()
+  if (!rows.length) {
+    els.gestureMappingList.innerHTML = '<div class="empty-list">暂无可管理手势。</div>'
+    return
+  }
+
+  els.gestureMappingList.innerHTML = ''
+  for (const row of rows) {
+    const item = document.createElement('div')
+    item.className = `mapping-item ${row.enabled ? 'bound' : ''}`
+    item.innerHTML = `
+      <div class="mapping-meta">
+        <strong>${escapeHtml(row.gestureName)}</strong>
+        <span>${sourceLabel(row.gestureSource)} · ${kindLabel(row.gestureKind)}</span>
+      </div>
+      <select aria-label="关联 ${escapeHtml(row.gestureName)} 到车辆功能" data-gesture-code="${escapeHtml(row.gestureCode)}">
+        ${actionOptionsHtml(row.actionType)}
+      </select>
+      <button class="delete-gesture-button" type="button" ${isSystemGesture(row) ? 'disabled' : ''}>删除</button>
+    `
+    item.querySelector('select').addEventListener('change', event => {
+      updateLocalControlSetting(row, event.target.value)
+      item.classList.toggle('bound', event.target.value !== 'NONE')
+    })
+    item.querySelector('.delete-gesture-button').addEventListener('click', () => {
+      void deleteGesture(row)
+    })
+    els.gestureMappingList.append(item)
+  }
+}
+
+async function deleteGesture(row) {
+  if (isSystemGesture(row)) return
+  const gestureCode = row?.gestureCode
+  if (!gestureCode) return
+  try {
+    applyServiceState(await apiRequest(`/api/prototypes/${encodeURIComponent(gestureCode)}`, { method: 'DELETE' }))
+    await loadControlSettings()
+    ElMessage.success('手势已删除')
+  } catch (error) {
+    console.error(error)
+  }
+}
+
+function gestureManagementRows() {
+  const rows = new Map()
+  for (const prototype of prototypes) {
+    const gestureCode = prototype.id || prototype.gestureCode || prototype.name
+    rows.set(String(gestureCode), {
+      gestureCode: String(gestureCode),
+      gestureName: prototype.name || prototype.gestureName || String(gestureCode),
+      gestureKind: prototype.kind || 'static',
+      gestureSource: prototype.source || 'custom',
+      holdMs: positiveMs(prototype.holdMs, positiveMs(serviceConfig?.defaultHoldMs, BUILT_IN_GESTURE_FALLBACK_HOLD_MS)),
+      actionType: 'NONE',
+      actionLabel: '不触发控制',
+      enabled: false
+    })
+  }
+  for (const setting of controlSettings) {
+    const gestureCode = String(setting.gestureCode || '')
+    if (!gestureCode) continue
+    rows.set(gestureCode, {
+      ...(rows.get(gestureCode) || {}),
+      ...setting,
+      gestureCode,
+      gestureName: setting.gestureName || rows.get(gestureCode)?.gestureName || gestureCode,
+      holdMs: positiveMs(setting.holdMs, rows.get(gestureCode)?.holdMs || positiveMs(serviceConfig?.defaultHoldMs, BUILT_IN_GESTURE_FALLBACK_HOLD_MS)),
+      actionType: setting.actionType || 'NONE',
+      actionLabel: setting.actionLabel || actionLabel(setting.actionType),
+      enabled: Boolean(setting.enabled) && setting.actionType !== 'NONE'
+    })
+  }
+  return Array.from(rows.values())
+}
+
+function updateLocalControlSetting(row, actionType) {
+  const normalized = actionType || 'NONE'
+  const nextSetting = {
+    ...row,
+    actionType: normalized,
+    actionLabel: actionLabel(normalized),
+    enabled: normalized !== 'NONE'
+  }
+  const index = controlSettings.findIndex(item => String(item.gestureCode) === String(row.gestureCode))
+  if (index >= 0) {
+    controlSettings[index] = nextSetting
+  } else {
+    controlSettings.push(nextSetting)
+  }
+  renderPrototypes()
+}
+
+async function saveControlBindings() {
+  const settings = gestureManagementRows().map(row => ({
+    gestureCode: row.gestureCode,
+    gestureName: row.gestureName,
+    gestureKind: row.gestureKind,
+    gestureSource: row.gestureSource,
+    holdMs: positiveMs(row.holdMs, positiveMs(serviceConfig?.defaultHoldMs, BUILT_IN_GESTURE_FALLBACK_HOLD_MS)),
+    actionType: row.actionType || 'NONE',
+    enabled: Boolean(row.actionType && row.actionType !== 'NONE')
+  }))
+
+  try {
+    els.saveControlBindingsBtn.disabled = true
+    applyControlSettings(getOwnerGestureData(await saveOwnerGestureControlSettings({ settings })))
+    ElMessage.success('手势功能关联已保存')
+  } catch (error) {
+    console.error(error)
+  } finally {
+    els.saveControlBindingsBtn.disabled = false
+  }
+}
+
+async function executeRecognizedGesture(recognition) {
+  const prototype = prototypes.find(item => item.name === recognition.name)
+  const gestureCode = recognition.gestureCode || recognition.id || prototype?.id || recognition.name
+  try {
+    const control = getOwnerGestureData(await executeOwnerGestureControl({
+      gestureCode,
+      gestureName: recognition.name,
+      confidence: recognition.score
+    }))
+    if (!control?.enabled) {
+      els.triggerState.textContent = '已识别，未关联车辆功能'
+      return
+    }
+    vehicleStore.applyGestureControl(control)
+    syncVehiclePanel()
+    els.triggerState.textContent = `已触发：${control.actionLabel}`
+  } catch (error) {
+    console.error(error)
+    els.triggerState.textContent = '控制绑定查询失败'
+  }
+}
+
+function syncVehiclePanel() {
+  const vehicle = vehicleStore.vehicle
+  els.vehiclePower.textContent = vehicle.systemAwake ? '已唤醒' : '待唤醒'
+  els.volumeSlider.value = vehicle.audio?.volume ?? 35
+  els.tempSlider.value = vehicle.climate?.temperature ?? 24
+  els.phoneState.textContent = vehicle.phone?.status || '待机'
+  els.featureState.textContent = vehicle.activeModule || '驾驶'
+}
+
+function resizeCanvas() {
+  const width = els.webcam.videoWidth
+  const height = els.webcam.videoHeight
+  if (!width || !height) return
+  if (els.overlay.width !== width || els.overlay.height !== height) {
+    els.overlay.width = width
+    els.overlay.height = height
+  }
+}
+
+function actionLabel(action) {
+  return actionOptions.find(item => item.actionType === action)?.actionLabel || action || '不触发控制'
+}
+
+function controlSettingForGesture(prototype) {
+  const gestureCode = String(prototype.id || prototype.gestureCode || '')
+  return controlSettings.find(item => String(item.gestureCode) === gestureCode)
+}
+
+function controlLabelForGesture(prototype) {
+  const setting = controlSettingForGesture(prototype)
+  return setting?.enabled ? setting.actionLabel || actionLabel(setting.actionType) : '未关联控制'
+}
+
+function actionOptionsHtml(selectedAction) {
+  return actionOptions.map(action => {
+    const selected = action.actionType === selectedAction ? ' selected' : ''
+    return `<option value="${escapeHtml(action.actionType)}"${selected}>${escapeHtml(action.actionLabel)}</option>`
+  }).join('')
+}
+
+function sourceLabel(source) {
+  return source === 'built_in' || source === 'system' ? '系统手势' : '自定义手势'
+}
+
+function isSystemGesture(row) {
+  return row.gestureSource === 'built_in' || row.gestureSource === 'system'
+}
+
+function kindLabel(kind) {
+  return kind === 'dynamic' ? '动态轨迹' : '静态姿态'
+}
+
+function sampleTarget() {
+  return serviceConfig?.sampleTarget || 45
+}
+
+function recordingProgressText(recording) {
+  if (!recording?.active) {
+    return `0 / ${sampleTarget()} 帧`
+  }
+  return `采样 ${recording.sampleCount ?? recording.count ?? 0} / ${recording.sampleTarget ?? sampleTarget()} 帧`
+}
+
+function recordingPhaseHint(recording) {
+  if (recording?.phase === 'sampling') {
+    const count = recording.sampleCount ?? 0
+    const target = recording.sampleTarget ?? sampleTarget()
+    return `正在录入${kindLabel(recording.kind)}：${count} / ${target} 帧。`
+  }
+  return recordingHint()
+}
+
+function escapeHtml(value = '') {
+  return String(value).replace(/[&<>"']/g, char => {
+    const entities = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
+    return entities[char]
+  })
 }
 </script>
 
 <style scoped>
-.owner-page {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+.owner-gesture-page {
+  display: flex;
+  flex-direction: column;
   gap: 16px;
   height: 100%;
+  min-height: 0;
+  color: var(--text-primary);
 }
 
-.viewport-area { display: flex; flex-direction: column; gap: 12px; }
+.owner-gesture-page *,
+.owner-gesture-page *::before,
+.owner-gesture-page *::after {
+  box-sizing: border-box;
+}
 
-.viewport {
-  position: relative;
-  flex: 1;
-  min-height: 360px;
-  border-radius: var(--radius-lg);
+.owner-gesture-page button,
+.owner-gesture-page input,
+.owner-gesture-page select {
+  font: inherit;
+  color: inherit;
+}
+
+.owner-gesture-page button {
+  min-height: 40px;
+  border: 1px solid var(--border-card);
+  border-radius: 12px;
+  padding: 0 14px;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  transition: border-color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.owner-gesture-page button:hover:not(:disabled) {
+  border-color: var(--border-active);
+  color: var(--text-primary);
+  background: var(--bg-card-hover);
+}
+
+.owner-gesture-page button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.owner-gesture-page button:disabled {
+  cursor: not-allowed;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.025);
+  opacity: 0.58;
+}
+
+.primary {
+  border-color: var(--primary-color);
+  color: var(--text-inverse);
+  background: linear-gradient(135deg, var(--primary-color), #0096c7);
+  box-shadow: 0 4px 18px var(--primary-glow);
+}
+
+.primary:hover:not(:disabled) {
+  border-color: #00cdf0;
+  color: var(--text-inverse);
+  background: linear-gradient(135deg, #00cdf0, var(--primary-color));
+  box-shadow: 0 6px 26px rgba(0, 180, 216, 0.35);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex: 0 0 auto;
+}
+
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.eyebrow {
+  margin: 0 0 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+h1 {
+  font-size: 24px;
+  line-height: 1.2;
+  color: var(--text-primary);
+}
+
+h2 {
+  font-size: 15px;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+
+h3 {
+  font-size: 14px;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+
+.status-pill {
+  min-width: 112px;
+  border: 1px solid rgba(255, 171, 0, 0.28);
+  border-radius: 999px;
+  padding: 8px 12px;
+  color: var(--warning-color);
+  background: rgba(255, 171, 0, 0.08);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.status-pill.ready {
+  color: var(--success-color);
+  background: rgba(0, 230, 118, 0.08);
+  border-color: rgba(0, 230, 118, 0.28);
+}
+
+.status-pill.error {
+  color: var(--danger-color);
+  background: rgba(255, 61, 0, 0.08);
+  border-color: rgba(255, 61, 0, 0.28);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  align-items: start;
+  gap: 16px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.camera-panel,
+.panel {
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  box-shadow: none;
+}
+
+.camera-panel {
+  min-width: 0;
   overflow: hidden;
+}
+
+.video-shell {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  min-height: 0;
   background: #080c14;
 }
 
-.viewport img {
+video,
+canvas {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: contain;
-  opacity: 0.88;
+  object-fit: cover;
   background: #070b12;
 }
 
-.viewport-placeholder {
-  height: 100%;
-  min-height: 360px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
+video,
+canvas {
+  transform: scaleX(-1);
+}
+
+canvas {
+  pointer-events: none;
+}
+
+.camera-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  padding: 24px;
   color: var(--text-muted);
+  text-align: center;
   background:
     linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px),
     linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px);
   background-size: 40px 40px;
 }
 
-.hand-overlay {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
+.camera-empty[hidden] {
+  display: none;
+}
+
+.camera-empty strong {
+  color: var(--text-secondary);
+  font-size: 18px;
+}
+
+.camera-empty span {
+  color: var(--text-muted);
+  font-size: 13px;
 }
 
 .viewport-top {
@@ -361,6 +1282,7 @@ function emptyResult() {
   left: 16px;
   display: flex;
   gap: 8px;
+  pointer-events: none;
 }
 
 .chip {
@@ -376,336 +1298,581 @@ function emptyResult() {
 
 .chip.live {
   color: var(--danger-color);
-  border-color: rgba(255,61,0,0.4);
+  border-color: rgba(255, 61, 0, 0.4);
 }
 
-.gesture-tag {
-  position: absolute;
-  bottom: 18px;
-  left: 18px;
+.toolbar {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  background: rgba(0,180,216,0.18);
-  border: 1px solid rgba(0,180,216,0.3);
-  border-radius: 999px;
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--primary-color);
-  backdrop-filter: blur(8px);
-}
-
-.gesture-icon { font-size: 20px; }
-
-.trigger-bar {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  flex-wrap: wrap;
   gap: 10px;
+  padding: 14px;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
-.trigger-item {
-  padding: 12px 16px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-card);
-  border-radius: var(--radius-sm);
-}
-
-.trigger-item.ok {
-  border-color: rgba(0,230,118,0.2);
-  background: rgba(0,230,118,0.04);
-}
-
-.trigger-item span {
-  font-size: 11px;
-  color: var(--text-muted);
-  font-weight: 600;
-}
-
-.trigger-item strong {
-  display: block;
-  margin-top: 4px;
-  font-size: 14px;
-  color: var(--text-primary);
-}
-
-.trigger-item strong.pass { color: var(--success-color); }
-
-/* 右侧 */
-.side-panel { display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
-
-.card-title {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 14px;
-}
-
-.mode-tabs {
+.readout-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px;
-  margin-bottom: 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid var(--border-subtle);
 }
 
-.mode-tabs button {
-  padding: 10px;
-  border: 1px solid var(--border-card);
-  border-radius: 10px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all var(--duration-fast);
+.readout {
+  min-width: 0;
+  padding: 16px;
+  border-right: 1px solid var(--border-subtle);
 }
 
-.mode-tabs button.active {
-  border-color: var(--primary-color);
-  background: var(--primary-soft);
-  color: var(--primary-color);
+.readout:last-child {
+  border-right: 0;
 }
 
-.upload-zone {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 22px;
-  border: 1px dashed rgba(255,255,255,0.10);
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all var(--duration-fast);
-}
-
-.upload-zone:hover {
-  border-color: var(--border-active);
-  background: rgba(255,255,255,0.02);
-}
-
-.upload-zone .el-icon { color: var(--text-muted); }
-.upload-zone span { font-size: 13px; font-weight: 600; }
-.upload-zone small { font-size: 11px; color: var(--text-muted); text-align: center; }
-
-.camera-source {
-  margin-top: 2px;
-}
-
-.camera-source label {
-  display: block;
-  margin-bottom: 6px;
-  font-size: 11px;
-  font-weight: 700;
+.readout span,
+label,
+.prototype-item span,
+.vehicle-state span,
+.hint {
   color: var(--text-muted);
-  text-transform: uppercase;
+  font-size: 12px;
 }
 
-.camera-meta {
+.readout strong {
+  display: block;
+  margin-top: 6px;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 18px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-panel {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  min-width: 0;
+}
+
+.panel {
+  padding: 16px;
+}
+
+.panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  margin-top: 10px;
-  font-size: 11px;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.panel-head span {
   color: var(--text-muted);
-}
-
-.source-kind {
-  padding: 4px 8px;
-  border: 1px solid var(--border-card);
-  border-radius: 999px;
-  text-transform: uppercase;
-}
-
-.status-dot.ready { color: var(--success-color); }
-.status-dot.loading { color: var(--warning-color); }
-.status-dot.offline,
-.status-dot.empty { color: var(--danger-color); }
-
-.action-btn {
-  width: 100%;
-  height: 44px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 14px;
-  border: none;
-  border-radius: 12px;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 700;
-  cursor: pointer;
-  transition: all var(--duration-fast);
 }
 
-.action-btn.primary {
-  background: linear-gradient(135deg, var(--primary-color), #0096c7);
-  color: #080c14;
-  box-shadow: 0 4px 18px var(--primary-glow);
+.management-head {
+  align-items: flex-start;
 }
 
-.action-btn.primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.action-btn.secondary {
-  background: transparent;
-  border: 1px solid var(--border-card);
-  color: var(--text-secondary);
-}
-
-.action-btn.secondary:hover {
-  border-color: var(--border-active);
-  color: var(--text-primary);
-}
-
-.action-btn.compact {
-  height: 36px;
-  margin-top: 10px;
+.compact-button {
+  min-height: 34px;
+  padding: 0 12px;
   font-size: 12px;
 }
 
-.gesture-hero {
-  text-align: center;
-  padding: 24px;
-}
-
-.gesture-hero.active {
-  border-color: rgba(0,180,216,0.35);
-  box-shadow: 0 0 24px var(--primary-glow);
-}
-
-.gesture-code {
-  font-family: "SF Mono", "Consolas", monospace;
-  font-size: 48px;
-  font-weight: 800;
-  color: var(--text-muted);
-}
-
-.gesture-hero.active .gesture-code {
-  color: var(--primary-color);
-  text-shadow: 0 0 16px var(--primary-glow);
-}
-
-.gesture-hero strong {
-  display: block;
-  margin-top: 8px;
-  font-size: 20px;
-  color: var(--text-primary);
-}
-
-.gesture-hero p {
-  margin-top: 4px;
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
-.control-item {
-  padding: 14px;
-  background: rgba(255,255,255,0.02);
-  border-radius: var(--radius-sm);
-  margin-bottom: 10px;
-  border: 1px solid transparent;
-  transition: all var(--duration-fast);
-}
-
-.control-item.highlight {
-  border-color: var(--primary-color);
-  background: var(--primary-soft);
-}
-
-.control-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
-.control-head strong {
-  margin-left: auto;
-  color: var(--primary-color);
-  font-size: 16px;
-}
-
-.mode-btns {
+label {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
+  gap: 7px;
   margin-bottom: 12px;
-}
-
-.mode-btns button {
-  padding: 10px;
-  border: 1px solid var(--border-card);
-  border-radius: 8px;
-  background: transparent;
+  font-weight: 700;
   color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all var(--duration-fast);
 }
 
-.mode-btns button.active {
-  border-color: var(--primary-color);
-  background: var(--primary-soft);
-  color: var(--primary-color);
+input[type="text"],
+select {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid var(--border-card);
+  border-radius: 10px;
+  padding: 0 11px;
+  color: var(--text-primary);
+  background: var(--bg-surface);
 }
 
-.phone-btns {
+input[type="text"]:focus,
+select:focus,
+button:focus-visible {
+  outline: 2px solid var(--border-active);
+  outline-offset: 2px;
+}
+
+input[type="range"] {
+  width: 100%;
+  accent-color: var(--primary-color);
+}
+
+.button-row {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
 
-.mapping-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.hint {
+  margin: 12px 0 0;
+  line-height: 1.55;
+}
+
+.prototype-list {
+  display: grid;
+  gap: 8px;
+}
+
+.gesture-mapping-list {
+  display: grid;
+  gap: 8px;
 }
 
 .mapping-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 152px auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  background: rgba(255,255,255,0.025);
+}
+
+.mapping-item.bound {
+  border-color: rgba(0, 180, 216, 0.32);
+  background: var(--primary-soft);
+}
+
+.mapping-meta {
+  min-width: 0;
+}
+
+.mapping-meta strong,
+.mapping-meta span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mapping-meta span {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.mapping-item select {
+  min-height: 36px;
+}
+
+.delete-gesture-button {
+  min-height: 36px;
+  padding: 0 10px;
+}
+
+:deep(.mapping-item) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 152px auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  background: rgba(255,255,255,0.025);
+}
+
+:deep(.mapping-item.bound) {
+  border-color: rgba(0, 180, 216, 0.32);
+  background: var(--primary-soft);
+}
+
+:deep(.mapping-meta) {
+  min-width: 0;
+}
+
+:deep(.mapping-meta strong),
+:deep(.mapping-meta span) {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:deep(.mapping-meta span) {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+:deep(.mapping-item select) {
+  min-height: 36px;
+  border: 1px solid var(--border-card);
+  border-radius: 10px;
+  padding: 0 10px;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+}
+
+:deep(.delete-gesture-button) {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border-card);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+:deep(.delete-gesture-button:hover:not(:disabled)) {
+  border-color: rgba(255, 61, 0, 0.36);
+  color: var(--danger-color);
+  background: rgba(255, 61, 0, 0.08);
+}
+
+.prototype-item {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  transition: all var(--duration-fast);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  background: rgba(255,255,255,0.025);
 }
 
-.mapping-item.active {
-  background: var(--primary-soft);
-  border-color: rgba(0,180,216,0.3);
+.prototype-item div {
+  min-width: 0;
 }
 
-.mapping-item strong {
-  font-family: "SF Mono", "Consolas", monospace;
-  font-size: 14px;
-  color: var(--text-muted);
-  min-width: 32px;
-}
-
-.mapping-item.active strong { color: var(--primary-color); }
-
-.mapping-item span {
+.prototype-item strong,
+.prototype-item span {
   display: block;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.mapping-item small {
-  font-size: 11px;
+.prototype-item button {
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+:deep(.prototype-item) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  background: rgba(255,255,255,0.025);
+}
+
+:deep(.prototype-item div) {
+  min-width: 0;
+}
+
+:deep(.prototype-item strong),
+:deep(.prototype-item span) {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:deep(.prototype-item span) {
   color: var(--text-muted);
+  font-size: 12px;
 }
 
-.spinner { animation: spin 1s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
+:deep(.prototype-item button) {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border-card);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+:deep(.prototype-item button:hover:not(:disabled)) {
+  border-color: var(--border-active);
+  color: var(--text-primary);
+  background: var(--bg-card-hover);
+}
+
+.empty-list {
+  border: 1px dashed var(--border-card);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  color: var(--text-muted);
+  background: rgba(255,255,255,0.025);
+  font-size: 13px;
+  text-align: center;
+}
+
+:deep(.empty-list) {
+  border: 1px dashed var(--border-card);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  color: var(--text-muted);
+  background: rgba(255,255,255,0.025);
+  font-size: 13px;
+  text-align: center;
+}
+
+.vehicle-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.vehicle-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.025);
+}
+
+.vehicle-state strong {
+  color: var(--primary-color);
+}
+
+.modal-backdrop,
+.countdown-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.58);
+  backdrop-filter: blur(6px);
+}
+
+.modal-backdrop[style*="display: none"],
+.countdown-screen[style*="display: none"] {
+  pointer-events: none;
+}
+
+.gesture-manager {
+  width: min(980px, calc(100vw - 32px));
+  max-height: min(780px, calc(100vh - 48px));
+  overflow: hidden;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-elevated);
+}
+
+.manager-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: rgba(255,255,255,0.025);
+}
+
+.manager-body {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 14px;
+  max-height: calc(min(780px, 100vh - 48px) - 78px);
+  overflow: auto;
+  padding: 14px;
+}
+
+.manager-section {
+  min-width: 0;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  background: var(--bg-card);
+}
+
+.record-section {
+  align-self: start;
+}
+
+.countdown-screen {
+  z-index: 3100;
+}
+
+.countdown-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px;
+  gap: 16px;
+  align-items: stretch;
+  width: min(780px, calc(100vw - 48px));
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-elevated);
+}
+
+.countdown-preview {
+  position: relative;
+  overflow: hidden;
+  min-height: 280px;
+  border-radius: var(--radius-md);
+  background: #070b12;
+  aspect-ratio: 16 / 9;
+}
+
+.countdown-badge {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  border: 1px solid rgba(0, 230, 118, 0.34);
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: var(--success-color);
+  background: rgba(0, 0, 0, 0.62);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.countdown-info {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  min-width: 0;
+  border-left: 1px solid var(--border-subtle);
+  padding-left: 16px;
+  text-align: center;
+}
+
+.countdown-info span {
+  color: var(--text-secondary);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.countdown-info strong {
+  font-size: 96px;
+  line-height: 1;
+  color: var(--primary-color);
+  text-shadow: 0 0 28px var(--primary-glow);
+}
+
+.countdown-info p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+@media (max-width: 1100px) {
+  .layout {
+    grid-template-columns: 1fr;
+    overflow: visible;
+  }
+
+  .side-panel {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .owner-gesture-page {
+    height: auto;
+    min-height: 100%;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .top-actions {
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  h1 {
+    font-size: 23px;
+  }
+
+  .video-shell {
+    min-height: 240px;
+  }
+
+  .readout-grid,
+  .side-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .mapping-item {
+    grid-template-columns: 1fr;
+  }
+
+  :deep(.mapping-item) {
+    grid-template-columns: 1fr;
+  }
+
+  .manager-body {
+    grid-template-columns: 1fr;
+  }
+
+  .gesture-manager {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 32px);
+  }
+
+  .countdown-screen {
+    padding: 12px;
+  }
+
+  .countdown-panel {
+    grid-template-columns: 1fr;
+    width: 100%;
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .countdown-preview {
+    min-height: 0;
+  }
+
+  .countdown-info {
+    border-left: 0;
+    border-top: 1px solid rgba(226, 238, 233, 0.14);
+    padding: 12px 0 0;
+  }
+
+  .countdown-info strong {
+    font-size: 72px;
+  }
+
+  .readout {
+    border-right: 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .readout:last-child {
+    border-bottom: 0;
+  }
+}
 </style>

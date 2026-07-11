@@ -27,6 +27,7 @@ public class InferenceService {
     private final AlgorithmClient algorithmClient;
     private final InferenceRecordRepository recordRepository;
     private final DetectionResultRepository detectionResultRepository;
+    private final SystemLogService systemLogService;
 
     /**
      * 处理图片推理
@@ -50,6 +51,9 @@ public class InferenceService {
             saveInferenceRecord(request, response, traceId,
                     System.currentTimeMillis() - startTime, true, null);
 
+            recordInferenceSystemLog(request, response, traceId,
+                    System.currentTimeMillis() - startTime, null);
+
             log.info("推理完成: traceId={}, detectionCount={}, latency={}ms",
                     traceId,
                     response.getData() != null ? response.getData().getDetectionCount() : 0,
@@ -62,6 +66,8 @@ public class InferenceService {
             // 保存失败记录
             saveInferenceRecord(request, null, traceId,
                     System.currentTimeMillis() - startTime, false, e.getMessage());
+            recordInferenceSystemLog(request, null, traceId,
+                    System.currentTimeMillis() - startTime, e.getMessage());
             throw new RuntimeException("推理失败: " + e.getMessage());
         }
     }
@@ -120,5 +126,63 @@ public class InferenceService {
         summary.put("latencyMs", response.getData().getLatencyMs());
         summary.put("detectionCount", response.getData().getDetectionCount());
         return summary;
+    }
+
+    private void recordInferenceSystemLog(
+            InferenceRequest request,
+            InferenceResponse response,
+            String traceId,
+            long latencyMs,
+            String errorMessage
+    ) {
+        String taskType = request.getTaskType();
+        String module = resolveMonitorModule(taskType);
+        int detectionCount = response != null && response.getData() != null && response.getData().getDetectionCount() != null
+                ? response.getData().getDetectionCount()
+                : 0;
+        boolean success = errorMessage == null && detectionCount > 0;
+
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("traceId", traceId);
+        detail.put("taskType", taskType);
+        detail.put("inputType", "image");
+        detail.put("imageUrl", request.getImageUrl());
+        detail.put("latencyMs", latencyMs);
+        detail.put("detectionCount", detectionCount);
+        detail.put("confidence", averageConfidence(response));
+        if (errorMessage != null) {
+            detail.put("errorMessage", errorMessage);
+        }
+
+        if (success) {
+            systemLogService.record("INFO", module, "success", JsonLogBuilder.toJson(detail), null, traceId);
+        } else {
+            systemLogService.record("ERROR", module, "failure", JsonLogBuilder.toJson(detail), null, traceId);
+        }
+    }
+
+    private double averageConfidence(InferenceResponse response) {
+        if (response == null || response.getData() == null || response.getData().getDetections() == null) {
+            return 0.0;
+        }
+        return response.getData().getDetections().stream()
+                .map(InferenceResponse.Detection::getConfidence)
+                .filter(value -> value != null && value > 0)
+                .mapToDouble(Double::doubleValue)
+                .average()
+                .orElse(0.0);
+    }
+
+    private String resolveMonitorModule(String taskType) {
+        if ("license_plate".equals(taskType)) {
+            return "license_plate";
+        }
+        if ("police_gesture".equals(taskType)) {
+            return "police_gesture";
+        }
+        if ("owner_gesture".equals(taskType)) {
+            return "owner_gesture";
+        }
+        return taskType != null && taskType.contains("gesture") ? "gesture" : "inference";
     }
 }

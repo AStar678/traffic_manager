@@ -18,7 +18,7 @@
       <span>摄像头微服务截图 / 视频地址</span>
       <el-input
         v-model="localUrl"
-        placeholder="http://127.0.0.1:8010/api/v1/cameras/snapshot.jpg?sourceId=..."
+        placeholder="http://127.0.0.1:8010/api/v1/cameras/snapshot.png?sourceId=..."
         clearable
         @input="$emit('update:url', localUrl)"
       />

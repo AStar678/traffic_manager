@@ -1,5 +1,6 @@
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
+aiortc>=1.9.0
 opencv-python>=4.9.0
 numpy>=1.26.0
 pydantic>=2.7.0

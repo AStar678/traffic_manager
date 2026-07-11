@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
   <title>VisionDrive 摄像头管理</title>
   <style>
     :root {
@@ -23,6 +24,10 @@
     }
 
     * { box-sizing: border-box; }
+
+    [hidden] {
+      display: none !important;
+    }
 
     html, body {
       margin: 0;
@@ -219,11 +224,22 @@
 
     .browser-video {
       position: absolute;
-      width: 1px;
-      height: 1px;
-      opacity: 0;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      opacity: 0.01;
       pointer-events: none;
+      z-index: 0;
     }
+
+    .browser-video.visible {
+      opacity: 1;
+      z-index: 2;
+      background: #070b12;
+    }
+
+    .preview { position: relative; z-index: 1; }
 
     .preview-empty {
       height: 100%;
@@ -578,7 +594,7 @@
         <div class="brand-mark">VC</div>
         <div>
           <strong>虚拟摄像头管理</strong>
-          <span>独立服务 · MJPEG 预览 · JPEG 抓拍</span>
+          <span>独立服务 · WebRTC 预览 · PNG/JPEG 抓拍</span>
         </div>
       </div>
       <div class="service-status">
@@ -605,8 +621,8 @@
           </div>
           <div class="preview-wrap">
             <video id="browserVideo" class="browser-video" autoplay playsinline muted aria-hidden="true"></video>
-            <canvas id="browserCanvas" hidden></canvas>
-            <img id="preview" class="preview" alt="摄像头预览" hidden>
+            <video id="preview" class="preview" autoplay playsinline muted hidden></video>
+            <img id="previewFallback" class="preview" alt="摄像头兼容预览" decoding="async" hidden>
             <div id="previewEmpty" class="preview-empty">
               <div>
                 <strong>等待摄像头源</strong>
@@ -703,24 +719,22 @@
   </div>
 
   <script>
-    const ADMIN_PREVIEW_FPS = 5;
-    const ADMIN_PREVIEW_QUALITY = 78;
-    const BROWSER_UPLOAD_INTERVAL_MS = 250;
-    const BROWSER_UPLOAD_WIDTH = 640;
-    const BROWSER_UPLOAD_HEIGHT = 360;
-    const BROWSER_UPLOAD_QUALITY = 0.62;
-    const BROWSER_INITIAL_QUALITY = 0.72;
+    const ADMIN_PREVIEW_FPS = 15;
+    const ADMIN_VIDEO_PREVIEW_FPS = 10;
+    const ADMIN_VIDEO_PREVIEW_QUALITY = 82;
+    const BROWSER_UPLOAD_WIDTH = 1280;
+    const BROWSER_UPLOAD_HEIGHT = 720;
+    const WEBRTC_ICE_TIMEOUT_MS = 2500;
+    const BROWSER_FIRST_FRAME_TIMEOUT_MS = 7000;
     const REQUEST_TIMEOUT_MS = 8000;
     const SWITCH_TIMEOUT_MS = 2500;
     const SWITCH_RECOVERY_MS = 3500;
-    const UPLOAD_TIMEOUT_MS = 2500;
-    const EMPTY_IMAGE_SRC = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
-
     const state = {
       sources: [],
       activeSourceId: '',
       streamVersion: Date.now(),
       previewSourceId: '',
+      previewMode: '',
       previewVersion: 0,
       activationBusy: false,
       pendingSourceId: '',
@@ -729,9 +743,11 @@
       activeSwitchController: null,
       switchRecoveryTimer: null,
       browserStream: null,
-      uploadTimer: null,
-      uploadBusy: false,
       browserStreaming: false,
+      previewPc: null,
+      previewStream: null,
+      previewStarting: false,
+      publishPc: null,
     };
 
     const els = {
@@ -751,7 +767,7 @@
       snapshotBtn: document.getElementById('snapshotBtn'),
       copySnapshotBtn: document.getElementById('copySnapshotBtn'),
       browserVideo: document.getElementById('browserVideo'),
-      browserCanvas: document.getElementById('browserCanvas'),
+      previewFallback: document.getElementById('previewFallback'),
       form: document.getElementById('sourceForm'),
       sourceType: document.getElementById('sourceType'),
       sourceName: document.getElementById('sourceName'),
@@ -800,26 +816,6 @@
       }
     }
 
-    async function postFrame(sourceId, blob) {
-      const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
-      try {
-        const params = new URLSearchParams({ sourceId });
-        const response = await fetch(`/api/v1/cameras/browser-frame?${params.toString()}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'image/jpeg' },
-          body: blob,
-          signal: controller.signal,
-        });
-        if (!response.ok) {
-          const text = await response.text();
-          throw new Error(text || `帧上传失败：${response.status}`);
-        }
-      } finally {
-        window.clearTimeout(timeout);
-      }
-    }
-
     function setMessage(text, kind = '') {
       els.message.textContent = text;
       els.message.className = `message ${kind}`.trim();
@@ -830,21 +826,155 @@
       els.statusLight.className = `status-light ${status || ''}`.trim();
     }
 
-    function streamUrl(sourceId) {
-      const params = new URLSearchParams({
-        sourceId,
-        fps: String(ADMIN_PREVIEW_FPS),
-        preview: '1',
-        quality: String(ADMIN_PREVIEW_QUALITY),
-        t: String(state.streamVersion),
-      });
-      return `/api/v1/cameras/stream.mjpg?${params.toString()}`;
-    }
-
     function stopPreviewStream() {
       state.previewSourceId = '';
+      state.previewMode = '';
       state.previewVersion = 0;
-      els.preview.src = EMPTY_IMAGE_SRC;
+      closePreviewPeer();
+      els.preview.hidden = true;
+      els.preview.srcObject = null;
+      stopFallbackPreview();
+    }
+
+    async function startPreviewStream(sourceId) {
+      if (!window.RTCPeerConnection) {
+        throw new Error('当前浏览器不支持 WebRTC 视频预览');
+      }
+      closePreviewPeer();
+      const pc = new RTCPeerConnection({ iceServers: [] });
+      const stream = new MediaStream();
+      state.previewPc = pc;
+      state.previewStream = stream;
+      els.preview.srcObject = stream;
+      pc.addTransceiver('video', { direction: 'recvonly' });
+      pc.ontrack = event => {
+        const incoming = event.streams?.[0] || stream;
+        if (!event.streams?.length) {
+          incoming.addTrack(event.track);
+        }
+        state.previewStream = incoming;
+        els.preview.srcObject = incoming;
+        els.preview.hidden = false;
+        els.preview.play().catch(() => {});
+      };
+      pc.onconnectionstatechange = () => {
+        if (['failed', 'disconnected'].includes(pc.connectionState)) {
+          setMessage('WebRTC 预览连接已断开，请刷新重连', 'error');
+        }
+      };
+      await negotiateWebRtc(pc, '/api/v1/cameras/webrtc/offer', {
+        sourceId,
+        fps: ADMIN_PREVIEW_FPS,
+      });
+      els.preview.hidden = false;
+      stopFallbackPreview();
+      await els.preview.play().catch(() => {});
+    }
+
+    function startImagePreview(source) {
+      const params = new URLSearchParams({
+        sourceId: source.id,
+        t: String(state.streamVersion || Date.now()),
+      });
+      closePreviewPeer();
+      els.preview.hidden = true;
+      els.preview.srcObject = null;
+      els.previewFallback.src = `/api/v1/cameras/snapshot.jpg?${params.toString()}`;
+      els.previewFallback.hidden = false;
+    }
+
+    function startMjpegPreview(source) {
+      const sourceId = typeof source === 'string' ? source : source.id;
+      const params = new URLSearchParams({
+        sourceId,
+        fps: String(ADMIN_VIDEO_PREVIEW_FPS),
+        preview: '1',
+        quality: String(ADMIN_VIDEO_PREVIEW_QUALITY),
+        t: String(Date.now()),
+      });
+      closePreviewPeer();
+      els.preview.hidden = true;
+      els.preview.srcObject = null;
+      els.previewFallback.src = `/api/v1/cameras/stream.mjpg?${params.toString()}`;
+      els.previewFallback.hidden = false;
+    }
+
+    function stopFallbackPreview() {
+      els.previewFallback.hidden = true;
+      els.previewFallback.removeAttribute('src');
+    }
+
+    async function publishBrowserStream(sourceId, stream) {
+      if (!window.RTCPeerConnection) {
+        throw new Error('当前浏览器不支持 WebRTC 摄像头推流');
+      }
+      closePublishPeer();
+      const pc = new RTCPeerConnection({ iceServers: [] });
+      state.publishPc = pc;
+      stream.getVideoTracks().forEach(track => pc.addTrack(track, stream));
+      pc.onconnectionstatechange = () => {
+        if (['failed', 'disconnected'].includes(pc.connectionState)) {
+          setMessage('浏览器摄像头 WebRTC 推流已断开，请重新启动', 'error');
+        }
+      };
+      await negotiateWebRtc(pc, '/api/v1/cameras/webrtc/publish', {
+        sourceId,
+        fps: ADMIN_PREVIEW_FPS,
+      });
+    }
+
+    async function negotiateWebRtc(pc, path, payload) {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await waitForIceGatheringComplete(pc);
+      const answer = await api(path, {
+        method: 'POST',
+        body: JSON.stringify({
+          ...payload,
+          sdp: pc.localDescription.sdp,
+          type: pc.localDescription.type,
+        }),
+      }, 15000);
+      await pc.setRemoteDescription(new RTCSessionDescription(answer));
+      return answer;
+    }
+
+    function waitForIceGatheringComplete(pc) {
+      if (pc.iceGatheringState === 'complete') return Promise.resolve();
+      return new Promise(resolve => {
+        const timeout = window.setTimeout(done, WEBRTC_ICE_TIMEOUT_MS);
+        function done() {
+          window.clearTimeout(timeout);
+          pc.removeEventListener('icegatheringstatechange', onStateChange);
+          resolve();
+        }
+        function onStateChange() {
+          if (pc.iceGatheringState === 'complete') done();
+        }
+        pc.addEventListener('icegatheringstatechange', onStateChange);
+      });
+    }
+
+    function closePreviewPeer() {
+      state.previewStarting = false;
+      if (state.previewPc) {
+        state.previewPc.ontrack = null;
+        state.previewPc.onconnectionstatechange = null;
+        state.previewPc.close();
+        state.previewPc = null;
+      }
+      if (state.previewStream) {
+        state.previewStream.getTracks().forEach(track => track.stop());
+        state.previewStream = null;
+      }
+    }
+
+    function closePublishPeer() {
+      if (state.publishPc) {
+        state.publishPc.onconnectionstatechange = null;
+        state.publishPc.close();
+        state.publishPc = null;
+      }
     }
 
     function snapshotUrl(sourceId) {
@@ -862,6 +992,14 @@
 
     function isBrowserSource(source) {
       return Boolean(source && (source.sourceType === 'browser' || source.id === 'browser-camera'));
+    }
+
+    function previewModeForSource(source) {
+      if (!source) return '';
+      if (isBrowserSource(source) && state.browserStreaming) return 'local-browser';
+      if (source.sourceType === 'image') return 'image';
+      if (source.sourceType === 'video') return 'mjpeg';
+      return 'webrtc';
     }
 
     function updateBrowserButtons() {
@@ -935,8 +1073,6 @@
         }, SWITCH_TIMEOUT_MS);
         if (sequence !== state.activationSeq) return;
         state.activeSourceId = data.activeSourceId;
-        state.streamVersion = Date.now();
-        stopPreviewStream();
         clearSwitchState(sequence);
         setMessage(`已切换到：${data.activeSource?.name || sourceId}`, 'success');
         render();
@@ -969,18 +1105,59 @@
       els.activeSourceId.textContent = state.activeSourceId || '--';
       els.activeDetail.textContent = active ? `${active.name} · ${active.sourceType}` : '尚未选择摄像头源';
       els.previewChip.textContent = active ? active.name : '未连接';
+      const previewMode = previewModeForSource(active);
+      const sourceChanged = active ? state.previewSourceId !== active.id : false;
+      const modeChanged = state.previewMode !== previewMode;
+      const versionChanged = state.previewVersion !== state.streamVersion;
+      const previewChanged = sourceChanged || modeChanged || versionChanged;
+      els.browserVideo.classList.toggle('visible', previewMode === 'local-browser');
 
       if (active) {
-        els.preview.hidden = false;
         els.previewEmpty.hidden = true;
-        if (state.previewSourceId !== active.id || state.previewVersion !== state.streamVersion) {
+        if (previewChanged) {
           state.previewSourceId = active.id;
+          state.previewMode = previewMode;
           state.previewVersion = state.streamVersion;
-          els.preview.src = streamUrl(active.id);
+        }
+
+        if (previewMode === 'local-browser') {
+          if (previewChanged) {
+            closePreviewPeer();
+            stopFallbackPreview();
+          }
+          els.preview.hidden = true;
+          els.preview.srcObject = null;
+        } else if (previewMode === 'image') {
+          if (previewChanged || els.previewFallback.hidden) {
+            startImagePreview(active);
+          }
+        } else if (previewMode === 'mjpeg') {
+          if (previewChanged || els.previewFallback.hidden) {
+            startMjpegPreview(active);
+          }
+        } else if (previewMode === 'webrtc') {
+          if (previewChanged) {
+            stopFallbackPreview();
+            closePreviewPeer();
+            els.preview.hidden = true;
+            els.preview.srcObject = null;
+          }
+          if (!state.previewPc && !state.previewStarting) {
+            state.previewStarting = true;
+            startPreviewStream(active.id)
+              .catch(error => {
+                setMessage(`WebRTC 预览启动失败，已切换到兼容预览：${error.message}`, '');
+                startMjpegPreview(active);
+              })
+              .finally(() => {
+                state.previewStarting = false;
+              });
+          }
         }
       } else {
         els.preview.hidden = true;
         els.previewEmpty.hidden = false;
+        els.browserVideo.classList.remove('visible');
         stopPreviewStream();
       }
 
@@ -998,7 +1175,7 @@
           : `<button class="btn danger" data-delete="${escapeAttr(source.id)}">删除</button>`;
         const isSwitching = source.id === state.switchingSourceId;
         const actionButton = isBrowser
-          ? `<button class="btn primary" data-start-browser="${escapeAttr(source.id)}">${state.browserStreaming ? '重新启动' : '启动'}</button>`
+          ? `<button class="btn primary" data-browser-source="${escapeAttr(source.id)}"${isActive && state.browserStreaming ? ' disabled' : ''}>${state.browserStreaming ? (isActive ? '已启用' : '启用') : '启动'}</button>`
           : `<button class="btn primary" data-activate="${escapeAttr(source.id)}">${isSwitching ? '切换中' : (isActive ? '重新启动' : '启用')}</button>`;
         return `
           <div class="source-row ${isActive ? 'active' : ''}">
@@ -1025,13 +1202,21 @@
       els.sourceList.querySelectorAll('[data-activate]').forEach(button => {
         button.addEventListener('click', () => activateSource(button.dataset.activate));
       });
-      els.sourceList.querySelectorAll('[data-start-browser]').forEach(button => {
-        button.addEventListener('click', () => startBrowserCamera());
+      els.sourceList.querySelectorAll('[data-browser-source]').forEach(button => {
+        button.addEventListener('click', () => activateBrowserSource(button.dataset.browserSource));
       });
       els.sourceList.querySelectorAll('[data-delete]').forEach(button => {
         button.addEventListener('click', () => deleteSource(button.dataset.delete));
       });
       updateBrowserButtons();
+    }
+
+    async function activateBrowserSource(sourceId) {
+      if (state.browserStreaming) {
+        await activateSource(sourceId);
+        return;
+      }
+      await startBrowserCamera();
     }
 
     async function startBrowserCamera() {
@@ -1054,23 +1239,30 @@
             facingMode: 'user',
             width: { ideal: BROWSER_UPLOAD_WIDTH },
             height: { ideal: BROWSER_UPLOAD_HEIGHT },
+            frameRate: { ideal: 15, max: 30 },
           },
         });
         state.browserStream = stream;
         state.browserStreaming = true;
         els.browserVideo.srcObject = stream;
+        updateBrowserButtons();
+        render();
         await els.browserVideo.play();
+        setMessage('摄像头已授权，正在等待首帧...', '');
+        await waitForBrowserVideoFrame(BROWSER_FIRST_FRAME_TIMEOUT_MS);
 
         await api('/api/v1/cameras/source', {
           method: 'POST',
           body: JSON.stringify({ sourceId: source.id }),
         });
-        await uploadBrowserFrame(true);
+        setMessage('正在建立 WebRTC 视频通道...', '');
+        const uploadStartedAt = Date.now();
+        await publishBrowserStream(source.id, stream);
+        await waitForBrowserFrameCommit(source.id, uploadStartedAt);
         state.streamVersion = Date.now();
-        setMessage('浏览器摄像头已启动，画面正在推送给摄像头微服务', 'success');
+        setMessage('浏览器摄像头已启动，WebRTC 视频正在推送给摄像头微服务', 'success');
         updateBrowserButtons();
         await loadSources();
-        scheduleBrowserUpload();
       } catch (error) {
         stopBrowserCamera(false);
         setMessage(`摄像头启动失败：${error.message}`, 'error');
@@ -1078,83 +1270,88 @@
     }
 
     function stopBrowserCamera(showMessage = true) {
-      if (state.uploadTimer) {
-        window.clearTimeout(state.uploadTimer);
-        state.uploadTimer = null;
-      }
+      closePublishPeer();
       if (state.browserStream) {
         state.browserStream.getTracks().forEach(track => track.stop());
         state.browserStream = null;
       }
       state.browserStreaming = false;
-      state.uploadBusy = false;
       els.browserVideo.srcObject = null;
       updateBrowserButtons();
+      render();
       if (showMessage) {
-        setMessage('浏览器摄像头已停止，微服务会保留最后一帧直到切换源', 'success');
+        setMessage('浏览器摄像头 WebRTC 推流已停止，微服务会保留最后一帧直到切换源', 'success');
       }
     }
 
-    function scheduleBrowserUpload() {
-      if (!state.browserStreaming || state.uploadTimer) return;
-      state.uploadTimer = window.setTimeout(() => {
-        state.uploadTimer = null;
-        uploadBrowserFrame(false);
-      }, BROWSER_UPLOAD_INTERVAL_MS);
-    }
-
-    async function uploadBrowserFrame(force) {
-      if (state.uploadBusy || !state.browserStreaming) return;
+    function waitForBrowserVideoFrame(timeoutMs) {
       const video = els.browserVideo;
-      if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
-        if (!force) {
-          scheduleBrowserUpload();
-        }
-        return;
-      }
+      const startedAt = Date.now();
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        let rafId = 0;
+        let timeoutId = 0;
 
-      state.uploadBusy = true;
-      try {
-        const canvas = els.browserCanvas;
-        const width = BROWSER_UPLOAD_WIDTH;
-        const height = BROWSER_UPLOAD_HEIGHT;
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#000';
-        ctx.fillRect(0, 0, width, height);
-        const scale = Math.min(width / video.videoWidth, height / video.videoHeight);
-        const drawWidth = Math.round(video.videoWidth * scale);
-        const drawHeight = Math.round(video.videoHeight * scale);
-        const x = Math.round((width - drawWidth) / 2);
-        const y = Math.round((height - drawHeight) / 2);
-        ctx.drawImage(video, x, y, drawWidth, drawHeight);
+        const cleanup = () => {
+          window.clearTimeout(timeoutId);
+          window.cancelAnimationFrame(rafId);
+          video.removeEventListener('loadedmetadata', check);
+          video.removeEventListener('loadeddata', check);
+          video.removeEventListener('canplay', check);
+        };
 
-        const quality = force ? BROWSER_INITIAL_QUALITY : BROWSER_UPLOAD_QUALITY;
-        const blob = await canvasToBlob(canvas, quality);
-        await postFrame(browserSource()?.id || 'browser-camera', blob);
-      } catch (error) {
-        if (force) {
-          throw error;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve();
+        };
+
+        const fail = () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(new Error('浏览器摄像头没有输出有效画面，请检查系统摄像头权限或是否被其他应用占用'));
+        };
+
+        const check = () => {
+          if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
+            finish();
+            return;
+          }
+          if (Date.now() - startedAt >= timeoutMs) {
+            fail();
+            return;
+          }
+          rafId = window.requestAnimationFrame(check);
+        };
+
+        if ('requestVideoFrameCallback' in video) {
+          video.requestVideoFrameCallback(() => check());
         }
-      } finally {
-        state.uploadBusy = false;
-        if (!force) {
-          scheduleBrowserUpload();
-        }
-      }
+        video.addEventListener('loadedmetadata', check);
+        video.addEventListener('loadeddata', check);
+        video.addEventListener('canplay', check);
+        timeoutId = window.setTimeout(fail, timeoutMs);
+        check();
+      });
     }
 
-    function canvasToBlob(canvas, quality) {
-      return new Promise((resolve, reject) => {
-        canvas.toBlob(blob => {
-          if (blob) {
-            resolve(blob);
-          } else {
-            reject(new Error('摄像头帧编码失败'));
-          }
-        }, 'image/jpeg', quality);
-      });
+    async function waitForBrowserFrameCommit(sourceId, startedAt) {
+      const timeoutMs = 2500;
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const data = await api(`/api/v1/cameras/browser-frame-status?t=${Date.now()}`, {}, 1500);
+        if (data.hasFrame && (data.timestampMs || 0) >= startedAt - 1000) {
+          return;
+        }
+        await delay(120);
+      }
+      throw new Error('首帧已上传但微服务未读到新画面，请重新启动摄像头');
+    }
+
+    function delay(ms) {
+      return new Promise(resolve => window.setTimeout(resolve, ms));
     }
 
     function refreshPreview() {
@@ -1243,7 +1440,10 @@
 
     els.sourceType.addEventListener('change', updateFormVisibility);
     els.form.addEventListener('submit', submitSource);
-    window.addEventListener('beforeunload', () => stopBrowserCamera(false));
+    window.addEventListener('beforeunload', () => {
+      closePreviewPeer();
+      stopBrowserCamera(false);
+    });
 
     updateFormVisibility();
     updateBrowserButtons();

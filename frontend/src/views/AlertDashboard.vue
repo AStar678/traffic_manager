@@ -11,7 +11,19 @@
     <div class="content-grid">
       <!-- 告警列表 -->
       <div class="card alert-list-card">
-        <h3 class="card-title">实时告警时间线</h3>
+        <div class="section-head">
+          <h3 class="card-title">实时告警时间线</h3>
+          <div class="section-actions">
+            <button class="tool-button" type="button" @click="openLogTable">
+              <el-icon><Document /></el-icon>
+              <span>系统日志</span>
+            </button>
+            <button class="tool-button primary" type="button" :disabled="agentRunning" @click="runAgentOnce">
+              <el-icon :class="{ spinning: agentRunning }"><Refresh /></el-icon>
+              <span>立即检测</span>
+            </button>
+          </div>
+        </div>
         <div class="alert-items">
           <div
             v-for="alert in alerts"
@@ -29,6 +41,9 @@
               <p>{{ alert.summary }}</p>
               <small>{{ alert.occurredAt }} · {{ alert.module }}</small>
             </div>
+          </div>
+          <div v-if="!alerts.length" class="empty-state">
+            暂无告警事件
           </div>
         </div>
       </div>
@@ -57,6 +72,85 @@
       </div>
     </div>
 
+    <!-- 系统日志表 -->
+    <el-dialog
+      v-model="logDialogVisible"
+      title="系统监控日志"
+      width="min(1120px, calc(100vw - 20px))"
+      class="system-log-dialog"
+      append-to-body
+    >
+      <div class="log-toolbar">
+        <el-select v-model="logFilters.module" placeholder="全部模块" clearable @change="fetchSystemLogs">
+          <el-option
+            v-for="option in moduleOptions"
+            :key="option.value"
+            :label="option.label"
+            :value="option.value"
+          />
+        </el-select>
+        <el-select v-model="logFilters.event" placeholder="全部事件" clearable @change="fetchSystemLogs">
+          <el-option
+            v-for="option in eventOptions"
+            :key="option.value"
+            :label="option.label"
+            :value="option.value"
+          />
+        </el-select>
+        <el-select v-model="logFilters.level" placeholder="全部级别" clearable @change="fetchSystemLogs">
+          <el-option label="INFO" value="INFO" />
+          <el-option label="WARN" value="WARN" />
+          <el-option label="ERROR" value="ERROR" />
+        </el-select>
+        <el-select v-model="logFilters.limit" placeholder="条数" @change="fetchSystemLogs">
+          <el-option label="最近 50 条" :value="50" />
+          <el-option label="最近 100 条" :value="100" />
+          <el-option label="最近 200 条" :value="200" />
+          <el-option label="最近 500 条" :value="500" />
+        </el-select>
+        <button class="tool-button primary refresh-log-button" type="button" :disabled="logsLoading" @click="fetchSystemLogs">
+          <el-icon :class="{ spinning: logsLoading }"><Refresh /></el-icon>
+          <span>刷新</span>
+        </button>
+      </div>
+
+      <el-table
+        :data="systemLogs"
+        v-loading="logsLoading"
+        class="system-log-table"
+        height="520"
+        empty-text="暂无系统日志"
+      >
+        <el-table-column type="expand" width="44">
+          <template #default="{ row }">
+            <div class="log-detail-block">
+              <strong>日志详情</strong>
+              <pre>{{ formatLogDetail(row.detail) }}</pre>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="createdAt" label="时间" min-width="170" />
+        <el-table-column label="级别" width="96">
+          <template #default="{ row }">
+            <span class="level-pill" :class="levelClass(row.level)">{{ row.level || 'INFO' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="模块" min-width="140">
+          <template #default="{ row }">{{ moduleLabel(row.module) }}</template>
+        </el-table-column>
+        <el-table-column label="事件" min-width="150">
+          <template #default="{ row }">{{ eventLabel(row.event) }}</template>
+        </el-table-column>
+        <el-table-column prop="traceId" label="Trace ID" min-width="190" show-overflow-tooltip />
+        <el-table-column prop="userId" label="用户" width="86">
+          <template #default="{ row }">{{ row.userId || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="详情摘要" min-width="260" show-overflow-tooltip>
+          <template #default="{ row }">{{ detailSnippet(row.detail) }}</template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
+
     <!-- 选中告警详情弹窗 -->
     <div v-if="selectedAlert" class="alert-detail-overlay" @click.self="selectedAlert = null">
       <div class="card alert-detail">
@@ -83,9 +177,11 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import * as echarts from 'echarts'
+import { ElMessage } from 'element-plus'
 import { useAlertStore } from '@/stores/alert'
+import { getSystemLogs, runAlertAgent } from '@/api/alerts'
 
 const alertStore = useAlertStore()
 alertStore.fetchAlerts()
@@ -93,6 +189,16 @@ alertStore.fetchAlerts()
 const alerts = computed(() => alertStore.alerts)
 const stats = computed(() => alertStore.stats)
 const selectedAlert = ref(null)
+const agentRunning = ref(false)
+const logDialogVisible = ref(false)
+const logsLoading = ref(false)
+const systemLogs = ref([])
+const logFilters = reactive({
+  module: '',
+  event: '',
+  level: '',
+  limit: 100
+})
 
 const statCards = computed(() => [
   { label: '今日告警', value: stats.value.totalToday || 0, css: '' },
@@ -103,14 +209,143 @@ const statCards = computed(() => [
 
 const agentSteps = ['写入JSON日志', 'Agent监听异常', 'LLM生成摘要', '存储告警事件', 'WS/邮件推送']
 
+const moduleOptions = [
+  { label: '车牌识别', value: 'license_plate' },
+  { label: '车主手势', value: 'owner_gesture' },
+  { label: '交警手势', value: 'police_gesture' },
+  { label: '认证访问', value: 'auth' },
+  { label: 'LLM 摘要', value: 'llm' },
+  { label: '数据库', value: 'database' },
+  { label: '用户操作', value: 'user_operation' },
+  { label: '算法回调', value: 'algorithm_callback' },
+  { label: '系统资源', value: 'system' }
+]
+
+const eventOptions = [
+  { label: '成功', value: 'success' },
+  { label: '失败', value: 'failure' },
+  { label: '超时', value: 'timeout' },
+  { label: '未授权', value: 'unauthorized' },
+  { label: '连接异常', value: 'connection_error' },
+  { label: '登录成功', value: 'login_success' },
+  { label: 'Token 使用', value: 'token_usage' },
+  { label: '任务完成', value: 'job_completed' },
+  { label: '任务失败', value: 'job_failed' },
+  { label: '未知事件', value: 'unknown_event' }
+]
+
 function severityLabel(v) {
   const map = { CRITICAL: '严重', WARNING: '警告', INFO: '提示' }
   return map[v] || v
 }
 
+function moduleLabel(value) {
+  return moduleOptions.find(option => option.value === value)?.label || value || '-'
+}
+
+function eventLabel(value) {
+  return eventOptions.find(option => option.value === value)?.label || value || '-'
+}
+
+function levelClass(level) {
+  return String(level || 'info').toLowerCase()
+}
+
+function normalizeLog(raw) {
+  return {
+    ...raw,
+    createdAt: raw.createdAt || raw.timestamp || '-',
+    traceId: raw.traceId || '-'
+  }
+}
+
+function detailSnippet(detail) {
+  const formatted = formatLogDetail(detail).replace(/\s+/g, ' ').trim()
+  if (!formatted || formatted === '暂无详情') {
+    return '-'
+  }
+  return formatted.length > 120 ? `${formatted.slice(0, 120)}...` : formatted
+}
+
+function formatLogDetail(detail) {
+  if (!detail) {
+    return '暂无详情'
+  }
+  if (typeof detail !== 'string') {
+    return JSON.stringify(detail, null, 2)
+  }
+  try {
+    return JSON.stringify(JSON.parse(detail), null, 2)
+  } catch (error) {
+    return detail
+  }
+}
+
+function logQueryParams() {
+  const params = { limit: logFilters.limit }
+  if (logFilters.module) params.module = logFilters.module
+  if (logFilters.event) params.event = logFilters.event
+  if (logFilters.level) params.level = logFilters.level
+  return params
+}
+
+async function fetchSystemLogs() {
+  logsLoading.value = true
+  try {
+    const response = await getSystemLogs(logQueryParams())
+    systemLogs.value = (response.data || []).map(normalizeLog)
+  } catch (error) {
+    systemLogs.value = []
+  } finally {
+    logsLoading.value = false
+  }
+}
+
+function openLogTable() {
+  logDialogVisible.value = true
+  fetchSystemLogs()
+}
+
+async function runAgentOnce() {
+  agentRunning.value = true
+  try {
+    const response = await runAlertAgent()
+    const events = response.data || []
+    ElMessage.success(`检测完成：发现 ${events.length} 个异常事件`)
+    await alertStore.fetchAlerts()
+    if (logDialogVisible.value) {
+      await fetchSystemLogs()
+    }
+  } finally {
+    agentRunning.value = false
+  }
+}
+
 const trendRef = ref(null)
 const pieRef = ref(null)
 let trendChart, pieChart
+
+function renderCharts() {
+  trendChart?.setOption({
+    series: [{
+      type: 'line',
+      smooth: true,
+      data: stats.value.trend || [],
+      areaStyle: { color: 'rgba(0,180,216,0.08)' },
+      lineStyle: { color: '#00b4d8', width: 3 },
+      itemStyle: { color: '#00b4d8' }
+    }]
+  })
+  pieChart?.setOption({
+    series: [{
+      type: 'pie',
+      radius: ['50%', '72%'],
+      data: stats.value.severity || [],
+      color: ['#448aff', '#ffab00', '#ff3d00'],
+      label: { color: '#92a0b8', formatter: '{b}\n{c}' }
+    }]
+  })
+}
 
 onMounted(() => {
   if (trendRef.value) {
@@ -118,30 +353,19 @@ onMounted(() => {
     trendChart.setOption({
       grid: { left: 28, right: 10, top: 12, bottom: 20 },
       xAxis: { type: 'category', data: ['7/2','7/3','7/4','7/5','7/6','7/7','7/8'], axisLabel: { color: '#92a0b8' } },
-      yAxis: { type: 'value', splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } }, axisLabel: { color: '#92a0b8' } },
-      series: [{
-        type: 'line', smooth: true, data: stats.value.trend || [],
-        areaStyle: { color: 'rgba(0,180,216,0.08)' },
-        lineStyle: { color: '#00b4d8', width: 3 },
-        itemStyle: { color: '#00b4d8' }
-      }]
+      yAxis: { type: 'value', splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } }, axisLabel: { color: '#92a0b8' } }
     })
   }
 
   if (pieRef.value) {
     pieChart = echarts.init(pieRef.value)
-    pieChart.setOption({
-      series: [{
-        type: 'pie', radius: ['50%', '72%'],
-        data: stats.value.severity || [],
-        color: ['#448aff', '#ffab00', '#ff3d00'],
-        label: { color: '#92a0b8', formatter: '{b}\n{c}' }
-      }]
-    })
   }
 
+  renderCharts()
   window.addEventListener('resize', () => { trendChart?.resize(); pieChart?.resize() })
 })
+
+watch(stats, renderCharts, { deep: true })
 
 onBeforeUnmount(() => {
   trendChart?.dispose()
@@ -180,6 +404,70 @@ onBeforeUnmount(() => {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 14px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.section-head .card-title {
+  margin-bottom: 0;
+}
+
+.section-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.tool-button {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--border-card);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.04);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: color var(--duration-fast), border-color var(--duration-fast), background var(--duration-fast), transform var(--duration-fast);
+}
+
+.tool-button:hover {
+  color: var(--text-primary);
+  border-color: var(--border-active);
+  background: rgba(0,180,216,0.08);
+  transform: translateY(-1px);
+}
+
+.tool-button.primary {
+  border-color: rgba(0,180,216,0.30);
+  background: var(--primary-soft);
+  color: var(--primary-color);
+}
+
+.tool-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
+.spinning {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* 告警列表 */
@@ -237,6 +525,16 @@ onBeforeUnmount(() => {
   margin-top: 6px;
   font-size: 11px;
   color: var(--text-muted);
+}
+
+.empty-state {
+  min-height: 120px;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  border: 1px dashed var(--border-card);
+  border-radius: var(--radius-sm);
 }
 
 /* 右侧面板 */
@@ -318,4 +616,152 @@ onBeforeUnmount(() => {
 .suggested-actions strong { font-size: 12px; color: var(--text-secondary); }
 .suggested-actions ul { margin-top: 8px; padding-left: 18px; }
 .suggested-actions li { font-size: 13px; color: var(--text-primary); line-height: 1.8; }
+
+.log-toolbar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr)) auto;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.refresh-log-button {
+  min-height: 40px;
+  padding: 0 14px;
+}
+
+.system-log-table {
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.log-detail-block {
+  padding: 14px 16px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.log-detail-block strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.log-detail-block pre {
+  max-height: 260px;
+  overflow: auto;
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+.level-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 58px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.level-pill.info {
+  background: rgba(68,138,255,0.14);
+  color: var(--info-color);
+}
+
+.level-pill.warn {
+  background: rgba(255,171,0,0.14);
+  color: var(--warning-color);
+}
+
+.level-pill.error {
+  background: rgba(255,61,0,0.14);
+  color: var(--danger-color);
+}
+
+:deep(.system-log-dialog) {
+  max-width: calc(100vw - 32px);
+}
+
+:deep(.system-log-dialog .el-dialog__body) {
+  padding-top: 8px;
+}
+
+:deep(.system-log-table .el-table__inner-wrapper::before) {
+  display: none;
+}
+
+@media (max-width: 1180px) {
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .right-panel {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .right-panel .card:last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 760px) {
+  .stat-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .stat-item {
+    padding: 14px;
+  }
+
+  .stat-item strong {
+    font-size: 28px;
+  }
+
+  .section-head,
+  .alert-head,
+  .detail-meta {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .section-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .tool-button {
+    flex: 1;
+  }
+
+  .right-panel,
+  .agent-steps {
+    grid-template-columns: 1fr;
+  }
+
+  .chart,
+  .pie-chart {
+    height: 180px;
+  }
+
+  .log-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  :deep(.system-log-dialog) {
+    width: calc(100vw - 20px) !important;
+    max-width: calc(100vw - 20px);
+    margin-top: 5vh;
+  }
+}
 </style>

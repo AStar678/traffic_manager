@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
 import java.util.List;
+import java.util.Map;
 
 @Data
 @Schema(description = "图片推理响应")
@@ -32,6 +33,9 @@ public class InferenceResponse {
         private List<Detection> detections;
         private Integer detectionCount;
         private String annotatedImageUrl;
+        private Map<String, Object> vehicleControl;
+        private Map<String, Object> modelStatus;
+        private Map<String, Object> sequence;
     }
 
     @Data
@@ -54,7 +58,11 @@ public class InferenceResponse {
         private Double ocrConfidence;
         private String gestureCode;
         private String gestureName;
+        private String action;
         private List<Keypoint> keypoints;
+        private List<TopPrediction> top3;
+        private Integer frameIndex;
+        private String sampleId;
     }
 
     @Data
@@ -79,5 +87,12 @@ public class InferenceResponse {
         private Integer x;
         private Integer y;
         private Double score;
+    }
+
+    @Data
+    public static class TopPrediction {
+        private String gestureCode;
+        private String gestureName;
+        private Double confidence;
     }
 }

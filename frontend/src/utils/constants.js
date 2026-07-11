@@ -18,15 +18,22 @@ export const POLICE_GESTURE_MAP = {
 }
 
 // 车主手势编码映射
-export const OWNER_GESTURE_MAP = {
-  '001': { name: '手掌张开', action: '启动/唤醒' },
-  '002': { name: '握拳', action: '确认/执行' },
-  '003': { name: '单指画圈', action: '调节音量' },
-  '004': { name: '左右滑动', action: '切换功能' },
-  '005': { name: '拇指向上', action: '接听电话' },
-  '006': { name: '拇指向下', action: '挂断电话' },
-  '007': { name: '挥手', action: '返回主页' }
-}
+export const OWNER_GESTURE_MAP = {}
+
+export const OWNER_GESTURE_ACTIONS = [
+  { actionType: 'NONE', actionLabel: '不触发控制' },
+  { actionType: 'WAKE_SYSTEM', actionLabel: '启动/唤醒系统' },
+  { actionType: 'CONFIRM', actionLabel: '确认当前操作' },
+  { actionType: 'VOLUME_UP', actionLabel: '音量增加' },
+  { actionType: 'VOLUME_DOWN', actionLabel: '音量降低' },
+  { actionType: 'NEXT_MEDIA', actionLabel: '切换下一首' },
+  { actionType: 'CLIMATE_UP', actionLabel: '空调升温' },
+  { actionType: 'CLIMATE_DOWN', actionLabel: '空调降温' },
+  { actionType: 'ANSWER_CALL', actionLabel: '接听电话' },
+  { actionType: 'HANG_UP', actionLabel: '挂断电话' },
+  { actionType: 'OPEN_NAVIGATION', actionLabel: '打开导航' },
+  { actionType: 'RETURN_HOME', actionLabel: '返回驾驶主页' }
+]
 
 // 告警级别
 export const ALERT_LEVELS = {

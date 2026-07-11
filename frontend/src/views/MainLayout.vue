@@ -98,11 +98,13 @@ function handleLogout() {
 }
 
 onMounted(() => {
+  alertStore.connectWebSocket()
   timeTimer = setInterval(() => { timeNow.value = new Date() }, 1000)
 })
 
 onBeforeUnmount(() => {
   clearInterval(timeTimer)
+  alertStore.disconnectWebSocket()
 })
 </script>
 

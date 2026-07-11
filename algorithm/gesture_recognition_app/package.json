@@ -1,0 +1,19 @@
+{
+  "name": "owner-gesture-control",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "server": "vite --host 127.0.0.1 --port 5173",
+    "dev": "vite --host 127.0.0.1 --port 5173",
+    "local": "npm run build && node server.mjs",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 4173"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.22"
+  },
+  "devDependencies": {
+    "vite": "^5.4.11"
+  }
+}

@@ -3,10 +3,19 @@
     <!-- 主画面 -->
     <div class="viewport-area">
       <div class="viewport">
-        <img v-if="viewportImageUrl" :src="viewportImageUrl" alt="camera" />
-        <div v-else class="viewport-placeholder">
+        <video
+          v-show="cameraVideoReady"
+          ref="cameraVideoRef"
+          autoplay
+          muted
+          playsinline
+          @loadeddata="markCameraVideoReady"
+          @playing="markCameraVideoReady"
+        ></video>
+        <img v-if="!cameraVideoReady && cameraDisplayUrl" :src="cameraDisplayUrl" alt="camera fallback" />
+        <div v-if="!cameraVideoReady && !cameraDisplayUrl" class="viewport-placeholder">
           <el-icon :size="48"><Aim /></el-icon>
-          <span>路口摄像头待机</span>
+          <span>{{ cameraError || '路口摄像头待机' }}</span>
         </div>
 
         <div class="viewport-top">
@@ -52,8 +61,8 @@
         </div>
         <div class="command-meta">
           <span>置信度 {{ Math.round(result.detections[0].confidence * 100) }}%</span>
-          <span>端到端 ≤ 2s</span>
-          <span>帧缓存 30</span>
+          <span>识别间隔 {{ recognitionIntervalMs / 1000 }}s</span>
+          <span>帧号同步</span>
         </div>
       </div>
     </div>
@@ -98,7 +107,7 @@
 
       <!-- 当前识别手势 -->
       <div class="card gesture-hero" :class="{ detected: result.detections.length }">
-        <div class="gesture-code">{{ gestureCode }}</div>
+        <div class="gesture-state">{{ result.detections.length ? '已识别交通指令' : '等待识别' }}</div>
         <strong>{{ currentGesture }}</strong>
         <p>{{ currentActionText }}</p>
       </div>
@@ -147,7 +156,7 @@ const result = ref(emptyResult())
 const confidenceRef = ref(null)
 const loading = ref(false)
 const recognizing = ref(false)
-const recognitionIntervalMs = 2000
+const recognitionIntervalMs = 500
 let recognitionTimer = null
 let chart
 
@@ -156,15 +165,20 @@ const {
   selectedCameraSource,
   cameraStatus,
   cameraError,
-  cameraStreamUrl,
+  cameraDisplayUrl,
+  cameraVideoRef,
+  cameraVideoReady,
   loadCameraSources,
+  markCameraVideoReady,
   refreshCameraPreview,
   getCameraSnapshotUrl
 } = useCameraSource(TASK_TYPES.POLICE_GESTURE)
 
-const gestureCode = computed(() => result.value.detections[0]?.gestureCode || '--')
-const currentGesture = computed(() => POLICE_GESTURE_MAP[gestureCode.value] || '等待识别')
+const currentDetection = computed(() => result.value.detections[0] || null)
+const gestureCode = computed(() => currentDetection.value?.gestureCode || '--')
+const currentGesture = computed(() => currentDetection.value?.gestureName || POLICE_GESTURE_MAP[gestureCode.value] || '等待识别')
 const currentAction = computed(() => {
+  if (currentDetection.value?.action) return currentDetection.value.action
   const map = {
     STOP: '停车等待', GO_STRAIGHT: '允许通行', LEFT_TURN: '左转通行',
     LEFT_WAIT: '进入待转区', RIGHT_TURN: '右转通行', LANE_CHANGE: '变更车道',
@@ -174,7 +188,7 @@ const currentAction = computed(() => {
 })
 const currentActionText = computed(() => `输出交通指令：${currentAction.value}`)
 const detectionViewBox = computed(() => {
-  const width = result.value.image?.width || 1200
+  const width = result.value.image?.width || 1280
   const height = result.value.image?.height || 720
   return `0 0 ${width} ${height}`
 })
@@ -190,7 +204,6 @@ const confidenceData = computed(() => {
 })
 
 const pipelineSteps = ['摄像头帧输入', 'MediaPipe Pose', '关键点序列提取', 'ST-GCN/LSTM分类', '交通指令输出']
-const viewportImageUrl = computed(() => cameraStreamUrl.value)
 const cameraLabel = computed(() => {
   return selectedCameraSource.value?.name || '摄像头微服务'
 })
@@ -242,7 +255,7 @@ async function recognizeOnce({ silent = false } = {}) {
 
   loading.value = true
   try {
-    const imageUrl = getCameraSnapshotUrl()
+    const imageUrl = await getCameraSnapshotUrl()
     const response = await inferenceImage(TASK_TYPES.POLICE_GESTURE, imageUrl)
     const data = getInferenceData(response)
     result.value = {
@@ -290,7 +303,7 @@ function emptyResult() {
   return {
     taskType: TASK_TYPES.POLICE_GESTURE,
     latencyMs: 0,
-    image: { width: 1200, height: 720 },
+    image: { width: 1280, height: 720 },
     detections: [],
     detectionCount: 0,
     annotatedImageUrl: ''
@@ -310,28 +323,36 @@ watch(confidenceData, renderChart, { deep: true })
 .gesture-page {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
+  align-items: start;
   gap: 16px;
   height: 100%;
+  overflow-y: auto;
 }
 
 .viewport-area {
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 12px;
+  min-width: 0;
 }
 
 .viewport {
   position: relative;
-  flex: 1;
-  min-height: 380px;
+  flex: none;
+  width: min(100%, 1040px, calc((100vh - 230px) * 16 / 9));
+  aspect-ratio: 16 / 9;
+  min-height: 0;
   border-radius: var(--radius-lg);
   overflow: hidden;
   background: #080c14;
 }
 
+.viewport video,
 .viewport img {
   width: 100%;
   height: 100%;
+  display: block;
   object-fit: contain;
   opacity: 0.88;
   background: #070b12;
@@ -339,7 +360,7 @@ watch(confidenceData, renderChart, { deep: true })
 
 .viewport-placeholder {
   height: 100%;
-  min-height: 380px;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -385,6 +406,7 @@ watch(confidenceData, renderChart, { deep: true })
 }
 
 .command-bar {
+  width: min(100%, 1040px, calc((100vh - 230px) * 16 / 9));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -545,17 +567,24 @@ watch(confidenceData, renderChart, { deep: true })
   box-shadow: 0 0 24px rgba(234,67,53,0.08);
 }
 
-.gesture-code {
-  font-family: "SF Mono", "Consolas", monospace;
-  font-size: 48px;
-  font-weight: 800;
+.gesture-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-card);
+  background: rgba(255,255,255,0.03);
+  font-size: 12px;
+  font-weight: 700;
   color: var(--text-muted);
-  letter-spacing: 2px;
 }
 
-.gesture-hero.detected .gesture-code {
+.gesture-hero.detected .gesture-state {
+  border-color: rgba(234,67,53,0.35);
+  background: rgba(234,67,53,0.10);
   color: #ea4335;
-  text-shadow: 0 0 16px rgba(234,67,53,0.3);
 }
 
 .gesture-hero strong {
@@ -640,8 +669,13 @@ watch(confidenceData, renderChart, { deep: true })
 
   .viewport {
     flex: none;
-    min-height: 220px;
+    width: 100%;
+    min-height: 0;
     aspect-ratio: 16 / 9;
+  }
+
+  .command-bar {
+    width: 100%;
   }
 
   .side-panel {

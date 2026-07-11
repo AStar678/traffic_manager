@@ -32,7 +32,7 @@ from config import (
 )
 
 
-SourceType = Literal["browser", "device", "image", "video"]
+SourceType = Literal["browser", "device", "image", "video", "rtsp"]
 BROWSER_CAMERA_SOURCE_ID = "browser-camera"
 ALL_TASK_TYPES = ["license_plate", "police_gesture", "owner_gesture"]
 MAX_OPEN_READERS = 12
@@ -54,6 +54,7 @@ class CameraSource:
     taskTypes: list[str] = field(default_factory=list)
     path: str | None = None
     deviceIndex: int | None = None
+    rtspUrl: str | None = None
     fps: int = DEFAULT_FPS
     loop: bool = True
     builtIn: bool = False
@@ -82,6 +83,30 @@ def build_default_sources() -> list[CameraSource]:
             builtIn=True,
         )
     ]
+
+    # 沙盘RTSP摄像头
+    _RTSP = [
+        ("live1","桥面","rtsp://10.126.59.120:8554/live/live1"),
+        ("live2","停车场出口","rtsp://10.126.59.120:8554/live/live2"),
+        ("live3","行人检测","rtsp://10.126.59.120:8554/live/live3"),
+        ("live4","消防车识别","rtsp://10.126.59.120:8554/live/live4"),
+        ("live5","桥出口","rtsp://10.126.59.120:8554/live/live5"),
+        ("live6","桥入口","rtsp://10.126.59.120:8554/live/live6"),
+        ("live7","道路2","rtsp://10.126.59.120:8554/live/live7"),
+        ("live8","隧道(事故)","rtsp://10.126.59.120:8554/live/live8"),
+        ("live9","隧道(计数)","rtsp://10.126.59.120:8554/live/live9"),
+        ("live10","道路3","rtsp://10.126.59.120:8554/live/live10"),
+        ("live11","停车场入口","rtsp://10.126.59.120:8554/live/live11"),
+        ("live12","道路1","rtsp://10.126.59.120:8554/live/live12"),
+    ]
+    _PLATE = {"live1","live2","live4","live5","live6","live7","live10","live11","live12"}
+    for cid, name, url in _RTSP:
+        tasks = ["license_plate"] if cid in _PLATE else ALL_TASK_TYPES
+        sources.append(CameraSource(
+            id=f"rtsp-{cid}", name=f"沙盘-{name}",
+            sourceType="rtsp", taskTypes=tasks,
+            rtspUrl=url, fps=25, builtIn=True,
+        ))
 
     sources.extend(_scan_media_sources(
         LICENSE_PLATE_SAMPLE_DIR,
@@ -468,8 +493,11 @@ class FrameReader:
             self._touch_frame(self.last_frame, frame_index=0)
             return
 
-        target = self.source.deviceIndex if self.source.sourceType == "device" else self.source.path
-        self.capture = cv2.VideoCapture(target)
+        if self.source.sourceType == "rtsp":
+            target = self.source.rtspUrl
+        else:
+            target = self.source.deviceIndex if self.source.sourceType == "device" else self.source.path
+        self.capture = cv2.VideoCapture(target, cv2.CAP_FFMPEG if self.source.sourceType == "rtsp" else cv2.CAP_ANY)
         self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, DEFAULT_WIDTH)
         self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, DEFAULT_HEIGHT)
         self.capture.set(cv2.CAP_PROP_FPS, self.source.fps)

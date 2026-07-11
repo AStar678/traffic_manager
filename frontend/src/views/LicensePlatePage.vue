@@ -3,17 +3,8 @@
     <!-- 主区域：摄像头大画面 -->
     <div class="viewport-area">
       <div class="viewport">
-        <video
-          v-show="cameraVideoReady"
-          ref="cameraVideoRef"
-          autoplay
-          muted
-          playsinline
-          @loadeddata="markCameraVideoReady"
-          @playing="markCameraVideoReady"
-        ></video>
-        <img v-if="!cameraVideoReady && cameraDisplayUrl" :src="cameraDisplayUrl" alt="camera fallback" />
-        <div v-if="!cameraVideoReady && !cameraDisplayUrl" class="viewport-placeholder">
+        <img v-if="cameraStreamUrl" :src="cameraStreamUrl" alt="camera" />
+        <div v-else class="viewport-placeholder">
           <el-icon :size="48"><Camera /></el-icon>
           <span>{{ cameraError || '等待摄像头服务' }}</span>
         </div>
@@ -151,11 +142,8 @@ const {
   selectedCameraSource,
   cameraStatus,
   cameraError,
-  cameraDisplayUrl,
-  cameraVideoRef,
-  cameraVideoReady,
+  cameraStreamUrl,
   loadCameraSources,
-  markCameraVideoReady,
   refreshCameraPreview,
   getCameraSnapshotUrl
 } = useCameraSource(TASK_TYPES.LICENSE_PLATE)
@@ -168,7 +156,7 @@ const cameraStatusText = computed(() => {
   return labels[cameraStatus.value] || cameraStatus.value
 })
 const detectionViewBox = computed(() => {
-  const width = result.value.image?.width || 1280
+  const width = result.value.image?.width || 1200
   const height = result.value.image?.height || 720
   return `0 0 ${width} ${height}`
 })
@@ -239,7 +227,7 @@ async function recognizeOnce({ silent = false } = {}) {
 
   loading.value = true
   try {
-    const imageUrl = await getCameraSnapshotUrl()
+    const imageUrl = getCameraSnapshotUrl()
     const response = await inferenceImage(TASK_TYPES.LICENSE_PLATE, imageUrl)
     const data = getInferenceData(response)
     result.value = {
@@ -285,7 +273,7 @@ function emptyResult() {
   return {
     taskType: TASK_TYPES.LICENSE_PLATE,
     latencyMs: 0,
-    image: { width: 1280, height: 720 },
+    image: { width: 1200, height: 720 },
     detections: [],
     detectionCount: 0,
     annotatedImageUrl: ''
@@ -301,34 +289,25 @@ onBeforeUnmount(() => {
 .plate-page {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
-  align-items: start;
   gap: 16px;
   height: 100%;
-  overflow-y: auto;
 }
 
 /* ---- 摄像头大画面 ---- */
-.viewport-area {
-  min-width: 0;
-  display: flex;
-  justify-content: center;
-}
+.viewport-area { min-width: 0; }
 
 .viewport {
   position: relative;
-  width: min(100%, 1120px, calc((100vh - 170px) * 16 / 9));
-  aspect-ratio: 16 / 9;
-  min-height: 0;
+  height: 100%;
+  min-height: 480px;
   border-radius: var(--radius-lg);
   overflow: hidden;
   background: #080c14;
 }
 
-.viewport video,
 .viewport img {
   width: 100%;
   height: 100%;
-  display: block;
   object-fit: contain;
   opacity: 0.9;
   background: #070b12;
@@ -336,7 +315,7 @@ onBeforeUnmount(() => {
 
 .viewport-placeholder {
   height: 100%;
-  min-height: 0;
+  min-height: 480px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -591,39 +570,4 @@ onBeforeUnmount(() => {
 
 .spinner { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-
-@media (max-width: 900px) {
-  .plate-page {
-    grid-template-columns: 1fr;
-    height: auto;
-    min-height: 100%;
-    padding-bottom: 12px;
-  }
-
-  .viewport-area {
-    justify-content: stretch;
-  }
-
-  .viewport {
-    width: 100%;
-  }
-
-  .side-panel {
-    overflow: visible;
-  }
-}
-
-@media (max-width: 480px) {
-  .plate-page {
-    gap: 12px;
-  }
-
-  .control-row {
-    padding: 10px;
-  }
-
-  .control-row strong {
-    max-width: 180px;
-  }
-}
 </style>

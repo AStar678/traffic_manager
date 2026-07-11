@@ -1,7 +1,9 @@
 package com.visiondrive.common.exception;
 
 import com.visiondrive.model.dto.ApiResponse;
+import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
@@ -35,6 +37,32 @@ public class GlobalExceptionHandler {
     public ApiResponse<Void> handleIllegalArgumentException(IllegalArgumentException e) {
         log.error("参数错误: {}", e.getMessage());
         return ApiResponse.error(400, e.getMessage());
+    }
+
+    /**
+     * 处理 @Valid 请求体参数校验异常
+     */
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ApiResponse<Void> handleMethodArgumentNotValidException(MethodArgumentNotValidException e) {
+        String message = e.getBindingResult().getFieldErrors().stream()
+                .findFirst()
+                .map(error -> error.getDefaultMessage() != null ? error.getDefaultMessage() : "参数校验失败")
+                .orElse("参数校验失败");
+        log.error("参数校验失败: {}", message);
+        return ApiResponse.error(400, message);
+    }
+
+    /**
+     * 处理 URL 参数校验异常
+     */
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ApiResponse<Void> handleConstraintViolationException(ConstraintViolationException e) {
+        String message = e.getConstraintViolations().stream()
+                .findFirst()
+                .map(violation -> violation.getMessage() != null ? violation.getMessage() : "参数校验失败")
+                .orElse("参数校验失败");
+        log.error("参数校验失败: {}", message);
+        return ApiResponse.error(400, message);
     }
 
     /**

@@ -56,4 +56,11 @@ public class AuthController {
     public ApiResponse<LoginResponse> loginByCode(@Valid @RequestBody CodeLoginRequest request) {
         return ApiResponse.success(authService.loginByCode(request.getPhone(), request.getCode()));
     }
+
+    @Operation(summary = "重置密码")
+    @PostMapping("/reset-password")
+    public ApiResponse<Void> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
+        authService.resetPassword(request.getPhone(), request.getCode(), request.getNewPassword());
+        return ApiResponse.success();
+    }
 }

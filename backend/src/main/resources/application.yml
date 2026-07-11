@@ -21,6 +21,7 @@ spring:
     hibernate:
       ddl-auto: update
     show-sql: false
+    database-platform: org.hibernate.dialect.H2Dialect
 
   # 文件上传
   servlet:

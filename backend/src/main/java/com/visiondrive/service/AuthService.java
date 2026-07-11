@@ -1,5 +1,6 @@
 package com.visiondrive.service;
 
+import com.visiondrive.common.exception.BusinessException;
 import com.visiondrive.model.dto.LoginRequest;
 import com.visiondrive.model.dto.LoginResponse;
 import com.visiondrive.model.dto.RegisterRequest;
@@ -21,11 +22,14 @@ public class AuthService {
     private final VerificationCodeService verificationCodeService;
 
     public LoginResponse login(LoginRequest request) {
-        User user = userRepository.findByUsername(request.getUsername())
-                .orElseThrow(() -> new RuntimeException("用户不存在"));
+        String account = request.getUsername();
+        // 支持手机号或用户名登录
+        User user = userRepository.findByPhone(account)
+                .orElseGet(() -> userRepository.findByUsername(account)
+                        .orElseThrow(() -> new BusinessException(400, "用户不存在")));
 
         if (!user.getPassword().equals(request.getPassword())) {
-            throw new RuntimeException("密码错误");
+            throw new BusinessException(400, "密码错误");
         }
 
         user.setLastLoginAt(LocalDateTime.now());
@@ -33,9 +37,21 @@ public class AuthService {
         return buildResponse(user);
     }
 
+    /** 手机号 + 验证码 → 重置密码（验证通过后直接修改密码） */
+    public void resetPassword(String phone, String code, String newPassword) {
+        String error = verificationCodeService.verifyCode(phone, code);
+        if (error != null) throw new BusinessException(400, error);
+
+        User user = userRepository.findByPhone(phone)
+                .orElseThrow(() -> new BusinessException(400, "该手机号未注册"));
+        user.setPassword(newPassword);
+        userRepository.save(user);
+        log.info("密码重置成功: phone={}", maskPhone(phone));
+    }
+
     public LoginResponse loginByCode(String phone, String code) {
         String error = verificationCodeService.verifyCode(phone, code);
-        if (error != null) throw new RuntimeException(error);
+        if (error != null) throw new BusinessException(400, error);
 
         User user = userRepository.findByPhone(phone).orElseGet(() -> {
             User u = new User();
@@ -58,11 +74,11 @@ public class AuthService {
         if (phone != null && !phone.isBlank()) {
             // 手机号注册：校验验证码
             if (request.getSmsCode() == null || request.getSmsCode().isBlank())
-                throw new RuntimeException("验证码不能为空");
+                throw new BusinessException(400, "验证码不能为空");
             String err = verificationCodeService.verifyCode(phone, request.getSmsCode());
-            if (err != null) throw new RuntimeException(err);
+            if (err != null) throw new BusinessException(400, err);
             if (userRepository.findByPhone(phone).isPresent())
-                throw new RuntimeException("该手机号已注册");
+                throw new BusinessException(400, "该手机号已注册");
         }
 
         String username = request.getUsername();
@@ -71,7 +87,7 @@ public class AuthService {
         }
 
         if (userRepository.findByUsername(username).isPresent())
-            throw new RuntimeException("用户名已存在");
+            throw new BusinessException(400, "用户名已存在");
 
         User user = new User();
         user.setUsername(username);

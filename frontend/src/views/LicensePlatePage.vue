@@ -2,9 +2,9 @@
   <div class="plate-page">
     <!-- 主区域：摄像头大画面 -->
     <div class="viewport-area">
-      <div class="viewport">
+      <div class="viewport" :class="{ 'showing-synchronized-frame': synchronizedResultFrameUrl }">
         <video
-          v-show="cameraVideoReady"
+          v-show="cameraVideoReady && !synchronizedResultFrameUrl"
           ref="cameraVideoRef"
           autoplay
           muted
@@ -12,8 +12,13 @@
           @loadeddata="markCameraVideoReady"
           @playing="markCameraVideoReady"
         ></video>
-        <img v-if="!cameraVideoReady && cameraDisplayUrl" :src="cameraDisplayUrl" alt="camera fallback" />
-        <div v-if="!cameraVideoReady && !cameraDisplayUrl" class="viewport-placeholder">
+        <img
+          v-if="synchronizedResultFrameUrl"
+          :src="synchronizedResultFrameUrl"
+          alt="与识别结果同步的车牌检测帧"
+        />
+        <img v-else-if="!cameraVideoReady && cameraDisplayUrl" :src="cameraDisplayUrl" alt="camera fallback" />
+        <div v-if="!synchronizedResultFrameUrl && !cameraVideoReady && !cameraDisplayUrl" class="viewport-placeholder">
           <el-icon :size="48"><Camera /></el-icon>
           <span>{{ cameraError || '等待摄像头服务' }}</span>
         </div>
@@ -23,7 +28,7 @@
           class="detection-overlay"
           :viewBox="detectionViewBox"
           preserveAspectRatio="xMidYMid meet"
-          v-if="result.detections.length"
+          v-if="result.detections.length && !synchronizedResultFrameUrl"
         >
           <g v-for="box in result.detections" :key="box.objectId">
             <rect
@@ -57,7 +62,7 @@
 
         <!-- 顶部状态 -->
         <div class="viewport-top">
-          <span class="chip live">● LIVE</span>
+          <span class="chip live">{{ synchronizedResultFrameUrl ? '● 同步帧' : '● LIVE' }}</span>
           <span class="chip">{{ cameraLabel }}</span>
         </div>
 
@@ -144,7 +149,7 @@ import { useCameraSource } from '@/composables/useCameraSource'
 const result = ref(emptyResult())
 const loading = ref(false)
 const recognizing = ref(false)
-const recognitionIntervalMs = 2000
+const recognitionIntervalMs = 300
 let recognitionTimer = null
 const {
   selectedCameraSourceId,
@@ -166,6 +171,10 @@ const cameraLabel = computed(() => {
 const cameraStatusText = computed(() => {
   const labels = { idle: '未连接', loading: '连接中', ready: '已连接', empty: '无可用源', offline: '服务离线' }
   return labels[cameraStatus.value] || cameraStatus.value
+})
+const synchronizedResultFrameUrl = computed(() => {
+  if (!result.value.detections.length) return ''
+  return result.value.annotatedImageUrl || ''
 })
 const detectionViewBox = computed(() => {
   const width = result.value.image?.width || 1280
@@ -243,8 +252,9 @@ async function recognizeOnce({ silent = false } = {}) {
     const response = await inferenceImage(TASK_TYPES.LICENSE_PLATE, imageUrl)
     const data = getInferenceData(response)
     result.value = {
-      ...data,
-      annotatedImageUrl: ''
+      ...emptyResult(),
+      ...(data || {}),
+      detections: data?.detections || []
     }
   } catch (error) {
     console.error(error)
@@ -332,6 +342,10 @@ onBeforeUnmount(() => {
   object-fit: contain;
   opacity: 0.9;
   background: #070b12;
+}
+
+.viewport.showing-synchronized-frame video {
+  display: none !important;
 }
 
 .viewport-placeholder {

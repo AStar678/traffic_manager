@@ -25,6 +25,30 @@ cd traffic_manager/camera_service
 
 默认源包含浏览器摄像头推流、OpenCV 设备备用源，以及自动扫描到的车牌测试图片、交警指令测试视频。也可以通过 `POST /api/v1/cameras/source` 传入本机图片或视频路径动态添加源。实时预览统一走 WebRTC：图片源会作为稳定视频帧持续发送，视频源由摄像头端读取、循环和打时间戳后发送，主系统不需要按功能页重新拉取图片帧。截图接口仍会保持原始像素尺寸，非 16:9 时只补边不缩小；JPEG 图片源的 `/snapshot.jpg` 会直接返回原始文件字节，识别链路推荐使用 `/snapshot.png` 获取无损截图。自定义源和当前活动源会保存到 `camera_service/data/camera_state.json`，服务重启后会恢复。
 
+## 沙盘 RTSP 摄像头
+
+服务内置 PDF 中给出的 12 路沙盘摄像头，启动后会以 `sandbox-live1` 至 `sandbox-live12` 出现在源列表中：
+
+- `live1` 桥面、`live2` 停车场出口、`live3` 行人检测、`live4` 消防车识别
+- `live5` 桥出口、`live6` 桥入口、`live7` 道路2、`live8` 隧道事故识别
+- `live9` 隧道车辆数量、`live10` 道路3、`live11` 停车场入口、`live12` 道路1
+
+默认地址前缀为 `rtsp://10.126.59.120:8554/live`，可通过环境变量 `SANDBOX_RTSP_BASE_URL` 覆盖。OpenCV 使用 FFmpeg 后端、TCP 传输和单帧缓冲读取，断流后每 2 秒尝试重连。沙盘源进入摄像头服务后，与本机源一样提供 WebRTC、MJPEG 和 PNG/JPEG 快照，因此现有识别页面可以直接使用。
+
+也可以在管理台选择“RTSP 网络流”添加其他流，或调用：
+
+```http
+POST /api/v1/cameras/source
+Content-Type: application/json
+
+{
+  "sourceType": "rtsp",
+  "path": "rtsp://10.126.59.120:8554/live/live1",
+  "name": "沙盘桥面",
+  "fps": 15
+}
+```
+
 ## 独立管理台
 
 启动服务后打开：

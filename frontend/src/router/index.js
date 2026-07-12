@@ -56,8 +56,9 @@ const router = createRouter({
   routes
 })
 
-router.beforeEach(to => {
+router.beforeEach(async to => {
   const authStore = useAuthStore()
+  await authStore.validateSession()
   if (to.path === '/login') {
     return authStore.isAuthenticated ? '/dashboard' : true
   }

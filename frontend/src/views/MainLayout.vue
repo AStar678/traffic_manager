@@ -58,11 +58,13 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useAlertStore } from '@/stores/alert'
+import { useVehicleStore } from '@/stores/vehicle'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const alertStore = useAlertStore()
+const vehicleStore = useVehicleStore()
 
 alertStore.fetchAlerts()
 
@@ -98,6 +100,7 @@ function handleLogout() {
 }
 
 onMounted(() => {
+  vehicleStore.loadCurrent()
   alertStore.connectWebSocket()
   timeTimer = setInterval(() => { timeNow.value = new Date() }, 1000)
 })

@@ -55,7 +55,7 @@ app.add_middleware(
 
 class SetSourceRequest(BaseModel):
     sourceId: str | None = None
-    sourceType: Literal["browser", "device", "image", "video"] | None = None
+    sourceType: Literal["browser", "device", "image", "video", "rtsp"] | None = None
     path: str | None = None
     deviceIndex: int | None = None
     name: str | None = None

@@ -676,7 +676,7 @@
           <div class="panel-head">
             <div class="panel-title">
               <h2>添加自定义源</h2>
-              <p>支持本机设备编号、图片路径或视频路径</p>
+              <p>支持沙盘/自定义 RTSP、本机设备、图片或视频</p>
             </div>
           </div>
           <form id="sourceForm" class="form">
@@ -685,6 +685,7 @@
               <select id="sourceType" class="select">
                 <option value="image">图片文件</option>
                 <option value="video">视频文件</option>
+                <option value="rtsp">RTSP 网络流（沙盘/自定义）</option>
                 <option value="device">OpenCV 设备编号（备用）</option>
               </select>
             </div>
@@ -693,7 +694,7 @@
               <input id="sourceName" class="input" placeholder="例如：车内手势测试源">
             </div>
             <div id="pathField" class="field">
-              <label for="sourcePath">本机文件路径</label>
+              <label id="pathLabel" for="sourcePath">本机文件路径</label>
               <input id="sourcePath" class="input" placeholder="/Users/.../sample.mp4">
             </div>
             <div id="deviceField" class="field" hidden>
@@ -772,6 +773,7 @@
       sourceType: document.getElementById('sourceType'),
       sourceName: document.getElementById('sourceName'),
       sourcePath: document.getElementById('sourcePath'),
+      pathLabel: document.getElementById('pathLabel'),
       deviceIndex: document.getElementById('deviceIndex'),
       sourceFps: document.getElementById('sourceFps'),
       sourceLoop: document.getElementById('sourceLoop'),
@@ -998,7 +1000,7 @@
       if (!source) return '';
       if (isBrowserSource(source) && state.browserStreaming) return 'local-browser';
       if (source.sourceType === 'image') return 'image';
-      if (source.sourceType === 'video') return 'mjpeg';
+      if (source.sourceType === 'video' || source.sourceType === 'rtsp') return 'mjpeg';
       return 'webrtc';
     }
 
@@ -1394,8 +1396,14 @@
 
     function updateFormVisibility() {
       const isDevice = els.sourceType.value === 'device';
+      const isRtsp = els.sourceType.value === 'rtsp';
       els.pathField.hidden = isDevice;
       els.deviceField.hidden = !isDevice;
+      els.pathLabel.textContent = isRtsp ? 'RTSP 地址' : '本机文件路径';
+      els.sourcePath.placeholder = isRtsp
+        ? 'rtsp://10.126.59.120:8554/live/live1'
+        : '/Users/.../sample.mp4';
+      els.sourceLoop.disabled = isRtsp || isDevice;
     }
 
     function escapeHtml(value) {

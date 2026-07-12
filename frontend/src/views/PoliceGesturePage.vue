@@ -28,9 +28,9 @@
           class="skeleton-overlay"
           :viewBox="detectionViewBox"
           preserveAspectRatio="xMidYMid meet"
-          v-if="result.detections.length"
+          v-if="hasSkeleton"
         >
-          <g v-for="person in result.detections" :key="person.objectId">
+          <g v-for="person in skeletonDetections" :key="person.objectId">
             <!-- 人体框 -->
             <rect
               :x="person.bbox.x1" :y="person.bbox.y1"
@@ -54,13 +54,14 @@
       </div>
 
       <!-- 底部指令条 -->
-      <div class="command-bar" v-if="result.detections.length">
+      <div class="command-bar" v-if="hasSkeleton">
         <div class="command-main">
-          <span class="command-badge">{{ currentGesture }}</span>
-          <span class="command-action">输出交通指令：{{ currentAction }}</span>
+          <span class="command-badge">{{ hasGesture ? currentGesture : '骨架跟踪中' }}</span>
+          <span class="command-action">{{ hasGesture ? `输出交通指令：${currentAction}` : '等待交通指令' }}</span>
         </div>
         <div class="command-meta">
-          <span>置信度 {{ Math.round(result.detections[0].confidence * 100) }}%</span>
+          <span v-if="hasGesture">置信度 {{ Math.round(currentDetection.confidence * 100) }}%</span>
+          <span v-else>姿态跟踪已同步</span>
           <span>识别间隔 {{ recognitionIntervalMs / 1000 }}s</span>
           <span>帧号同步</span>
         </div>
@@ -106,9 +107,9 @@
       </div>
 
       <!-- 当前识别手势 -->
-      <div class="card gesture-hero" :class="{ detected: result.detections.length }">
-        <div class="gesture-state">{{ result.detections.length ? '已识别交通指令' : '等待识别' }}</div>
-        <strong>{{ currentGesture }}</strong>
+      <div class="card gesture-hero" :class="{ detected: hasGesture }">
+        <div class="gesture-state">{{ hasGesture ? '已识别交通指令' : (hasSkeleton ? '人体骨架跟踪中' : '等待识别') }}</div>
+        <strong>{{ hasGesture ? currentGesture : (hasSkeleton ? '暂无交通动作' : '等待识别') }}</strong>
         <p>{{ currentActionText }}</p>
       </div>
 
@@ -175,6 +176,9 @@ const {
 } = useCameraSource(TASK_TYPES.POLICE_GESTURE)
 
 const currentDetection = computed(() => result.value.detections[0] || null)
+const skeletonDetections = computed(() => result.value.detections.filter(item => item.keypoints?.length))
+const hasSkeleton = computed(() => skeletonDetections.value.length > 0)
+const hasGesture = computed(() => Boolean(currentDetection.value?.gestureCode))
 const gestureCode = computed(() => currentDetection.value?.gestureCode || '--')
 const currentGesture = computed(() => currentDetection.value?.gestureName || POLICE_GESTURE_MAP[gestureCode.value] || '等待识别')
 const currentAction = computed(() => {
@@ -186,7 +190,11 @@ const currentAction = computed(() => {
   }
   return map[gestureCode.value] || '—'
 })
-const currentActionText = computed(() => `输出交通指令：${currentAction.value}`)
+const currentActionText = computed(() => {
+  if (hasGesture.value) return `输出交通指令：${currentAction.value}`
+  if (hasSkeleton.value) return '人体骨架持续识别中'
+  return '输出交通指令：—'
+})
 const detectionViewBox = computed(() => {
   const width = result.value.image?.width || 1280
   const height = result.value.image?.height || 720

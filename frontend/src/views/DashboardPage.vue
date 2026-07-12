@@ -295,6 +295,7 @@ let lastBuiltInMatchAt = 0
 let builtInGestureStableCode = ''
 let builtInGestureStableSince = 0
 let builtInGestureVectors = []
+let lastGestureRecognitionDisplay
 let gestureControlBindings = new Map()
 let gestureControlConfig = {}
 let gestureSocketReconnectTimer
@@ -487,8 +488,6 @@ function stopGestureCamera() {
   }
   clearGestureOverlay()
   gestureCameraReady.value = false
-  gestureMatchLabel.value = '未录入'
-  gestureScoreLabel.value = '--'
 }
 
 function markGestureCameraReady() {
@@ -604,8 +603,7 @@ function recognizeGestureLoop() {
         }
       } else {
         resetBuiltInGestureState()
-        gestureMatchLabel.value = 'unknown'
-        gestureScoreLabel.value = '--'
+        restoreLastGestureRecognitionDisplay()
         gestureTriggerLabel.value = '未检测到手'
         if (!lastGestureControl.value) {
           gestureControlStatus.value = '未检测到手'
@@ -662,8 +660,7 @@ function applyBuiltInGestureRecognition(category, vector) {
   }
 
   lastBuiltInMatchAt = now
-  gestureMatchLabel.value = gestureName
-  gestureScoreLabel.value = formatGestureScore(score)
+  rememberGestureRecognitionDisplay(gestureName, formatGestureScore(score))
 
   if (gestureCode === lastBuiltInGestureCode && now - lastBuiltInGestureAt < BUILT_IN_GESTURE_COOLDOWN_MS) {
     return
@@ -796,12 +793,16 @@ function applyGestureRecognitionState(state) {
     lastBuiltInMatchAt &&
     performance.now() - lastBuiltInMatchAt < BUILT_IN_DISPLAY_GRACE_MS
 
+  const scoreText =
+    recognition.score === null || recognition.score === undefined
+      ? recognition.motionLabel || '--'
+      : formatGestureScore(recognition.score)
+  const recognized = recognition.accepted && rememberGestureRecognitionDisplay(recognition.name, scoreText)
+
   if (!shouldKeepBuiltInDisplay) {
-    gestureMatchLabel.value = recognition.name || 'unknown'
-    gestureScoreLabel.value =
-      recognition.score === null || recognition.score === undefined
-        ? recognition.motionLabel || '--'
-        : formatGestureScore(recognition.score)
+    if (!recognized) {
+      restoreLastGestureRecognitionDisplay()
+    }
     gestureTriggerLabel.value = recognition.triggerState || '识别中'
   }
 
@@ -845,6 +846,33 @@ async function executeDashboardGestureControl(recognition) {
 function formatGestureScore(score) {
   const numericScore = Number(score)
   return Number.isFinite(numericScore) ? numericScore.toFixed(3) : '--'
+}
+
+function rememberGestureRecognitionDisplay(name, scoreText) {
+  const gestureName = String(name || '').trim()
+  const normalizedName = gestureName.toLowerCase()
+  if (!gestureName || ['unknown', 'none', '未识别', '未录入'].includes(normalizedName)) {
+    return false
+  }
+
+  lastGestureRecognitionDisplay = {
+    name: gestureName,
+    scoreText: scoreText || '--'
+  }
+  gestureMatchLabel.value = lastGestureRecognitionDisplay.name
+  gestureScoreLabel.value = lastGestureRecognitionDisplay.scoreText
+  return true
+}
+
+function restoreLastGestureRecognitionDisplay() {
+  if (lastGestureRecognitionDisplay) {
+    gestureMatchLabel.value = lastGestureRecognitionDisplay.name
+    gestureScoreLabel.value = lastGestureRecognitionDisplay.scoreText
+    return
+  }
+
+  gestureMatchLabel.value = '等待识别'
+  gestureScoreLabel.value = '--'
 }
 </script>
 

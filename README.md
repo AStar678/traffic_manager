@@ -1,5 +1,59 @@
 # VisionDrive 智视驾
 
+## 阿里云真实短信
+
+后端默认使用 Mock 验证码。如需在 macOS/Linux 上启用阿里云号码认证短信：
+
+1. 复制 `backend/.env.example` 为 `backend/.env.local` 并填写已审核的账号、签名和模板配置。
+2. 在项目根目录执行 `backend/run-backend-aliyun.sh`。
+
+`.env.local` 已被 Git 忽略，禁止把 AccessKey 写入 `application.yml` 或其他受版本控制的文件。启动日志出现“阿里云号码认证服务初始化成功”表示真实短信发送器已加载；只有调用发送验证码接口时才会产生短信费用。
+
+### 注册与验证码接口
+
+发送验证码时必须明确用途，注册验证码与登录验证码不能混用：
+
+```json
+POST /api/v1/auth/send-code
+{"phone":"13800138000","purpose":"REGISTER"}
+```
+
+`purpose` 可取 `REGISTER` 或 `LOGIN`。注册时必须提交已验证的手机号；短信登录仅允许已经注册的手机号。
+
+```json
+POST /api/v1/auth/register
+{
+  "username":"vision_user",
+  "email":"user@example.com",
+  "password":"StrongPass123!",
+  "phone":"13800138000",
+  "code":"123456"
+}
+```
+
+注册成功会返回 JWT 并自动登录。验证码 5 分钟有效、最多尝试 5 次、验证成功后立即失效；同一手机号的发送冷却与每日限额由登录和注册用途共享。
+
+## 云端 MySQL
+
+复制 `backend/.env.example` 为 `backend/.env.local`，填写云数据库、JWT 和 SSH 隧道配置后执行：
+
+```bash
+cd backend
+./run-backend-cloud.sh
+```
+
+脚本会建立本机到服务器 MySQL 的 SSH 隧道，再启动后端；退出后端时隧道会一并关闭。车辆配置接口只从 JWT 获取当前用户 ID，不接受客户端指定 userId。
+
+### 用户识别结果表
+
+三类识别结果分别保存在以下表中：
+
+- `license_plate_recognition_result`：车牌识别结果
+- `police_gesture_recognition_result`：交警手势识别结果
+- `user_gesture_recognition_result`：用户手势识别结果
+
+三张表均使用 `(user_id, created_at)` 联合主键，并包含 `recognition_result`（完整识别结果 JSON）和 `image_source`（图片 URL、摄像头编号或沙盘流标识）。`user_id` 外键关联 `user.id`，删除用户时同步删除其识别结果。建表脚本见 `scripts/create_recognition_result_tables.sql`。
+
 > 车载视觉感知与人机交互Web系统
 
 ## 项目简介

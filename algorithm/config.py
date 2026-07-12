@@ -26,6 +26,11 @@ CLPRNET_MODEL_PATH = Path(os.getenv(
     str(CLPRNET_SOURCE_DIR / "resource" / "CLPRNet.pth")
 ))
 
+POLICE_GESTURE_SOURCE_DIR = Path(os.getenv(
+    "POLICE_GESTURE_SOURCE_DIR",
+    str(TRAINING_ROOT / "交警指令识别")
+))
+
 GESTURE_RECOGNITION_APP_DIR = Path(os.getenv(
     "GESTURE_RECOGNITION_APP_DIR",
     str(BASE_DIR / "gesture_recognition_app")

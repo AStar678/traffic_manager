@@ -217,6 +217,7 @@ let lastBuiltInMatchAt = 0
 let builtInGestureStableCode = ''
 let builtInGestureStableSince = 0
 let builtInGestureVectors = []
+let lastRecognizedGestureDisplay
 
 onMounted(async () => {
   await nextTick()
@@ -445,8 +446,7 @@ function updateRecognition(result) {
   const landmarks = result.landmarks?.[0]
   if (!landmarks) {
     resetBuiltInGestureState()
-    els.prototypeMatch.textContent = prototypes.length ? 'unknown' : '未录入'
-    els.similarityScore.textContent = '--'
+    restoreLastRecognizedGestureDisplay()
     els.triggerState.textContent = '未检测到手'
     return
   }
@@ -493,8 +493,7 @@ function handleBuiltInRecognition(category, vector) {
   }
 
   lastBuiltInMatchAt = now
-  els.prototypeMatch.textContent = gestureName
-  els.similarityScore.textContent = formatGestureScore(score)
+  rememberRecognizedGestureDisplay(gestureName, formatGestureScore(score))
 
   if (gestureCode === lastBuiltInGestureCode && now - lastBuiltInGestureAt < BUILT_IN_GESTURE_COOLDOWN_MS) {
     return
@@ -703,12 +702,17 @@ function applyServiceState(state) {
       !recognition.accepted &&
       lastBuiltInMatchAt &&
       performance.now() - lastBuiltInMatchAt < BUILT_IN_DISPLAY_GRACE_MS
+
+    const scoreText =
+      recognition.score === null || recognition.score === undefined
+        ? recognition.motionLabel || '--'
+        : formatGestureScore(recognition.score)
+    const recognized = recognition.accepted && rememberRecognizedGestureDisplay(recognition.name, scoreText)
+
     if (!shouldKeepBuiltInDisplay) {
-      els.prototypeMatch.textContent = recognition.name
-      els.similarityScore.textContent =
-        recognition.score === null || recognition.score === undefined
-          ? recognition.motionLabel || '--'
-          : formatGestureScore(recognition.score)
+      if (!recognized) {
+        restoreLastRecognizedGestureDisplay()
+      }
       els.triggerState.textContent = recognition.triggerState
     }
     if (recognition.triggered) {
@@ -724,6 +728,33 @@ function applyServiceState(state) {
 function formatGestureScore(score) {
   const numericScore = Number(score)
   return Number.isFinite(numericScore) ? numericScore.toFixed(3) : '--'
+}
+
+function rememberRecognizedGestureDisplay(name, scoreText) {
+  const gestureName = String(name || '').trim()
+  const normalizedName = gestureName.toLowerCase()
+  if (!gestureName || ['unknown', 'none', '未识别', '未录入'].includes(normalizedName)) {
+    return false
+  }
+
+  lastRecognizedGestureDisplay = {
+    name: gestureName,
+    scoreText: scoreText || '--'
+  }
+  els.prototypeMatch.textContent = lastRecognizedGestureDisplay.name
+  els.similarityScore.textContent = lastRecognizedGestureDisplay.scoreText
+  return true
+}
+
+function restoreLastRecognizedGestureDisplay() {
+  if (lastRecognizedGestureDisplay) {
+    els.prototypeMatch.textContent = lastRecognizedGestureDisplay.name
+    els.similarityScore.textContent = lastRecognizedGestureDisplay.scoreText
+    return
+  }
+
+  els.prototypeMatch.textContent = prototypes.length ? '等待识别' : '未录入'
+  els.similarityScore.textContent = '--'
 }
 
 function translateBuiltin(name) {
@@ -831,6 +862,7 @@ async function clearPrototypes() {
   try {
     applyServiceState(await apiRequest('/api/prototypes', { method: 'DELETE' }))
     await loadControlSettings()
+    lastRecognizedGestureDisplay = undefined
     els.prototypeMatch.textContent = '未录入'
     els.similarityScore.textContent = '--'
   } catch (error) {
@@ -1235,7 +1267,6 @@ canvas {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  background: #070b12;
 }
 
 video,
@@ -1243,12 +1274,20 @@ canvas {
   transform: scaleX(-1);
 }
 
+video {
+  z-index: 0;
+  background: #070b12;
+}
+
 canvas {
+  z-index: 1;
+  background: transparent;
   pointer-events: none;
 }
 
 .camera-empty {
   position: absolute;
+  z-index: 2;
   inset: 0;
   display: grid;
   place-content: center;
@@ -1278,6 +1317,7 @@ canvas {
 
 .viewport-top {
   position: absolute;
+  z-index: 3;
   top: 14px;
   left: 16px;
   display: flex;
@@ -1784,13 +1824,19 @@ input[type="range"] {
 }
 
 @media (max-width: 1100px) {
+  .owner-gesture-page {
+    height: auto;
+    min-height: 100%;
+  }
+
   .layout {
     grid-template-columns: 1fr;
+    flex: 0 0 auto;
     overflow: visible;
   }
 
   .side-panel {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

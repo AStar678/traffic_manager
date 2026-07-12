@@ -1,4 +1,27 @@
 {
-  "activeSourceId": "license-plate-1",
-  "customSources": []
+  "activeSourceId": "sandbox-live3",
+  "customSources": [
+    {
+      "id": "custom-video-df31d87ef1",
+      "name": "test.mp4",
+      "sourceType": "video",
+      "taskTypes": [],
+      "path": "/Users/aoxiang/Desktop/临时/test.mp4",
+      "deviceIndex": null,
+      "fps": 30,
+      "loop": true,
+      "builtIn": false
+    },
+    {
+      "id": "custom-video-ab72f804d3",
+      "name": "test2.mp4",
+      "sourceType": "video",
+      "taskTypes": [],
+      "path": "/Users/aoxiang/Desktop/临时/test2.mp4",
+      "deviceIndex": null,
+      "fps": 30,
+      "loop": true,
+      "builtIn": false
+    }
+  ]
 }

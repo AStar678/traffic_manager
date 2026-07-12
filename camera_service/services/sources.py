@@ -14,6 +14,10 @@ from pathlib import Path
 from typing import Literal
 
 os.environ.setdefault("OPENCV_AVFOUNDATION_SKIP_AUTH", "1")
+os.environ.setdefault(
+    "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+    "rtsp_transport;tcp|timeout;3000000",
+)
 
 import cv2
 import numpy as np
@@ -28,11 +32,13 @@ from config import (
     LICENSE_PLATE_SAMPLE_DIR,
     OWNER_GESTURE_SOURCE_DIR,
     POLICE_GESTURE_SAMPLE_DIR,
+    SANDBOX_CAMERAS,
+    SANDBOX_RTSP_BASE_URL,
     VIDEO_EXTENSIONS,
 )
 
 
-SourceType = Literal["browser", "device", "image", "video"]
+SourceType = Literal["browser", "device", "image", "video", "rtsp"]
 BROWSER_CAMERA_SOURCE_ID = "browser-camera"
 ALL_TASK_TYPES = ["license_plate", "police_gesture", "owner_gesture"]
 MAX_OPEN_READERS = 12
@@ -104,6 +110,19 @@ def build_default_sources() -> list[CameraSource]:
         title="手势测试媒体",
         limit=200,
     ))
+    sources.extend(
+        CameraSource(
+            id=f"sandbox-{camera_id}",
+            name=f"沙盘 {camera_id} · {scene}",
+            sourceType="rtsp",
+            taskTypes=ALL_TASK_TYPES,
+            path=f"{SANDBOX_RTSP_BASE_URL}/{camera_id}",
+            fps=DEFAULT_FPS,
+            loop=False,
+            builtIn=True,
+        )
+        for camera_id, scene in SANDBOX_CAMERAS
+    )
     return sources
 
 
@@ -126,6 +145,22 @@ def make_custom_source(
             deviceIndex=index,
             fps=fps,
             loop=loop,
+            builtIn=False,
+        )
+
+    if source_type == "rtsp":
+        rtsp_url = (path or "").strip()
+        if not rtsp_url.lower().startswith(("rtsp://", "rtsps://")):
+            raise ValueError("RTSP 源必须提供 rtsp:// 或 rtsps:// 地址")
+        digest = hashlib.md5(rtsp_url.encode("utf-8")).hexdigest()[:10]
+        return CameraSource(
+            id=f"custom-rtsp-{digest}",
+            name=name or "自定义 RTSP 摄像头",
+            sourceType="rtsp",
+            taskTypes=ALL_TASK_TYPES,
+            path=rtsp_url,
+            fps=fps,
+            loop=False,
             builtIn=False,
         )
 
@@ -453,6 +488,7 @@ class FrameReader:
         self.frame_index = -1
         self.last_read_at = 0.0
         self.last_timestamp_ms = 0
+        self._last_reconnect_attempt = 0.0
         self._thread: threading.Thread | None = None
         self._open()
 
@@ -468,14 +504,16 @@ class FrameReader:
             self._touch_frame(self.last_frame, frame_index=0)
             return
 
-        target = self.source.deviceIndex if self.source.sourceType == "device" else self.source.path
-        self.capture = cv2.VideoCapture(target)
+        self._open_capture_locked()
+        if not self.capture:
+            self._touch_frame(placeholder_frame(f"{self.source.name} 不可用"))
+            return
         self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, DEFAULT_WIDTH)
         self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, DEFAULT_HEIGHT)
         self.capture.set(cv2.CAP_PROP_FPS, self.source.fps)
-        if self.source.sourceType == "video":
+        if self.source.sourceType in {"video", "rtsp"}:
             detected_fps = self.capture.get(cv2.CAP_PROP_FPS) if self.capture else 0
-            if detected_fps and np.isfinite(detected_fps):
+            if detected_fps >= 1 and np.isfinite(detected_fps):
                 self.source.fps = max(1, min(30, int(round(detected_fps))))
         with self._lock:
             self._read_next_locked()
@@ -533,6 +571,8 @@ class FrameReader:
             return
 
         if not self.capture or not self.capture.isOpened():
+            if self.source.sourceType == "rtsp" and self._should_reconnect():
+                self._open_capture_locked()
             self._touch_frame(placeholder_frame(f"{self.source.name} 不可用"))
             return
 
@@ -541,6 +581,10 @@ class FrameReader:
             if self.source.sourceType == "video" and self.source.loop:
                 self.capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 ok, frame = self.capture.read()
+            elif self.source.sourceType == "rtsp" and self._should_reconnect():
+                self._open_capture_locked()
+                if self.capture and self.capture.isOpened():
+                    ok, frame = self.capture.read()
             if not ok or frame is None:
                 if self.last_frame is None:
                     self._touch_frame(placeholder_frame("视频源读取结束"))
@@ -550,6 +594,20 @@ class FrameReader:
         if self.source.sourceType == "video":
             frame_index = max(0, int(self.capture.get(cv2.CAP_PROP_POS_FRAMES)) - 1)
         self._touch_frame(resize_to_canvas(frame), frame_index=frame_index)
+
+    def _should_reconnect(self) -> bool:
+        return time.time() - self._last_reconnect_attempt >= 2.0
+
+    def _open_capture_locked(self) -> None:
+        if self.capture:
+            self.capture.release()
+        target = self.source.deviceIndex if self.source.sourceType == "device" else self.source.path
+        self._last_reconnect_attempt = time.time()
+        if self.source.sourceType == "rtsp":
+            self.capture = cv2.VideoCapture(target, cv2.CAP_FFMPEG)
+            self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        else:
+            self.capture = cv2.VideoCapture(target)
 
     def _touch_frame(self, frame: np.ndarray, frame_index: int | None = None) -> None:
         self.last_frame = frame

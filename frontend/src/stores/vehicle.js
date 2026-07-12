@@ -1,11 +1,8 @@
 import { defineStore } from 'pinia'
 import { mockVehicleState } from '@/utils/mockData'
-
-const STORAGE_KEY = 'visiondrive.vehicle.state'
+import { getCurrentCar, updateCurrentCar } from '@/api/car'
 
 function initialVehicleState() {
-  const snapshot = readStoredState()
-  if (snapshot) return snapshot
   return {
     ...structuredClone(mockVehicleState),
     systemAwake: true,
@@ -15,19 +12,11 @@ function initialVehicleState() {
   }
 }
 
-function readStoredState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? JSON.parse(raw) : null
-  } catch (error) {
-    console.warn('读取车辆状态缓存失败', error)
-    return null
-  }
-}
-
 export const useVehicleStore = defineStore('vehicle', {
   state: () => ({
-    vehicle: initialVehicleState()
+    vehicle: initialVehicleState(),
+    loading: false,
+    loaded: false
   }),
   getters: {
     lastGestureControl: state => state.vehicle.lastGestureControl,
@@ -100,15 +89,71 @@ export const useVehicleStore = defineStore('vehicle', {
       this.vehicle.controlHistory = [action, ...(this.vehicle.controlHistory || [])].slice(0, 6)
       this.persist()
     },
-    persist() {
+    async loadCurrent() {
+      if (!localStorage.getItem('token')) return
+      this.loading = true
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(this.vehicle))
+        const response = await getCurrentCar()
+        this.applyServerConfiguration(response.data || response)
+        this.loaded = true
       } catch (error) {
-        console.warn('保存车辆状态缓存失败', error)
+        console.warn('读取云端车辆配置失败', error)
+      } finally {
+        this.loading = false
       }
+    },
+    async persist() {
+      if (!localStorage.getItem('token')) return
+      try {
+        const response = await updateCurrentCar(this.toServerConfiguration())
+        this.applyServerConfiguration(response.data || response)
+      } catch (error) {
+        console.warn('保存云端车辆配置失败', error)
+      }
+    },
+    toServerConfiguration() {
+      const tires = Object.fromEntries((this.vehicle.tirePressure || []).map(item => [item.name, item.value]))
+      return {
+        climateTemperature: this.vehicle.climate.temperature,
+        climateMode: this.vehicle.climate.mode,
+        audioVolume: this.vehicle.audio.volume,
+        audioTrack: this.vehicle.audio.track,
+        systemAwake: Boolean(this.vehicle.systemAwake),
+        activeModule: this.vehicle.activeModule || '驾驶',
+        phoneStatus: this.vehicle.phone.status,
+        phoneCaller: this.vehicle.phone.caller,
+        speed: this.vehicle.speed,
+        gear: this.vehicle.gear,
+        tireFrontLeft: tires['左前'] ?? 2.4,
+        tireFrontRight: tires['右前'] ?? 2.4,
+        tireRearLeft: tires['左后'] ?? 2.3,
+        tireRearRight: tires['右后'] ?? 2.1
+      }
+    },
+    applyServerConfiguration(data) {
+      if (!data) return
+      Object.assign(this.vehicle, {
+        speed: data.speed,
+        gear: data.gear,
+        systemAwake: data.systemAwake,
+        activeModule: data.activeModule,
+        climate: { temperature: data.climateTemperature, mode: data.climateMode },
+        audio: { volume: data.audioVolume, track: data.audioTrack },
+        phone: { status: data.phoneStatus, caller: data.phoneCaller },
+        tirePressure: [
+          { name: '左前', value: data.tireFrontLeft, status: tireStatus(data.tireFrontLeft) },
+          { name: '右前', value: data.tireFrontRight, status: tireStatus(data.tireFrontRight) },
+          { name: '左后', value: data.tireRearLeft, status: tireStatus(data.tireRearLeft) },
+          { name: '右后', value: data.tireRearRight, status: tireStatus(data.tireRearRight) }
+        ]
+      })
     }
   }
 })
+
+function tireStatus(value) {
+  return value < 2.2 || value > 2.8 ? 'warning' : 'normal'
+}
 
 function nextTrack(currentTrack) {
   const tracks = ['City Drive', 'Night Run', 'Signal Blue', 'Highway FM']

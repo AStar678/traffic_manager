@@ -9,7 +9,7 @@ import org.hibernate.annotations.CreationTimestamp;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "app_user")
+@Table(name = "user")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -18,14 +18,24 @@ public class User {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(unique = true, nullable = false)
+    @Column(unique = true, nullable = false, length = 64)
     private String username;
 
-    @Column(nullable = false)
+    @Column(nullable = false, length = 255)
     private String password;
 
+    @Column(unique = true, length = 20)
+    private String phone;
+
+    @Column(unique = true, length = 254)
     private String email;
+
+    private String nickname;
+
+    private String role;
 
     @CreationTimestamp
     private LocalDateTime createdAt;
+
+    private LocalDateTime lastLoginAt;
 }

@@ -11,7 +11,7 @@ import os
 
 app = FastAPI(
     title="VisionDrive Algorithm Service",
-    description="车载视觉感知算法微服务 — 车牌识别·车主手势原型网络",
+    description="车载视觉感知算法微服务 — 车牌识别·交警手势·车主手势原型网络",
     version="1.0.0"
 )
 

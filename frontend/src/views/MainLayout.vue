@@ -83,11 +83,11 @@ const userInitial = computed(() => {
 const alertCount = computed(() => alertStore.unreadCount)
 
 const dockItems = [
-  { path: '/dashboard',  label: '驾驶',   icon: 'Monitor' },
-  { path: '/license-plate', label: '车牌', icon: 'Camera' },
-  { path: '/police-gesture', label: '交警', icon: 'Aim' },
-  { path: '/owner-gesture',  label: '手势', icon: 'Pointer' },
-  { path: '/settings',  label: '设置',   icon: 'Setting' },
+  { path: '/dashboard', label: '驾驶', icon: 'Monitor' },
+  { path: '/alert-dashboard', label: '告警', icon: 'Bell' },
+  { path: '/history', label: '记录', icon: 'Document' },
+  { path: '/cameras', label: '摄像头', icon: 'VideoCamera' },
+  { path: '/settings', label: '设置', icon: 'Setting' },
 ]
 
 function isActive(path) {

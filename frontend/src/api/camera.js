@@ -1,62 +1,30 @@
-import axios from 'axios'
+import request from './request'
 
-const configuredBase = import.meta.env.VITE_CAMERA_URL || 'http://127.0.0.1:8010'
-export const CAMERA_BASE_URL = configuredBase.replace(/\/$/, '')
-
-const cameraRequest = axios.create({
-  baseURL: `${CAMERA_BASE_URL}/api/v1`,
-  timeout: 10000
-})
-
-function unwrap(response) {
-  return response.data?.data || response.data
+export function listCameraSlots() {
+  return request.get('/cameras/slots')
 }
 
-export async function listCameraSources() {
-  return unwrap(await cameraRequest.get('/cameras/sources'))
+export function updateCameraSlot(slotId, payload) {
+  return request.put(`/cameras/slots/${slotId}`, payload)
 }
 
-export async function switchCameraSource(sourceId) {
-  return unwrap(await cameraRequest.post('/cameras/source', { sourceId }))
+export function uploadCameraMedia(slotId, file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request.post(`/cameras/slots/${slotId}/media`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 220000
+  })
 }
 
-export async function getCameraFrameInfo(sourceId) {
-  return unwrap(await cameraRequest.get('/cameras/frame-info', { params: { sourceId } }))
+export function getCameraFrameBlob(slotId) {
+  return request.get(`/cameras/slots/${slotId}/frame.jpg`, {
+    params: { t: Date.now() },
+    responseType: 'blob',
+    timeout: 12000
+  })
 }
 
-export async function createCameraWebRtcAnswer({ sourceId, sdp, type = 'offer', fps = 15 }) {
-  return unwrap(await cameraRequest.post('/cameras/webrtc/offer', {
-    sourceId,
-    sdp,
-    type,
-    fps
-  }, { timeout: 15000 }))
-}
-
-export async function publishBrowserCameraWebRtc({ sourceId, sdp, type = 'offer', fps = 15 }) {
-  return unwrap(await cameraRequest.post('/cameras/webrtc/publish', {
-    sourceId,
-    sdp,
-    type,
-    fps
-  }, { timeout: 15000 }))
-}
-
-export function buildCameraStreamUrl(sourceId, version = Date.now()) {
-  const params = new URLSearchParams({ sourceId, fps: '15', quality: '96', t: String(version) })
-  return `${CAMERA_BASE_URL}/api/v1/cameras/stream.mjpg?${params.toString()}`
-}
-
-export function buildCameraFrameUrl(sourceId, frameInfo = null) {
-  const params = new URLSearchParams({ sourceId, t: String(Date.now()) })
-  if (frameInfo?.frameIndex !== undefined) params.set('frameIndex', String(frameInfo.frameIndex))
-  if (frameInfo?.timestampMs !== undefined) params.set('captureTs', String(frameInfo.timestampMs))
-  return `${CAMERA_BASE_URL}/api/v1/cameras/snapshot.jpg?${params.toString()}`
-}
-
-export function buildCameraSnapshotUrl(sourceId, frameInfo = null) {
-  const params = new URLSearchParams({ sourceId, t: String(Date.now()) })
-  if (frameInfo?.frameIndex !== undefined) params.set('frameIndex', String(frameInfo.frameIndex))
-  if (frameInfo?.timestampMs !== undefined) params.set('captureTs', String(frameInfo.timestampMs))
-  return `${CAMERA_BASE_URL}/api/v1/cameras/snapshot.png?${params.toString()}`
+export function getCameraData(response) {
+  return response?.data || response
 }

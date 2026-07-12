@@ -21,6 +21,9 @@ fi
 if [[ -n "${SMS_EXPOSE_MOCK_CODE_OVERRIDE:-}" ]]; then
   export SMS_EXPOSE_MOCK_CODE="${SMS_EXPOSE_MOCK_CODE_OVERRIDE}"
 fi
+if [[ -n "${JPA_DDL_AUTO_OVERRIDE:-}" ]]; then
+  export JPA_DDL_AUTO="${JPA_DDL_AUTO_OVERRIDE}"
+fi
 
 required_variables=(
   DB_URL DB_USERNAME DB_PASSWORD JWT_SECRET

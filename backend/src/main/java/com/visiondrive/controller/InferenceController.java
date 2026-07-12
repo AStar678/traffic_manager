@@ -3,6 +3,8 @@ package com.visiondrive.controller;
 import com.visiondrive.model.dto.ApiResponse;
 import com.visiondrive.model.dto.InferenceRequest;
 import com.visiondrive.model.dto.InferenceResponse;
+import com.visiondrive.model.dto.CameraInferenceRequest;
+import com.visiondrive.model.dto.MultiCameraInferenceResponse;
 import com.visiondrive.service.InferenceService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -18,14 +20,14 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/inference")
 @RequiredArgsConstructor
-@Tag(name = "推理接口", description = "调用算法服务进行图片推理；手势识别使用车主手势接口")
+@Tag(name = "推理接口", description = "按任务类型路由到独立车牌或交警手势算法服务")
 public class InferenceController {
 
     private final InferenceService inferenceService;
 
     @Operation(
             summary = "图片推理",
-            description = "图片接口保留 license_plate；手势识别使用 /api/v1/owner-gestures"
+            description = "支持 license_plate 与 police_gesture；车主手势使用 /api/v1/owner-gestures"
     )
     @PostMapping("/image")
     public ApiResponse<InferenceResponse> imageInference(
@@ -36,5 +38,16 @@ public class InferenceController {
 
         InferenceResponse response = inferenceService.processImageInference(request);
         return ApiResponse.success(response);
+    }
+
+    @Operation(
+            summary = "三路摄像头并发推理",
+            description = "主服务并发采集三路摄像头文件帧，并将本地文件路径传给车牌或交警算法"
+    )
+    @PostMapping("/cameras")
+    public ApiResponse<MultiCameraInferenceResponse> cameraInference(
+            @Valid @RequestBody CameraInferenceRequest request
+    ) {
+        return ApiResponse.success(inferenceService.processCameraInference(request.getTaskType()));
     }
 }

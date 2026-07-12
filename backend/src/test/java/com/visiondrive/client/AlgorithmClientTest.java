@@ -1,0 +1,75 @@
+package com.visiondrive.client;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestTemplate;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+
+class AlgorithmClientTest {
+
+    private AlgorithmClient client;
+    private MockRestServiceServer server;
+
+    @BeforeEach
+    void setUp() {
+        RestTemplate restTemplate = new RestTemplate();
+        client = new AlgorithmClient(restTemplate, new ObjectMapper());
+        ReflectionTestUtils.setField(client, "licenseAlgorithmBaseUrl", "http://license:8000");
+        ReflectionTestUtils.setField(client, "policeAlgorithmBaseUrl", "http://police:8001");
+        ReflectionTestUtils.setField(client, "gestureAlgorithmBaseUrl", "http://gesture:8002");
+        ReflectionTestUtils.setField(client, "inferencePath", "/api/v1/inference/image");
+        server = MockRestServiceServer.bindTo(restTemplate).build();
+    }
+
+    @Test
+    void routesImageInferenceToIndependentServices() {
+        server.expect(requestTo("http://license:8000/api/v1/inference/image"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess(response("license_plate"), MediaType.APPLICATION_JSON));
+        server.expect(requestTo("http://police:8001/api/v1/inference/image"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess(response("police_gesture"), MediaType.APPLICATION_JSON));
+
+        assertEquals("license_plate", client.callImageInference("license_plate", "data:image/png;base64,AA==")
+                .getData().getTaskType());
+        assertEquals("police_gesture", client.callImageInference("police_gesture", "data:image/png;base64,AA==")
+                .getData().getTaskType());
+        server.verify();
+    }
+
+    @Test
+    void rejectsUnsupportedImageTaskBeforeSendingHttpRequest() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> client.callImageInference("owner_gesture", "data:image/png;base64,AA==")
+        );
+        server.verify();
+    }
+
+    private String response(String taskType) {
+        return """
+                {
+                  "code": 0,
+                  "message": "success",
+                  "requestId": "test-request",
+                  "timestamp": "2026-07-12T00:00:00Z",
+                  "data": {
+                    "taskType": "%s",
+                    "latencyMs": 1,
+                    "detections": [],
+                    "detectionCount": 0
+                  }
+                }
+                """.formatted(taskType);
+    }
+}

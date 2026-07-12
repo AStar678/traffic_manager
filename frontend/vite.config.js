@@ -3,10 +3,10 @@ import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
 
 const backendTarget = process.env.VITE_BACKEND_URL || 'http://localhost:8080'
-const algorithmTarget = process.env.VITE_ALGORITHM_URL || 'http://localhost:8000'
+const gestureAlgorithmTarget = process.env.VITE_GESTURE_ALGORITHM_URL || process.env.VITE_ALGORITHM_URL || 'http://localhost:8002'
 
 const ownerGestureApiProxy = {
-  target: algorithmTarget,
+  target: gestureAlgorithmTarget,
   ws: true
 }
 
@@ -29,7 +29,7 @@ export default defineConfig({
       '/api/recognition/stream': ownerGestureApiProxy,
       '/api': backendTarget,
       '/owner-gesture-stream': {
-        target: algorithmTarget,
+        target: gestureAlgorithmTarget,
         ws: true,
         rewrite: () => '/api/v1/owner-gestures/recognition/stream'
       },

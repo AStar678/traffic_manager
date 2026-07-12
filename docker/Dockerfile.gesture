@@ -1,0 +1,9 @@
+FROM python:3.11-slim
+WORKDIR /app
+COPY gesture/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+COPY gesture/__init__.py gesture/api.py gesture/config.py gesture/engine.py gesture/main.py gesture/service.py ./gesture/
+COPY gesture/config ./gesture/config
+COPY gesture/data ./gesture/data
+EXPOSE 8002
+CMD ["python", "-m", "gesture.main"]

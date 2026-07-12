@@ -17,8 +17,8 @@
           <video id="webcam" autoplay playsinline muted></video>
           <canvas id="overlay"></canvas>
           <div class="camera-empty" id="cameraEmpty">
-            <strong>摄像头未启动</strong>
-            <span>点击“启动摄像头”后开始录入或识别动作</span>
+            <strong>{{ props.embedded ? '识别在驾驶主界面持续运行' : '摄像头未启动' }}</strong>
+            <span>{{ props.embedded ? '此处用于查看结果和管理手势，关闭弹窗不会中断识别' : '点击“启动摄像头”后开始录入或识别动作' }}</span>
           </div>
           <div class="viewport-top">
             <span class="chip live">● LIVE</span>
@@ -27,8 +27,9 @@
         </div>
 
         <div class="toolbar">
-          <button class="primary" id="startCameraBtn" type="button" @click="startCamera">启动摄像头</button>
-          <button id="stopCameraBtn" type="button" disabled @click="stopCamera">停止</button>
+          <button v-if="!props.embedded" class="primary" id="startCameraBtn" type="button" @click="startCamera">启动摄像头</button>
+          <button v-if="!props.embedded" id="stopCameraBtn" type="button" disabled @click="stopCamera">停止</button>
+          <button v-if="props.embedded" class="primary" type="button" disabled>识别由驾驶主界面统一控制</button>
           <button id="manageGesturesBtn" type="button" @click="openManagementDialog">手势管理</button>
         </div>
 
@@ -172,6 +173,11 @@ import {
 } from '@/utils/ownerGesturePrototype'
 import { useVehicleStore } from '@/stores/vehicle'
 
+const props = defineProps({
+  embedded: { type: Boolean, default: false },
+  openManagementOnMount: { type: Boolean, default: false }
+})
+
 const MODEL_PATH = '/models/gesture_recognizer.task'
 const GESTURE_FRAME_INTERVAL_MS = 33
 const BUILT_IN_GESTURE_THRESHOLD = 0.7
@@ -194,6 +200,8 @@ const vehicleStore = useVehicleStore()
 const isManagementOpen = ref(false)
 const isCountdownOpen = ref(false)
 const recordingCountdown = ref(3)
+
+defineExpose({ openManagementDialog })
 
 let els = {}
 let ctx
@@ -222,6 +230,7 @@ let lastRecognizedGestureDisplay
 onMounted(async () => {
   await nextTick()
   bindElements()
+  if (props.openManagementOnMount) openManagementDialog()
   await init()
 })
 
@@ -386,8 +395,8 @@ function stopCamera() {
   }
   if (els.cameraEmpty) {
     els.cameraEmpty.hidden = false
-    els.startCameraBtn.disabled = false
-    els.stopCameraBtn.disabled = true
+    if (els.startCameraBtn) els.startCameraBtn.disabled = false
+    if (els.stopCameraBtn) els.stopCameraBtn.disabled = true
     updateRecordButton()
   }
   if (isRecording) {
@@ -1283,6 +1292,10 @@ canvas {
   z-index: 1;
   background: transparent;
   pointer-events: none;
+}
+
+.video-shell canvas {
+  display: none;
 }
 
 .camera-empty {

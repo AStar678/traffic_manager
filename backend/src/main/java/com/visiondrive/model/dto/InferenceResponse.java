@@ -46,6 +46,8 @@ public class InferenceResponse {
 
     @Data
     public static class Detection {
+        private Integer cameraSlotId;
+        private String cameraName;
         private String objectId;
         private String objectType;
         private Bbox bbox;

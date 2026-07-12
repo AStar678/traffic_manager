@@ -15,10 +15,10 @@
     </label>
 
     <div v-if="showVideoUrl" class="url-input">
-      <span>摄像头微服务截图 / 视频地址</span>
+      <span>图片地址（兼容模式）</span>
       <el-input
         v-model="localUrl"
-        placeholder="http://127.0.0.1:8010/api/v1/cameras/snapshot.png?sourceId=..."
+        placeholder="https://example.com/frame.jpg"
         clearable
         @input="$emit('update:url', localUrl)"
       />
@@ -26,7 +26,7 @@
 
     <div class="mode-note">
       <strong>业务链路</strong>
-      <p>主服务的视频输入统一来自摄像头微服务；抓拍地址再交给 Java 后端调用算法服务。</p>
+      <p>实时识别统一由主服务摄像头模块取帧并传递文件路径；这里仅保留单张图片的兼容入口。</p>
     </div>
   </div>
 </template>
@@ -42,7 +42,7 @@ defineProps({
   },
   hint: {
     type: String,
-    default: '支持 jpg/png/bmp/mp4/avi/mov；视频输入默认走摄像头微服务'
+    default: '支持 jpg/png/bmp/mp4/avi/mov；连续视频请在摄像头模块配置'
   },
   accept: {
     type: String,

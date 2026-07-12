@@ -1,1 +1,0 @@
-"""Police gesture recognition pipeline."""

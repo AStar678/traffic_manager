@@ -1,5 +1,11 @@
 <template>
-  <div class="plate-page">
+  <MultiCameraRecognitionDetail
+    v-if="props.embedded"
+    task-type="license_plate"
+    :result="props.externalResult"
+    :recognizing="props.externalRecognizing"
+  />
+  <div v-else class="plate-page">
     <!-- 主区域：摄像头大画面 -->
     <div class="viewport-area">
       <div class="viewport" :class="{ 'showing-synchronized-frame': synchronizedResultFrameUrl }">
@@ -84,7 +90,7 @@
         <div class="camera-control">
           <div class="control-row">
             <span>视频输入</span>
-            <strong>{{ selectedCameraSource?.name || '摄像头微服务' }}</strong>
+            <strong>{{ selectedCameraSource?.name || '主服务摄像头模块' }}</strong>
           </div>
           <div class="control-row">
             <span>服务状态</span>
@@ -101,6 +107,7 @@
         </div>
 
         <button
+          v-if="!props.embedded"
           class="action-btn primary"
           :class="{ danger: recognizing }"
           :disabled="!selectedCameraSourceId && !recognizing"
@@ -108,6 +115,10 @@
         >
           <el-icon v-if="loading" class="spinner"><Loading /></el-icon>
           {{ recognizing ? '停止识别' : (loading ? '识别中...' : '开始持续识别') }}
+        </button>
+
+        <button v-else class="action-btn primary external-control" type="button" disabled>
+          识别由驾驶主界面统一控制
         </button>
 
         <button class="action-btn secondary compact" :disabled="recognizing" @click="refreshCameraSource">
@@ -143,12 +154,22 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { TASK_TYPES } from '@/utils/constants'
-import { getInferenceData, inferenceImage } from '@/api/inference'
+import { getInferenceData, inferenceCameras } from '@/api/inference'
 import { useCameraSource } from '@/composables/useCameraSource'
+import MultiCameraRecognitionDetail from '@/components/common/MultiCameraRecognitionDetail.vue'
 
-const result = ref(emptyResult())
+const props = defineProps({
+  embedded: { type: Boolean, default: false },
+  externalResult: { type: Object, default: null },
+  externalRecognizing: { type: Boolean, default: false }
+})
+const emit = defineEmits(['toggle-recognition'])
+
+const localResult = ref(emptyResult())
 const loading = ref(false)
-const recognizing = ref(false)
+const localRecognizing = ref(false)
+const result = computed(() => props.externalResult || localResult.value)
+const recognizing = computed(() => props.externalResult ? props.externalRecognizing : localRecognizing.value)
 const recognitionIntervalMs = 300
 let recognitionTimer = null
 const {
@@ -161,12 +182,11 @@ const {
   cameraVideoReady,
   loadCameraSources,
   markCameraVideoReady,
-  refreshCameraPreview,
-  getCameraSnapshotUrl
+  refreshCameraPreview
 } = useCameraSource(TASK_TYPES.LICENSE_PLATE)
 
 const cameraLabel = computed(() => {
-  return selectedCameraSource.value?.name || '摄像头微服务'
+  return selectedCameraSource.value?.name || '主服务摄像头模块'
 })
 const cameraStatusText = computed(() => {
   const labels = { idle: '未连接', loading: '连接中', ready: '已连接', empty: '无可用源', offline: '服务离线' }
@@ -242,23 +262,23 @@ async function refreshCameraSource() {
 async function recognizeOnce({ silent = false } = {}) {
   if (loading.value) return
   if (!selectedCameraSourceId.value) {
-    if (!silent) ElMessage.warning('摄像头微服务暂无可用视频输入')
+    if (!silent) ElMessage.warning('主服务摄像头模块暂无可用视频输入')
     return
   }
 
   loading.value = true
   try {
-    const imageUrl = await getCameraSnapshotUrl()
-    const response = await inferenceImage(TASK_TYPES.LICENSE_PLATE, imageUrl)
+    const response = await inferenceCameras(TASK_TYPES.LICENSE_PLATE)
     const data = getInferenceData(response)
-    result.value = {
+    const selectedResult = data?.cameras?.find(item => item.slotId === Number(selectedCameraSourceId.value))?.result
+    localResult.value = {
       ...emptyResult(),
-      ...(data || {}),
-      detections: data?.detections || []
+      ...(selectedResult || data || {}),
+      detections: selectedResult?.detections || data?.detections || []
     }
   } catch (error) {
     console.error(error)
-    if (!silent) ElMessage.error('识别失败，请检查后端、算法服务和摄像头服务是否已启动')
+    if (!silent) ElMessage.error('识别失败，请检查主服务摄像头模块和车牌算法服务')
   } finally {
     loading.value = false
   }
@@ -266,28 +286,32 @@ async function recognizeOnce({ silent = false } = {}) {
 
 function startRecognition() {
   if (!selectedCameraSourceId.value) {
-    ElMessage.warning('摄像头微服务暂无可用视频输入')
+    ElMessage.warning('主服务摄像头模块暂无可用视频输入')
     return
   }
-  recognizing.value = true
-  result.value = emptyResult()
+  localRecognizing.value = true
+  localResult.value = emptyResult()
   recognizeOnce({ silent: true })
   clearInterval(recognitionTimer)
   recognitionTimer = setInterval(() => {
-    if (recognizing.value) recognizeOnce({ silent: true })
+    if (localRecognizing.value) recognizeOnce({ silent: true })
   }, recognitionIntervalMs)
   ElMessage.success('已开始持续识别')
 }
 
 function stopRecognition() {
-  recognizing.value = false
+  localRecognizing.value = false
   clearInterval(recognitionTimer)
   recognitionTimer = null
   ElMessage.info('已停止识别')
 }
 
 function toggleRecognition() {
-  if (recognizing.value) stopRecognition()
+  if (props.externalResult) {
+    emit('toggle-recognition')
+    return
+  }
+  if (localRecognizing.value) stopRecognition()
   else startRecognition()
 }
 
@@ -315,6 +339,11 @@ onBeforeUnmount(() => {
   gap: 16px;
   height: 100%;
   overflow-y: auto;
+}
+
+.plate-page.embedded {
+  height: 100%;
+  min-height: 560px;
 }
 
 /* ---- 摄像头大画面 ---- */

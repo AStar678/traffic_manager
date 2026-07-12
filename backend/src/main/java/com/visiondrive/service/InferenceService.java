@@ -3,6 +3,8 @@ package com.visiondrive.service;
 import com.visiondrive.client.AlgorithmClient;
 import com.visiondrive.model.dto.InferenceRequest;
 import com.visiondrive.model.dto.InferenceResponse;
+import com.visiondrive.model.dto.CameraSlotResponse;
+import com.visiondrive.model.dto.MultiCameraInferenceResponse;
 import com.visiondrive.model.entity.InferenceRecord;
 import com.visiondrive.model.entity.DetectionResult;
 import com.visiondrive.repository.InferenceRecordRepository;
@@ -10,14 +12,17 @@ import com.visiondrive.repository.DetectionResultRepository;
 import com.visiondrive.common.utils.JsonLogBuilder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import jakarta.annotation.PreDestroy;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @Slf4j
 @Service
@@ -28,11 +33,17 @@ public class InferenceService {
     private final InferenceRecordRepository recordRepository;
     private final DetectionResultRepository detectionResultRepository;
     private final SystemLogService systemLogService;
+    private final CameraManagerService cameraManagerService;
+    private final ExecutorService multiCameraExecutor = Executors.newFixedThreadPool(6);
+
+    @PreDestroy
+    public void shutdownInferenceExecutor() {
+        multiCameraExecutor.shutdownNow();
+    }
 
     /**
      * 处理图片推理
      */
-    @Transactional
     public InferenceResponse processImageInference(InferenceRequest request) {
         long startTime = System.currentTimeMillis();
         String traceId = JsonLogBuilder.generateTraceId();
@@ -70,6 +81,84 @@ public class InferenceService {
                     System.currentTimeMillis() - startTime, e.getMessage());
             throw new RuntimeException("推理失败: " + e.getMessage());
         }
+    }
+
+    /**
+     * 对三个摄像头槽位并发取帧和推理。帧文件以本地绝对路径传给算法进程，不传输图像字节。
+     */
+    public MultiCameraInferenceResponse processCameraInference(String taskType) {
+        if (!"license_plate".equals(taskType) && !"police_gesture".equals(taskType)) {
+            throw new IllegalArgumentException("三路摄像头推理仅支持 license_plate 和 police_gesture");
+        }
+
+        long started = System.currentTimeMillis();
+        List<CompletableFuture<MultiCameraInferenceResponse.CameraInferenceResult>> futures = cameraManagerService.listSlots()
+                .stream()
+                .map(slot -> CompletableFuture.supplyAsync(() -> inferCameraSlot(taskType, slot), multiCameraExecutor))
+                .toList();
+
+        List<MultiCameraInferenceResponse.CameraInferenceResult> cameraResults = futures.stream()
+                .map(CompletableFuture::join)
+                .toList();
+
+        List<InferenceResponse.Detection> detections = cameraResults.stream()
+                .filter(result -> result.getResult() != null && result.getResult().getDetections() != null)
+                .flatMap(result -> result.getResult().getDetections().stream())
+                .toList();
+
+        MultiCameraInferenceResponse response = new MultiCameraInferenceResponse();
+        response.setTaskType(taskType);
+        response.setLatencyMs(System.currentTimeMillis() - started);
+        response.setCameras(cameraResults);
+        response.setDetections(detections);
+        response.setDetectionCount(detections.size());
+        return response;
+    }
+
+    private MultiCameraInferenceResponse.CameraInferenceResult inferCameraSlot(
+            String taskType,
+            CameraSlotResponse slot
+    ) {
+        MultiCameraInferenceResponse.CameraInferenceResult result = new MultiCameraInferenceResponse.CameraInferenceResult();
+        result.setSlotId(slot.getSlotId());
+        result.setCameraName(slot.getName());
+        result.setSourceType(slot.getSourceType());
+        result.setFrameUrl(slot.getFrameUrl());
+
+        if ("OFF".equals(slot.getSourceType())) {
+            result.setStatus("off");
+            return result;
+        }
+
+        long started = System.currentTimeMillis();
+        String traceId = JsonLogBuilder.generateTraceId();
+        InferenceRequest recordRequest = new InferenceRequest();
+        recordRequest.setTaskType(taskType);
+
+        try {
+            CameraManagerService.CameraFrame frame = cameraManagerService.captureSlot(slot.getSlotId());
+            recordRequest.setImageUrl(frame.path().toString());
+            InferenceResponse inference = algorithmClient.callFileInference(taskType, frame.path().toString());
+            InferenceResponse.InferenceData data = inference.getData();
+            if (data != null && data.getDetections() != null) {
+                data.getDetections().forEach(detection -> {
+                    detection.setCameraSlotId(slot.getSlotId());
+                    detection.setCameraName(slot.getName());
+                });
+            }
+            result.setResult(data);
+            result.setStatus("ready");
+            saveInferenceRecord(recordRequest, inference, traceId, System.currentTimeMillis() - started, true, null);
+            recordInferenceSystemLog(recordRequest, inference, traceId, System.currentTimeMillis() - started, null);
+        } catch (Exception error) {
+            result.setStatus("error");
+            result.setError(error.getMessage());
+            if (recordRequest.getImageUrl() == null) recordRequest.setImageUrl(slot.getPath());
+            saveInferenceRecord(recordRequest, null, traceId, System.currentTimeMillis() - started, false, error.getMessage());
+            recordInferenceSystemLog(recordRequest, null, traceId, System.currentTimeMillis() - started, error.getMessage());
+            log.warn("摄像头 {} 推理失败: {}", slot.getSlotId(), error.getMessage());
+        }
+        return result;
     }
 
     /**

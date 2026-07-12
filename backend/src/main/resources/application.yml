@@ -44,9 +44,24 @@ spring:
           starttls:
             enable: ${MAIL_SMTP_STARTTLS:true}
 
-# 算法服务地址
+# 三个独立算法服务地址
 algorithm:
-  base-url: http://localhost:8000
+  license:
+    base-url: ${LICENSE_ALGORITHM_BASE_URL:http://localhost:8000}
+  police:
+    base-url: ${POLICE_ALGORITHM_BASE_URL:http://localhost:8001}
+  gesture:
+    base-url: ${GESTURE_ALGORITHM_BASE_URL:http://localhost:8002}
+  inference:
+    image: /api/v1/inference/image
+
+# 主服务内置三路摄像头管理。帧目录与车牌/交警算法进程共享，只传递文件路径。
+camera:
+  state-file: ${CAMERA_STATE_FILE:./data/camera-slots.json}
+  source-dir: ${CAMERA_SOURCE_DIR:./uploads/camera-sources}
+  frame-dir: ${CAMERA_FRAME_DIR:./uploads/camera-frames}
+  ffmpeg-bin: ${CAMERA_FFMPEG_BIN:ffmpeg}
+  sandbox-base-url: ${SANDBOX_RTSP_BASE_URL:rtsp://10.126.59.120:8554/live}
 
 # JWT
 jwt:

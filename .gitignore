@@ -26,6 +26,7 @@ backend/.project
 backend/.settings/
 backend/.env
 backend/.env.local
+backend/data/camera-slots.json
 
 # --- Python ---
 __pycache__/

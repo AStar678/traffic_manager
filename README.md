@@ -71,19 +71,19 @@ cd backend
 │   后端  Java Spring Boot         │  端口: 8080
 │   · 用户认证 · 文件管理          │
 │   · 数据库 · Alert Agent         │
+│   · 三路摄像头管理与文件取帧      │
 └──────────────┬──────────────────┘
-               │ HTTP REST (内部)
+               │ HTTP REST（仅传文件路径与识别结果）
 ┌──────────────┴──────────────────┐
-│   算法服务  Python FastAPI       │  端口: 8000
-│   · 车牌识别 · 交警手势 · 车主手势 │
-└─────────────────────────────────┘
-
-┌─────────────────────────────────┐
-│ 虚拟摄像头服务 Python FastAPI    │  端口: 8010
-│ · 本机摄像头 · 测试视频 · 测试图片 │
-│ · WebRTC预览 · PNG/JPEG抓拍      │
+│ 车牌识别服务 Python FastAPI      │  端口: 8000
+├─────────────────────────────────┤
+│ 交警手势服务 Python FastAPI      │  端口: 8001
+├─────────────────────────────────┤
+│ 车主手势服务 Python FastAPI      │  端口: 8002
 └─────────────────────────────────┘
 ```
+
+道路摄像头不再通过独立服务或 WebRTC 中转。主服务内置 3 个摄像头槽位，可分别选择图片、视频、真实视频流、沙盘、本机设备或关闭；取出的帧落到共享目录，车牌和交警算法只接收文件路径。车主手势仍直接使用车内主机摄像头。
 
 ## 项目结构
 
@@ -91,8 +91,11 @@ cd backend
 vision-drive/
 ├── frontend/        # Vue 3 前端
 ├── backend/         # Java Spring Boot 后端
-├── algorithm/       # Python FastAPI 算法微服务
-├── camera_service/  # Python FastAPI 虚拟摄像头微服务
+├── algorithm/
+│   ├── license/     # 车牌识别独立微服务（8000）
+│   ├── police/      # 交警手势独立微服务（8001）
+│   └── gesture/     # 车主手势独立微服务（8002）
+├── camera_service/  # 已废弃的旧摄像头微服务，仅保留历史代码
 ├── docs/            # 项目文档
 ├── data/            # 测试数据与样本
 ├── docker/          # Docker 部署配置
@@ -116,21 +119,25 @@ cd backend
 mvn spring-boot:run
 ```
 
-### 3. 算法服务
+### 3. 三个算法服务
 ```bash
 cd algorithm
-pip install -r requirements.txt
-python main.py
+python3 -m venv license/.venv
+license/.venv/bin/pip install -r license/requirements.txt
+license/.venv/bin/python -m license.main
+
+python3 -m venv police/.venv
+police/.venv/bin/pip install -r police/requirements.txt
+police/.venv/bin/python -m police.main
+
+python3 -m venv gesture/.venv
+gesture/.venv/bin/pip install -r gesture/requirements.txt
+gesture/.venv/bin/python -m gesture.main
 ```
 
-### 4. 虚拟摄像头服务
-```bash
-cd camera_service
-../algorithm/.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8010
-```
+三个启动命令分别在独立终端运行。
 
-前端默认读取 `http://127.0.0.1:8010`，也可以通过 `VITE_CAMERA_URL` 覆盖。
-摄像头服务自带独立管理台：`http://127.0.0.1:8010/ui`，不接入主前端路由。
+摄像头配置已集成到主前端的“摄像头”模块；后端接口为 `GET /api/v1/cameras/slots`，无需启动 8010 端口。
 
 ## 团队
 

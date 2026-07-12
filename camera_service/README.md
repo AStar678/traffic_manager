@@ -1,4 +1,8 @@
-# 虚拟摄像头微服务
+# 旧虚拟摄像头微服务（已废弃）
+
+> 当前主系统已把三路摄像头管理融合进 Java 主服务。正常开发、部署和验收均不要启动本目录，也不要占用 8010 端口。主前端的“摄像头”模块调用 `/api/v1/cameras/**`，帧通过共享文件目录交给车牌与交警算法。
+
+以下内容仅用于查阅旧实现，不再属于当前运行架构。
 
 这个服务用于模拟系统中的摄像头输入，对前端提供 WebRTC 实时视频预览和 PNG/JPEG 单帧截图。
 
@@ -6,7 +10,9 @@
 
 ```bash
 cd traffic_manager/camera_service
-../algorithm/.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8010 --no-access-log
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8010 --no-access-log
 ```
 
 ## 常用接口

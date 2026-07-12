@@ -14,12 +14,52 @@ services:
       dockerfile: ../docker/Dockerfile.backend
     ports:
       - "8080:8080"
+    environment:
+      LICENSE_ALGORITHM_BASE_URL: http://license:8000
+      POLICE_ALGORITHM_BASE_URL: http://police:8001
+      GESTURE_ALGORITHM_BASE_URL: http://gesture:8002
+      CAMERA_FRAME_DIR: /shared/camera-frames
+    volumes:
+      - camera_frames:/shared/camera-frames
     depends_on:
-      - algorithm
+      - license
+      - police
+      - gesture
 
-  algorithm:
+  license:
     build:
       context: ../algorithm
-      dockerfile: ../docker/Dockerfile.algorithm
+      dockerfile: ../docker/Dockerfile.license
     ports:
       - "8000:8000"
+    environment:
+      LICENSE_PLATE_SOURCE_DIR: /models/license
+      CLPRNET_SOURCE: /models/license/CLPRNet-main
+      CLPRNET_MODEL: /models/license/CLPRNet-main/resource/CLPRNet.pth
+    volumes:
+      - ${LICENSE_PLATE_SOURCE_DIR:-../../../车牌识别}:/models/license:ro
+      - camera_frames:/shared/camera-frames:ro
+
+  police:
+    build:
+      context: ../algorithm
+      dockerfile: ../docker/Dockerfile.police
+    ports:
+      - "8001:8001"
+    environment:
+      POLICE_GESTURE_SOURCE_DIR: /models/police
+    volumes:
+      - ${POLICE_GESTURE_SOURCE_DIR:-../../../交警指令识别}:/models/police:ro
+      - camera_frames:/shared/camera-frames:ro
+
+  gesture:
+    build:
+      context: ../algorithm
+      dockerfile: ../docker/Dockerfile.gesture
+    ports:
+      - "8002:8002"
+    volumes:
+      - ../algorithm/gesture/data:/app/gesture/data
+
+volumes:
+  camera_frames:

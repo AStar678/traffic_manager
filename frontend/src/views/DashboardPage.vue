@@ -1,226 +1,217 @@
 <template>
-  <div class="dashboard">
-    <!-- 核心驾驶信息：速度 + 档位 -->
-    <div class="hero-row">
-      <!-- 速度表区域 -->
-      <div class="speedo-section">
-        <div class="speed-ring">
-          <svg viewBox="0 0 200 200" class="speed-svg">
-            <circle cx="100" cy="100" r="88" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="10" />
-            <circle
-              cx="100" cy="100" r="88"
-              fill="none"
-              stroke="url(#speedGrad)"
-              stroke-width="10"
-              stroke-linecap="round"
-              :stroke-dasharray="`${(vehicle.speed / 120) * 553} 553`"
-              stroke-dashoffset="0"
-              transform="rotate(-90 100 100)"
-              class="speed-arc"
-            />
-            <defs>
-              <linearGradient id="speedGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                <stop offset="0%" stop-color="#00b4d8" />
-                <stop offset="100%" stop-color="#00e5ff" />
-              </linearGradient>
-            </defs>
-          </svg>
-          <div class="speed-value">
-            <strong>{{ vehicle.speed }}</strong>
-            <span>km/h</span>
-          </div>
-        </div>
-        <!-- 档位 -->
-        <div class="gear-badge">
-          <span>档位</span>
-          <strong>{{ vehicle.gear }}</strong>
-        </div>
+  <div class="dashboard unified-cockpit">
+    <header class="perception-bar">
+      <div>
+        <span class="section-kicker">DRIVE ASSIST</span>
+        <strong>行车感知中心</strong>
+        <small>三路道路感知与车内手势同步运行</small>
       </div>
-
-      <!-- 中央：驾驶输入 + 本机手势摄像头 -->
-      <div class="camera-duo">
-        <div class="camera-feed card">
-          <div class="camera-inner">
-            <video
-              v-show="cameraVideoReady"
-              ref="cameraVideoRef"
-              class="camera-stream"
-              autoplay
-              muted
-              playsinline
-              @loadeddata="markCameraVideoReady"
-              @playing="markCameraVideoReady"
-            ></video>
-            <img
-              v-if="!cameraVideoReady && cameraDisplayUrl"
-              class="camera-stream"
-              :src="cameraDisplayUrl"
-              alt="前置摄像头降级预览"
-            >
-            <div v-if="!cameraVideoReady && !cameraDisplayUrl" class="camera-placeholder">
-              <el-icon :size="42"><Camera /></el-icon>
-              <span>{{ cameraError || '等待摄像头服务' }}</span>
-            </div>
-            <div class="camera-overlay-info">
-              <span class="camera-label">{{ selectedCameraSource?.name || '前置摄像头' }}</span>
-              <span class="camera-live">● {{ cameraStatusText }}</span>
-            </div>
-            <div class="scan-line-animated"></div>
-            <!-- 检测到车牌时显示浮层 -->
-            <div class="detection-hint" v-if="vehicle.policeDetection.detected">
-              <span class="status-dot warning"></span>
-              检测到交警 · 置信度 {{ Math.round(vehicle.policeDetection.confidence * 100) }}%
-              <button class="action-pill" @click="$router.push('/police-gesture')">查看</button>
-            </div>
-          </div>
+      <div class="perception-state" :class="{ stopped: !perceptionEnabled }">
+        <span class="state-pulse"></span>
+        <div>
+          <strong>{{ perceptionEnabled ? '全域识别运行中' : '识别已关闭' }}</strong>
+          <small>{{ perceptionEnabled ? '车牌 · 交警 · 车主手势' : '道路视频仍保持预览' }}</small>
         </div>
-
-        <div class="camera-feed card gesture-camera-feed" :class="{ active: gestureControlActive }">
-          <div class="camera-inner gesture-camera-inner">
-            <video
-              v-show="gestureCameraReady"
-              ref="gestureVideoRef"
-              class="camera-stream gesture-local-video"
-              autoplay
-              muted
-              playsinline
-              @loadeddata="markGestureCameraReady"
-              @playing="markGestureCameraReady"
-            ></video>
-            <canvas
-              v-show="gestureCameraReady"
-              ref="gestureOverlayRef"
-              class="gesture-keypoint-overlay"
-            ></canvas>
-            <div v-if="!gestureCameraReady" class="camera-placeholder gesture-placeholder">
-              <el-icon :size="42"><Pointer /></el-icon>
-              <span>{{ gestureCameraError || '打开手势控车后启用本机摄像头' }}</span>
-            </div>
-            <div class="camera-overlay-info">
-              <span class="camera-label">本机手势摄像头</span>
-              <span class="camera-live" :class="{ online: gestureControlActive }">● {{ gestureCameraStatusText }}</span>
-            </div>
-            <div v-if="gestureCameraReady" class="gesture-camera-readout">
-              <div>
-                <span>匹配</span>
-                <strong>{{ gestureMatchLabel }}</strong>
-              </div>
-              <div>
-                <span>相似度</span>
-                <strong>{{ gestureScoreLabel }}</strong>
-              </div>
-              <div>
-                <span>状态</span>
-                <strong>{{ gestureTriggerLabel }}</strong>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 右侧：车辆健康状态卡片 -->
-      <div class="health-stack">
-        <div class="card health-item" v-for="item in health.slice(0, 3)" :key="item.name">
-          <div class="health-head">
-            <span>{{ item.name }}</span>
-            <span class="status-dot" :class="item.status === 'normal' ? 'online' : 'warning'"></span>
-          </div>
-          <strong>{{ item.value }}</strong>
-          <p>{{ item.detail }}</p>
-        </div>
-      </div>
-    </div>
-
-    <!-- 第二行：车辆状态 + 快捷操作 -->
-    <div class="secondary-row">
-      <!-- 胎压 + 空调 -->
-      <div class="card status-grid" :class="{ active: lastGestureControl?.actionType?.startsWith('CLIMATE') }">
-        <h3 class="card-title">车辆状态</h3>
-        <div class="status-items">
-          <div
-            v-for="tire in vehicle.tirePressure"
-            :key="tire.name"
-            class="status-item"
-            :class="{ alert: tire.status === 'warning' }"
-          >
-            <el-icon><Location /></el-icon>
-            <div>
-              <strong>{{ tire.value }} <small>bar</small></strong>
-              <span>{{ tire.name }}胎压</span>
-            </div>
-          </div>
-        </div>
-        <div class="gradient-divider"></div>
-        <div class="climate-row">
-          <div class="climate-icon">
-            <el-icon :size="28"><Sunny /></el-icon>
-          </div>
-          <div class="climate-info">
-            <strong>{{ vehicle.climate.temperature }}°C</strong>
-            <span>空调 · {{ vehicle.climate.mode }}</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- 多媒体卡片 -->
-      <div class="card media-card" :class="{ active: ['VOLUME_UP', 'VOLUME_DOWN', 'NEXT_MEDIA'].includes(lastGestureControl?.actionType) }">
-        <h3 class="card-title">正在播放</h3>
-        <div class="media-art">
-          <el-icon :size="40"><Headset /></el-icon>
-        </div>
-        <strong class="media-track">{{ vehicle.audio.track }}</strong>
-        <span class="media-meta">音量 {{ vehicle.audio.volume }}%</span>
-        <div class="media-controls">
-          <el-button circle><el-icon><VideoPlay /></el-icon></el-button>
-          <el-button circle><el-icon><ArrowRight /></el-icon></el-button>
-        </div>
-      </div>
-
-      <!-- 电话状态 -->
-      <div class="card phone-card" :class="{ active: ['ANSWER_CALL', 'HANG_UP'].includes(lastGestureControl?.actionType) }">
-        <h3 class="card-title">电话</h3>
-        <div class="phone-status">
-          <el-icon :size="36"><Phone /></el-icon>
-          <strong>{{ vehicle.phone.status }}</strong>
-          <span>{{ vehicle.phone.caller }}</span>
-        </div>
-      </div>
-
-      <div class="card gesture-control-card" :class="{ active: gestureControlActive || lastGestureControl }">
-        <h3 class="card-title">手势控制</h3>
-        <div v-if="lastGestureControl" class="gesture-control-state">
-          <span class="gesture-badge">{{ lastGestureControl.gestureName }}</span>
-          <strong>{{ lastGestureControl.actionLabel }}</strong>
-          <small>{{ lastControlTime }} · 置信度 {{ Math.round(lastGestureControl.confidence * 100) }}%</small>
-        </div>
-        <div v-else class="gesture-control-empty">
-          <el-icon :size="32"><Pointer /></el-icon>
-          <span>{{ gestureControlStatus }}</span>
-        </div>
-        <button
-          class="gesture-open-button"
-          type="button"
-          :class="{ running: gestureControlActive }"
-          :disabled="gestureControlLoading"
-          @click="toggleGestureControl"
-        >
-          {{ gestureControlButtonText }}
+        <button class="perception-toggle" type="button" @click="toggleUnifiedPerception">
+          <el-icon><component :is="perceptionEnabled ? 'VideoPause' : 'VideoPlay'" /></el-icon>
+          {{ perceptionEnabled ? '关闭识别' : '开启识别' }}
         </button>
       </div>
+    </header>
 
-      <!-- 告警快捷入口 -->
-      <div class="card alert-card">
-        <h3 class="card-title">系统告警</h3>
-        <div class="alert-mini" v-for="alert in recentAlerts" :key="alert.id" @click="$router.push('/alert-dashboard')">
-          <span class="status-dot" :class="alert.severity === 'CRITICAL' ? 'offline' : 'warning'"></span>
-          <div>
-            <strong>{{ alert.title }}</strong>
-            <span>{{ alert.occurredAt }}</span>
+    <section class="cockpit-grid">
+      <aside class="drive-rail">
+        <div class="speedo-section compact-speedo">
+          <div class="speed-ring">
+            <svg viewBox="0 0 200 200" class="speed-svg" aria-hidden="true">
+              <circle cx="100" cy="100" r="88" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="10" />
+              <circle
+                cx="100" cy="100" r="88"
+                fill="none"
+                stroke="url(#speedGrad)"
+                stroke-width="10"
+                stroke-linecap="round"
+                :stroke-dasharray="`${Math.min(vehicle.speed / 120, 1) * 553} 553`"
+                transform="rotate(-90 100 100)"
+                class="speed-arc"
+              />
+              <defs>
+                <linearGradient id="speedGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stop-color="#00b4d8" />
+                  <stop offset="100%" stop-color="#00e5ff" />
+                </linearGradient>
+              </defs>
+            </svg>
+            <div class="speed-value"><strong>{{ vehicle.speed }}</strong><span>km/h</span></div>
+          </div>
+          <div class="gear-badge"><span>当前档位</span><strong>{{ vehicle.gear }}</strong></div>
+        </div>
+
+        <div class="drive-health card">
+          <div v-for="item in health.slice(0, 3)" :key="item.name" class="health-line">
+            <span><i class="status-dot" :class="item.status === 'normal' ? 'online' : 'warning'"></i>{{ item.name }}</span>
+            <strong>{{ item.value }}</strong>
           </div>
         </div>
-        <button class="action-link" @click="$router.push('/alert-dashboard')">查看全部 →</button>
-      </div>
-    </div>
+      </aside>
+
+      <section class="vision-stage" aria-label="道路与车内摄像头实时画面">
+        <div class="camera-duo compact-camera-duo">
+          <article class="camera-feed card">
+            <div class="camera-inner">
+              <video
+                v-show="cameraVideoReady"
+                :ref="setDashboardCameraVideoRef"
+                class="camera-stream"
+                autoplay muted playsinline
+                @loadeddata="markCameraVideoReady"
+                @playing="markCameraVideoReady"
+              ></video>
+              <img v-if="!cameraVideoReady && cameraDisplayUrl" class="camera-stream" :src="cameraDisplayUrl" alt="前向道路摄像头预览">
+              <div v-if="!cameraVideoReady && !cameraDisplayUrl" class="camera-placeholder">
+                <el-icon :size="36"><Camera /></el-icon>
+                <span>{{ cameraError || '等待主服务摄像头模块' }}</span>
+              </div>
+              <div class="camera-overlay-info">
+                <span class="camera-label">{{ selectedCameraSource?.name || '前向道路摄像头' }}</span>
+                <span class="camera-live">● {{ cameraStatusText }}</span>
+              </div>
+              <div class="camera-slot-switcher" aria-label="主画面摄像头选择">
+                <button
+                  v-for="slot in cameraSlots"
+                  :key="slot.slotId"
+                  type="button"
+                  :disabled="slot.sourceType === 'OFF'"
+                  :class="{ active: slot.slotId === Number(selectedCameraSourceId) }"
+                  @click="selectCameraSlot(slot.slotId)"
+                >CAM {{ slot.slotId }}</button>
+              </div>
+              <div v-if="perceptionEnabled" class="scan-line-animated"></div>
+              <div class="vision-caption">
+                <span>道路感知</span>
+                <strong>{{ roadPerceptionCaption }}</strong>
+              </div>
+            </div>
+          </article>
+
+          <article class="camera-feed card gesture-camera-feed" :class="{ active: gestureControlActive }">
+            <div class="camera-inner gesture-camera-inner">
+              <video
+                v-show="gestureCameraReady"
+                ref="gestureVideoRef"
+                class="camera-stream gesture-local-video"
+                autoplay muted playsinline
+                @loadeddata="markGestureCameraReady"
+                @playing="markGestureCameraReady"
+              ></video>
+              <div v-if="!gestureCameraReady" class="camera-placeholder gesture-placeholder">
+                <el-icon :size="36"><Pointer /></el-icon>
+                <span>{{ gestureCameraError || (perceptionEnabled ? '正在启动车内摄像头' : '识别已关闭') }}</span>
+              </div>
+              <div class="camera-overlay-info">
+                <span class="camera-label">车内手势摄像头</span>
+                <span class="camera-live" :class="{ online: gestureControlActive }">● {{ gestureCameraStatusText }}</span>
+              </div>
+              <div class="vision-caption">
+                <span>手势匹配</span>
+                <strong>{{ gestureMatchLabel }}</strong>
+                <small>{{ gestureTriggerLabel }}</small>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <div class="vehicle-strip">
+          <div class="vehicle-metric">
+            <el-icon><Sunny /></el-icon><span>空调</span><strong>{{ vehicle.climate.temperature }}°C</strong><small>{{ vehicle.climate.mode }}</small>
+          </div>
+          <div class="vehicle-metric">
+            <el-icon><Headset /></el-icon><span>多媒体</span><strong>{{ vehicle.audio.track }}</strong><small>音量 {{ vehicle.audio.volume }}%</small>
+          </div>
+          <div class="vehicle-metric">
+            <el-icon><Phone /></el-icon><span>电话</span><strong>{{ vehicle.phone.status }}</strong><small>{{ vehicle.phone.caller }}</small>
+          </div>
+          <button class="vehicle-metric alert-shortcut" type="button" @click="$router.push('/alert-dashboard')">
+            <el-icon><Bell /></el-icon><span>系统告警</span><strong>{{ recentAlerts.length }} 条</strong><small>查看全部</small>
+          </button>
+        </div>
+      </section>
+
+      <aside class="recognition-rail">
+        <article class="recognition-card plate-result" :class="{ live: perceptionEnabled }">
+          <div class="recognition-head">
+            <span class="recognition-icon"><el-icon><Postcard /></el-icon></span>
+            <div><small>车牌识别</small><strong>{{ plateStatusText }}</strong></div>
+            <span class="live-mark">{{ perceptionEnabled ? 'LIVE' : 'OFF' }}</span>
+          </div>
+          <div class="recognition-value plate-number">{{ latestPlate?.plateNumber || '暂未检测' }}</div>
+          <div class="recognition-meta">
+            <span class="plate-summary-facts"><i v-if="latestPlate" :class="`plate-color-${plateColorKey(latestPlate)}`"></i>{{ latestPlate ? plateTypeText : '等待车牌进入画面' }}</span>
+            <span>{{ plateResult.latencyMs || 0 }} ms</span>
+          </div>
+          <div v-if="plateExpanded" class="all-plates-list">
+            <div v-for="plate in allPlateDetections" :key="`${plate.cameraSlotId}-${plate.objectId}-${plate.plateNumber}`" :title="plate.cameraName">
+              <span>CAM {{ plate.cameraSlotId }}</span>
+              <strong>{{ plate.plateNumber || '未知车牌' }}</strong>
+              <small :class="`plate-color-${plateColorKey(plate)}`">{{ plateColorName(plate) }}</small>
+              <em>{{ plateConfidenceText(plate) }}</em>
+            </div>
+            <p v-if="!allPlateDetections.length">当前三路画面暂无车牌</p>
+          </div>
+          <div class="plate-actions">
+            <button class="detail-button secondary" type="button" @click="plateExpanded = !plateExpanded">
+              {{ plateExpanded ? '收起' : `展开全部 (${allPlateDetections.length})` }}
+            </button>
+            <button class="detail-button" type="button" @click="plateDialogOpen = true">
+              查看细节 <el-icon><ArrowRight /></el-icon>
+            </button>
+          </div>
+        </article>
+
+        <article class="recognition-card police-result" :class="{ live: perceptionEnabled }">
+          <div class="recognition-head">
+            <span class="recognition-icon"><el-icon><Aim /></el-icon></span>
+            <div><small>交警手势</small><strong>{{ policeStatusText }}</strong></div>
+            <span class="live-mark">{{ perceptionEnabled ? 'LIVE' : 'OFF' }}</span>
+          </div>
+          <div class="recognition-value">{{ latestPoliceGesture }}</div>
+          <div class="recognition-meta">
+            <span>{{ latestPoliceAction }}</span>
+            <span>{{ policeConfidenceText }}</span>
+          </div>
+          <button class="detail-button" type="button" @click="policeDialogOpen = true">
+            查看细节 <el-icon><ArrowRight /></el-icon>
+          </button>
+        </article>
+
+        <article class="recognition-card owner-result" :class="{ live: gestureControlActive }">
+          <div class="recognition-head">
+            <span class="recognition-icon"><el-icon><Pointer /></el-icon></span>
+            <div><small>车主手势</small><strong>{{ gestureControlStatus }}</strong></div>
+            <span class="live-mark">{{ gestureControlActive ? 'LIVE' : 'OFF' }}</span>
+          </div>
+          <div class="recognition-value">{{ lastGestureControl?.gestureName || gestureMatchLabel }}</div>
+          <div class="recognition-meta">
+            <span>{{ lastGestureControl?.actionLabel || '等待操作手势' }}</span>
+            <span>{{ lastGestureControl ? lastControlTime : gestureScoreLabel }}</span>
+          </div>
+          <div class="owner-actions">
+            <button class="detail-button" type="button" @click="openOwnerDetail">查看细节</button>
+            <button class="detail-button secondary" type="button" @click="openOwnerSettings">手势设置</button>
+          </div>
+        </article>
+      </aside>
+    </section>
+
+    <el-dialog v-model="plateDialogOpen" title="车牌识别详情" width="94vw" top="4vh" destroy-on-close class="recognition-dialog" @closed="restoreDashboardCamera">
+      <LicensePlatePage embedded :external-result="plateResult" :external-recognizing="perceptionEnabled" @toggle-recognition="toggleUnifiedPerception" />
+    </el-dialog>
+    <el-dialog v-model="policeDialogOpen" title="交警手势识别详情" width="94vw" top="4vh" destroy-on-close class="recognition-dialog" @closed="restoreDashboardCamera">
+      <PoliceGesturePage embedded :external-result="policeResult" :external-recognizing="perceptionEnabled" @toggle-recognition="toggleUnifiedPerception" />
+    </el-dialog>
+    <el-dialog v-model="ownerDialogOpen" title="车主手势识别详情" width="94vw" top="3vh" destroy-on-close class="recognition-dialog owner-dialog" @closed="ownerSettingsRequested = false">
+      <OwnerGesturePage ref="ownerDetailRef" embedded :open-management-on-mount="ownerSettingsRequested" />
+    </el-dialog>
   </div>
 </template>
 
@@ -228,10 +219,15 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { DrawingUtils, FilesetResolver, GestureRecognizer } from '@/vendor/tasks-vision/vision_bundle.mjs'
 import { executeOwnerGestureControl, getOwnerGestureControlSettings, getOwnerGestureData } from '@/api/ownerGestures'
+import { getInferenceData, inferenceCameras } from '@/api/inference'
 import { mockSystemHealth, mockAlerts } from '@/utils/mockData'
 import { useAlertStore } from '@/stores/alert'
 import { useCameraSource } from '@/composables/useCameraSource'
 import { useVehicleStore } from '@/stores/vehicle'
+import { POLICE_GESTURE_MAP, TASK_TYPES } from '@/utils/constants'
+import LicensePlatePage from '@/views/LicensePlatePage.vue'
+import PoliceGesturePage from '@/views/PoliceGesturePage.vue'
+import OwnerGesturePage from '@/views/OwnerGesturePage.vue'
 import {
   OWNER_GESTURE_RECOGNITION_CONFIG,
   extractFeatureVector,
@@ -259,6 +255,9 @@ const vehicleStore = useVehicleStore()
 const vehicle = vehicleStore.vehicle
 const health = mockSystemHealth
 const {
+  selectedCameraSourceId,
+  cameraSlots,
+  activeCameraSlots,
   selectedCameraSource,
   cameraStatus,
   cameraError,
@@ -266,8 +265,24 @@ const {
   cameraVideoRef,
   cameraVideoReady,
   markCameraVideoReady,
-  refreshCameraPreview
+  refreshCameraPreview,
+  selectCameraSlot
 } = useCameraSource()
+
+const perceptionEnabled = ref(true)
+const plateResult = ref(emptyPerceptionResult(TASK_TYPES.LICENSE_PLATE))
+const policeResult = ref(emptyPerceptionResult(TASK_TYPES.POLICE_GESTURE))
+const plateRecognitionLoading = ref(false)
+const policeRecognitionLoading = ref(false)
+const plateRecognitionError = ref('')
+const policeRecognitionError = ref('')
+const plateDialogOpen = ref(false)
+const plateExpanded = ref(false)
+const policeDialogOpen = ref(false)
+const ownerDialogOpen = ref(false)
+const ownerSettingsRequested = ref(false)
+const ownerDetailRef = ref(null)
+const dashboardCameraElement = ref(null)
 
 const gestureControlActive = ref(false)
 const gestureControlLoading = ref(false)
@@ -299,6 +314,8 @@ let lastGestureRecognitionDisplay
 let gestureControlBindings = new Map()
 let gestureControlConfig = {}
 let gestureSocketReconnectTimer
+let plateRecognitionTimer
+let policeRecognitionTimer
 
 const cameraStatusText = computed(() => {
   const labels = { idle: '待机', loading: '连接中', ready: 'LIVE', empty: '无源', offline: '离线' }
@@ -322,16 +339,183 @@ const lastControlTime = computed(() => {
   return new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 })
 
+const latestPlate = computed(() => plateResult.value.detections?.[0] || null)
+const allPlateDetections = computed(() => plateResult.value.detections || [])
+const plateTypeText = computed(() => {
+  const item = latestPlate.value
+  if (!item) return '暂无类型'
+  return `颜色：${plateColorName(item)} · 置信度：${plateConfidenceText(item)}`
+})
+
+function plateColorKey(item) {
+  const value = String(item?.plateColor || item?.plateType || '').toLowerCase()
+  if (value.includes('blue') || value.includes('蓝')) return 'blue'
+  if (value.includes('green') || value.includes('绿') || value.includes('新能源')) return 'green'
+  if (value.includes('yellow') || value.includes('黄')) return 'yellow'
+  if (value.includes('white') || value.includes('白')) return 'white'
+  if (value.includes('black') || value.includes('黑')) return 'black'
+  return 'unknown'
+}
+
+function plateColorName(item) {
+  return { blue: '蓝色', green: '绿色', yellow: '黄色', white: '白色', black: '黑色', unknown: '未知' }[plateColorKey(item)]
+}
+
+function plateConfidenceText(item) {
+  const confidence = Number(item?.ocrConfidence ?? item?.confidence ?? item?.detectionConfidence)
+  return Number.isFinite(confidence) ? `${Math.round(confidence * 100)}%` : '--'
+}
+const latestPoliceDetection = computed(() => policeResult.value.detections?.[0] || null)
+const latestPoliceGesture = computed(() => {
+  const detection = latestPoliceDetection.value
+  return detection?.gestureName || POLICE_GESTURE_MAP[detection?.gestureCode] || '暂未检测'
+})
+const latestPoliceAction = computed(() => {
+  const detection = latestPoliceDetection.value
+  if (detection?.action) return detection.action
+  const actions = {
+    STOP: '停车等待', GO_STRAIGHT: '允许通行', LEFT_TURN: '左转通行',
+    LEFT_WAIT: '进入待转区', RIGHT_TURN: '右转通行', LANE_CHANGE: '变更车道',
+    SLOW_DOWN: '减速慢行', PULL_OVER: '靠边停车'
+  }
+  return actions[detection?.gestureCode] || '等待交通指令'
+})
+const policeConfidenceText = computed(() => {
+  const confidence = Number(latestPoliceDetection.value?.confidence)
+  return Number.isFinite(confidence) ? `${Math.round(confidence * 100)}%` : '--'
+})
+const plateStatusText = computed(() => {
+  if (!perceptionEnabled.value) return '已停止'
+  if (plateRecognitionError.value) return '服务异常'
+  if (plateRecognitionLoading.value) return '识别中'
+  return latestPlate.value ? '已同步结果' : '持续扫描中'
+})
+const policeStatusText = computed(() => {
+  if (!perceptionEnabled.value) return '已停止'
+  if (policeRecognitionError.value) return '服务异常'
+  if (policeRecognitionLoading.value) return '识别中'
+  return latestPoliceDetection.value ? '已同步结果' : '持续扫描中'
+})
+const roadPerceptionCaption = computed(() => {
+  if (!perceptionEnabled.value) return '仅视频预览'
+  const plateCount = plateResult.value.detections?.length || 0
+  if (latestPoliceDetection.value) return `交警指令：${latestPoliceGesture.value}`
+  if (plateCount) return `已检测 ${plateCount} 个车牌`
+  return '车牌与交警手势同步检测'
+})
+
 onMounted(() => {
   alertStore.fetchAlerts()
   refreshCameraPreview()
+  startRoadRecognition()
+  void startGestureControl()
 })
 
 onBeforeUnmount(() => {
+  stopRoadRecognition()
   stopGestureControl()
 })
 
 const recentAlerts = computed(() => mockAlerts.slice(0, 2))
+
+function emptyPerceptionResult(taskType) {
+  return {
+    taskType,
+    latencyMs: 0,
+    image: { width: 1280, height: 720 },
+    detections: [],
+    detectionCount: 0,
+    annotatedImageUrl: ''
+  }
+}
+
+function setDashboardCameraVideoRef(element) {
+  if (!element) return
+  dashboardCameraElement.value = element
+  cameraVideoRef.value = element
+}
+
+function restoreDashboardCamera() {
+  void nextTick(() => {
+    if (dashboardCameraElement.value) {
+      cameraVideoRef.value = dashboardCameraElement.value
+    }
+    refreshCameraPreview()
+  })
+}
+
+function startRoadRecognition() {
+  clearInterval(plateRecognitionTimer)
+  clearInterval(policeRecognitionTimer)
+  void recognizeRoadTask(TASK_TYPES.LICENSE_PLATE)
+  void recognizeRoadTask(TASK_TYPES.POLICE_GESTURE)
+  plateRecognitionTimer = window.setInterval(() => {
+    void recognizeRoadTask(TASK_TYPES.LICENSE_PLATE)
+  }, 800)
+  policeRecognitionTimer = window.setInterval(() => {
+    void recognizeRoadTask(TASK_TYPES.POLICE_GESTURE)
+  }, 1000)
+}
+
+function stopRoadRecognition() {
+  clearInterval(plateRecognitionTimer)
+  clearInterval(policeRecognitionTimer)
+  plateRecognitionTimer = undefined
+  policeRecognitionTimer = undefined
+}
+
+async function recognizeRoadTask(taskType) {
+  if (!perceptionEnabled.value || !activeCameraSlots.value.length) return
+  const loading = taskType === TASK_TYPES.LICENSE_PLATE ? plateRecognitionLoading : policeRecognitionLoading
+  const errorState = taskType === TASK_TYPES.LICENSE_PLATE ? plateRecognitionError : policeRecognitionError
+  if (loading.value) return
+  loading.value = true
+  try {
+    const response = await inferenceCameras(taskType)
+    if (!perceptionEnabled.value) return
+    const data = getInferenceData(response) || {}
+    const nextResult = {
+      ...emptyPerceptionResult(taskType),
+      ...data,
+      detections: data.detections || []
+    }
+    if (taskType === TASK_TYPES.LICENSE_PLATE) plateResult.value = nextResult
+    else policeResult.value = nextResult
+    errorState.value = ''
+  } catch (error) {
+    console.error(`${taskType} recognition failed`, error)
+    errorState.value = '识别服务连接失败'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function toggleUnifiedPerception() {
+  if (perceptionEnabled.value) {
+    perceptionEnabled.value = false
+    stopRoadRecognition()
+    stopGestureControl()
+    gestureControlStatus.value = '识别已关闭'
+    gestureTriggerLabel.value = '识别已关闭'
+    return
+  }
+
+  perceptionEnabled.value = true
+  plateRecognitionError.value = ''
+  policeRecognitionError.value = ''
+  startRoadRecognition()
+  await startGestureControl()
+}
+
+function openOwnerDetail() {
+  ownerSettingsRequested.value = false
+  ownerDialogOpen.value = true
+}
+
+function openOwnerSettings() {
+  ownerSettingsRequested.value = true
+  ownerDialogOpen.value = true
+}
 
 async function toggleGestureControl() {
   if (gestureControlActive.value || gestureControlLoading.value) {
@@ -1504,5 +1688,584 @@ function restoreLastGestureRecognitionDisplay() {
   .camera-duo {
     grid-template-columns: 1fr;
   }
+}
+
+/* ===== 一体化驾驶主界面 ===== */
+.unified-cockpit {
+  gap: 12px;
+  min-height: 100%;
+}
+
+.perception-bar {
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 10px 14px 10px 18px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-md);
+  background: linear-gradient(90deg, rgba(0, 180, 216, 0.09), rgba(22, 29, 43, 0.78) 38%, rgba(22, 29, 43, 0.96));
+}
+
+.perception-bar > div:first-child {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  column-gap: 10px;
+}
+
+.section-kicker {
+  color: var(--primary-color);
+  font: 800 10px/1 "SF Mono", "Cascadia Code", monospace;
+  letter-spacing: 1.5px;
+}
+
+.perception-bar > div:first-child strong {
+  color: var(--text-primary);
+  font-size: 18px;
+  letter-spacing: 0.3px;
+}
+
+.perception-bar > div:first-child small {
+  grid-column: 1 / -1;
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.perception-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.state-pulse {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+  border-radius: 50%;
+  background: var(--success-color);
+  box-shadow: 0 0 0 5px rgba(0, 230, 118, 0.12), 0 0 18px rgba(0, 230, 118, 0.38);
+  animation: pulseNumber 1.6s ease-in-out infinite;
+}
+
+.perception-state.stopped .state-pulse {
+  background: var(--text-muted);
+  box-shadow: 0 0 0 5px rgba(88, 102, 128, 0.13);
+  animation: none;
+}
+
+.perception-state > div {
+  min-width: 152px;
+}
+
+.perception-state strong,
+.perception-state small {
+  display: block;
+}
+
+.perception-state strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.perception-state small {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.perception-toggle {
+  min-width: 112px;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 14px;
+  border: 1px solid rgba(0, 180, 216, 0.34);
+  border-radius: 10px;
+  background: rgba(0, 180, 216, 0.1);
+  color: var(--primary-color);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.perception-state:not(.stopped) .perception-toggle:hover {
+  border-color: rgba(255, 61, 0, 0.42);
+  background: rgba(255, 61, 0, 0.1);
+  color: #ff7043;
+}
+
+.cockpit-grid {
+  display: grid;
+  grid-template-columns: 174px minmax(0, 1fr) 304px;
+  gap: 12px;
+  align-items: stretch;
+  min-height: 0;
+}
+
+.drive-rail,
+.recognition-rail,
+.vision-stage {
+  min-width: 0;
+}
+
+.drive-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, rgba(22, 29, 43, 0.95), rgba(15, 21, 34, 0.94));
+}
+
+.compact-speedo {
+  gap: 4px;
+}
+
+.compact-speedo .speed-ring {
+  width: 144px;
+  height: 144px;
+}
+
+.compact-speedo .speed-value strong {
+  font-size: 46px;
+}
+
+.compact-speedo .speed-value span {
+  font-size: 11px;
+}
+
+.compact-speedo .gear-badge {
+  width: 100%;
+  flex-direction: row;
+  justify-content: space-between;
+  padding: 8px 14px;
+  border-radius: 10px;
+}
+
+.compact-speedo .gear-badge strong {
+  font-size: 28px;
+}
+
+.drive-health {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px;
+}
+
+.health-line {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.health-line:last-child { border-bottom: 0; }
+
+.health-line span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.health-line .status-dot {
+  margin-right: 5px;
+}
+
+.health-line strong {
+  flex: 0 0 auto;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.vision-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.compact-camera-duo {
+  flex: 1;
+  grid-template-columns: minmax(0, 1.08fr) minmax(240px, 0.92fr);
+  min-height: 346px;
+}
+
+.compact-camera-duo .camera-inner {
+  min-height: 346px;
+}
+
+.vision-caption {
+  position: absolute;
+  z-index: 4;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 12px;
+  padding: 11px 16px;
+  background: linear-gradient(180deg, rgba(8, 12, 20, 0.12), rgba(8, 12, 20, 0.92));
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.camera-slot-switcher {
+  position: absolute;
+  z-index: 5;
+  top: 47px;
+  left: 16px;
+  display: flex;
+  gap: 6px;
+}
+
+.camera-slot-switcher button {
+  min-width: 52px;
+  min-height: 26px;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 7px;
+  background: rgba(8,12,20,.7);
+  color: var(--text-muted);
+  font: 800 9px/1 "SF Mono", monospace;
+  cursor: pointer;
+}
+
+.camera-slot-switcher button.active {
+  border-color: rgba(0,180,216,.52);
+  background: rgba(0,180,216,.18);
+  color: var(--primary-color);
+}
+
+.camera-slot-switcher button:disabled { cursor: not-allowed; opacity: .35; }
+
+.vision-caption span {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.7px;
+}
+
+.vision-caption strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vision-caption small {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vehicle-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.vehicle-metric {
+  min-width: 0;
+  min-height: 70px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-content: center;
+  column-gap: 8px;
+  padding: 9px 11px;
+  border: 1px solid var(--border-card);
+  border-radius: 10px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.vehicle-metric .el-icon {
+  grid-row: 1 / 4;
+  align-self: center;
+  color: var(--primary-color);
+}
+
+.vehicle-metric span,
+.vehicle-metric strong,
+.vehicle-metric small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vehicle-metric span { color: var(--text-muted); font-size: 9px; }
+.vehicle-metric strong { color: var(--text-primary); font-size: 12px; }
+.vehicle-metric small { color: var(--text-secondary); font-size: 9px; }
+
+.alert-shortcut {
+  font: inherit;
+  cursor: pointer;
+}
+
+.alert-shortcut:hover { border-color: rgba(255, 171, 0, 0.32); }
+.alert-shortcut .el-icon { color: var(--warning-color); }
+
+.recognition-rail {
+  display: grid;
+  grid-template-rows: repeat(3, auto);
+  gap: 10px;
+}
+
+.recognition-card {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 13px;
+  overflow: hidden;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-md);
+  background: linear-gradient(155deg, rgba(28, 36, 52, 0.96), rgba(15, 21, 34, 0.98));
+  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+}
+
+.recognition-card.live { border-color: rgba(0, 180, 216, 0.2); }
+.police-result.live { border-color: rgba(255, 171, 0, 0.2); }
+.owner-result.live { border-color: rgba(0, 230, 118, 0.2); }
+
+.recognition-head {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.recognition-icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: rgba(0, 180, 216, 0.1);
+  color: var(--primary-color);
+}
+
+.police-result .recognition-icon { background: rgba(255, 171, 0, 0.1); color: var(--warning-color); }
+.owner-result .recognition-icon { background: rgba(0, 230, 118, 0.1); color: var(--success-color); }
+
+.recognition-head small,
+.recognition-head strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recognition-head small { color: var(--text-muted); font-size: 10px; }
+.recognition-head strong { margin-top: 2px; color: var(--text-secondary); font-size: 11px; }
+
+.live-mark {
+  padding: 3px 6px;
+  border-radius: 5px;
+  background: rgba(0, 230, 118, 0.08);
+  color: var(--success-color);
+  font: 800 9px/1 "SF Mono", monospace;
+  letter-spacing: 0.7px;
+}
+
+.recognition-card:not(.live) .live-mark {
+  background: rgba(88, 102, 128, 0.12);
+  color: var(--text-muted);
+}
+
+.recognition-value {
+  margin-top: 11px;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 21px;
+  font-weight: 800;
+  line-height: 1.12;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plate-number {
+  font-family: "SF Mono", "Cascadia Code", monospace;
+  letter-spacing: 1px;
+}
+
+.recognition-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 5px 0 10px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.recognition-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recognition-meta span:last-child { flex: 0 0 auto; }
+.plate-summary-facts { display: inline-flex; align-items: center; gap: 5px; }
+.plate-summary-facts i { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; box-shadow: 0 0 7px currentColor; }
+.plate-color-blue { color: #4da3ff !important; }
+.plate-color-blue:is(i) { background: #4da3ff; }
+.plate-color-green { color: #00e676 !important; }
+.plate-color-green:is(i) { background: #00e676; }
+.plate-color-yellow { color: #ffd43b !important; }
+.plate-color-yellow:is(i) { background: #ffd43b; }
+.plate-color-white { color: #f8fafc !important; }
+.plate-color-white:is(i) { background: #f8fafc; }
+.plate-color-black { color: #cbd5e1 !important; }
+.plate-color-black:is(i) { background: #111827; border: 1px solid #cbd5e1; }
+.plate-color-unknown { color: var(--text-muted) !important; }
+.plate-color-unknown:is(i) { background: var(--text-muted); }
+
+.detail-button {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin-top: auto;
+  border: 1px solid rgba(0, 180, 216, 0.28);
+  border-radius: 9px;
+  background: rgba(0, 180, 216, 0.08);
+  color: var(--primary-color);
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.detail-button:hover {
+  border-color: rgba(0, 180, 216, 0.5);
+  background: rgba(0, 180, 216, 0.14);
+}
+
+.owner-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin-top: auto;
+}
+
+.plate-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin-top: auto;
+}
+
+.plate-actions .detail-button { margin-top: 0; }
+
+.all-plates-list {
+  max-height: 132px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0 0 10px;
+  overflow-y: auto;
+}
+
+.all-plates-list div {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 42px 38px;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: rgba(255,255,255,.025);
+}
+
+.all-plates-list span { color: var(--primary-color); font: 800 8px/1 "SF Mono", monospace; }
+.all-plates-list strong, .all-plates-list small, .all-plates-list em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.all-plates-list strong { color: var(--text-primary); font-size: 10px; }
+.all-plates-list small, .all-plates-list em { font-size: 8px; font-style: normal; }
+.all-plates-list em { color: var(--warning-color); text-align: right; }
+.all-plates-list p { padding: 10px; color: var(--text-muted); font-size: 10px; text-align: center; }
+
+.owner-actions .detail-button { margin-top: 0; }
+.detail-button.secondary { border-color: var(--border-card); background: rgba(255, 255, 255, 0.03); color: var(--text-secondary); }
+
+:deep(.recognition-dialog) {
+  margin-bottom: 0;
+}
+
+:deep(.recognition-dialog .el-dialog__header) {
+  margin-right: 0;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+:deep(.recognition-dialog .el-dialog__body) {
+  height: calc(92vh - 66px);
+  padding: 14px 18px 18px;
+  overflow: auto;
+}
+
+:deep(.owner-dialog .el-dialog__body) {
+  height: calc(94vh - 66px);
+}
+
+@media (max-width: 1180px) {
+  .cockpit-grid { grid-template-columns: 150px minmax(0, 1fr); }
+  .recognition-rail {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: none;
+  }
+  .compact-speedo .speed-ring { width: 124px; height: 124px; }
+  .compact-speedo .speed-value strong { font-size: 40px; }
+  .compact-speedo { flex-direction: column; }
+}
+
+@media (max-width: 820px) {
+  .perception-bar,
+  .perception-state { align-items: flex-start; }
+  .perception-bar { flex-direction: column; }
+  .perception-state { width: 100%; }
+  .perception-state > div { flex: 1; }
+  .cockpit-grid { grid-template-columns: 1fr; }
+  .drive-rail { flex-direction: row; align-items: center; }
+  .compact-speedo { flex: 0 0 150px; }
+  .drive-health { flex: 1; }
+  .compact-camera-duo { grid-template-columns: 1fr; min-height: 0; }
+  .compact-camera-duo .camera-inner { min-height: 260px; }
+  .recognition-rail { grid-column: auto; grid-template-columns: 1fr; }
+  .vehicle-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 520px) {
+  .perception-state { flex-wrap: wrap; }
+  .perception-toggle { width: 100%; }
+  .drive-rail { flex-direction: column; }
+  .compact-speedo { width: 100%; flex-basis: auto; flex-direction: row; }
+  .drive-health { width: 100%; }
+  .vehicle-strip { grid-template-columns: 1fr; }
+  .owner-actions { grid-template-columns: 1fr; }
+  .plate-actions { grid-template-columns: 1fr; }
+  :deep(.recognition-dialog .el-dialog__body) { padding: 10px; }
 }
 </style>

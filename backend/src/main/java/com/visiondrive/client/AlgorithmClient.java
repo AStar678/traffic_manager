@@ -27,19 +27,33 @@ public class AlgorithmClient {
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
-    @Value("${algorithm.base-url:http://localhost:8000}")
-    private String algorithmBaseUrl;
+    @Value("${algorithm.license.base-url:http://localhost:8000}")
+    private String licenseAlgorithmBaseUrl;
+
+    @Value("${algorithm.police.base-url:http://localhost:8001}")
+    private String policeAlgorithmBaseUrl;
+
+    @Value("${algorithm.gesture.base-url:http://localhost:8002}")
+    private String gestureAlgorithmBaseUrl;
 
     @Value("${algorithm.inference.image:/api/v1/inference/image}")
     private String inferencePath;
 
     public InferenceResponse callImageInference(String taskType, String imageUrl) {
-        log.info("调用算法服务: taskType={}, imageUrl={}", taskType, imageUrl);
+        return callInference(taskType, "image_url", imageUrl);
+    }
 
-        String url = algorithmBaseUrl + inferencePath;
+    public InferenceResponse callFileInference(String taskType, String imagePath) {
+        return callInference(taskType, "image_path", imagePath);
+    }
+
+    private InferenceResponse callInference(String taskType, String inputField, String inputValue) {
+        log.info("调用算法服务: taskType={}, inputField={}", taskType, inputField);
+
+        String url = resolveInferenceBaseUrl(taskType) + inferencePath;
         Map<String, String> requestBody = new HashMap<>();
         requestBody.put("task_type", taskType);
-        requestBody.put("image_url", imageUrl);
+        requestBody.put(inputField, inputValue);
 
         HttpHeaders headers = jsonHeaders();
         headers.set("X-Request-ID", "req_" + System.currentTimeMillis());
@@ -133,7 +147,7 @@ public class AlgorithmClient {
             Map<String, Object> requestBody,
             String errorPrefix
     ) {
-        String url = algorithmBaseUrl + "/api/v1/owner-gestures" + path;
+        String url = gestureAlgorithmBaseUrl + "/api/v1/owner-gestures" + path;
         HttpHeaders headers = jsonHeaders();
         headers.set("X-Request-ID", "req_" + System.currentTimeMillis());
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
@@ -157,6 +171,16 @@ public class AlgorithmClient {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         return headers;
+    }
+
+    private String resolveInferenceBaseUrl(String taskType) {
+        if ("license_plate".equals(taskType)) {
+            return licenseAlgorithmBaseUrl;
+        }
+        if ("police_gesture".equals(taskType)) {
+            return policeAlgorithmBaseUrl;
+        }
+        throw new IllegalArgumentException("不支持的图片推理任务类型: " + taskType);
     }
 
     private Map<String, Object> parseAlgorithmPayload(String body) throws Exception {

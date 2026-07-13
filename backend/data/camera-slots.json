@@ -1,0 +1,28 @@
+[ {
+  "slotId" : 1,
+  "name" : "?? live3",
+  "sourceType" : "SANDBOX",
+  "path" : "live3",
+  "deviceIndex" : 0,
+  "status" : "ready",
+  "error" : null,
+  "frameUrl" : "/api/v1/cameras/slots/1/frame.jpg"
+}, {
+  "slotId" : 2,
+  "name" : "沙盘 live5 · 桥出口",
+  "sourceType" : "SANDBOX",
+  "path" : "live5",
+  "deviceIndex" : 0,
+  "status" : "error",
+  "error" : "[in#0 @ 000001a37faaed00] Error opening input: Invalid data found when processing input\r\nError opening input file rtsp://10.126.59.120:8554/live/live5.\r\nError opening input files: Invalid data found when processing input",
+  "frameUrl" : "/api/v1/cameras/slots/2/frame.jpg"
+}, {
+  "slotId" : 3,
+  "name" : "沙盘 live6 · 桥入口",
+  "sourceType" : "SANDBOX",
+  "path" : "live6",
+  "deviceIndex" : 0,
+  "status" : "error",
+  "error" : "[in#0 @ 0000022221eb0580] Error opening input: Invalid data found when processing input\r\nError opening input file rtsp://10.126.59.120:8554/live/live6.\r\nError opening input files: Invalid data found when processing input",
+  "frameUrl" : "/api/v1/cameras/slots/3/frame.jpg"
+} ]

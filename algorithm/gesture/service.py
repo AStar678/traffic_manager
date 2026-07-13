@@ -7,6 +7,9 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
+from gesture_dinov2_tcn import DINO_ALGORITHM_ID, Dinov2TcnPrototypeRuntime
+from gesture_dinov2_tcn.runtime import LEGACY_ALGORITHM_ID
+
 from . import config
 
 from .engine import (
@@ -83,20 +86,70 @@ BUILT_IN_GESTURES = [
 
 
 class GestureRecognitionService:
-    def __init__(self, config_path: Path, prototype_path: Path) -> None:
+    def __init__(
+        self,
+        config_path: Path,
+        prototype_path: Path,
+        deep_checkpoint_path: Path | None = None,
+        deep_prototype_path: Path | None = None,
+    ) -> None:
         self.config_path = config_path
         self.prototype_path = prototype_path
         self._lock = RLock()
         self.engine = create_recognition_engine(self._load_prototypes(), self._load_config())
+        active = str(self.engine["config"].get("activeAlgorithm") or LEGACY_ALGORITHM_ID)
+        self.active_algorithm = active if active in {LEGACY_ALGORITHM_ID, DINO_ALGORITHM_ID} else LEGACY_ALGORITHM_ID
+        self.engine["config"]["activeAlgorithm"] = self.active_algorithm
+        deep_store = deep_prototype_path or prototype_path.with_name("dinov2_tcn_gesture_prototypes.json")
+        self.deep_runtime = Dinov2TcnPrototypeRuntime(
+            deep_checkpoint_path or Path("gesture_dinov2_tcn/checkpoints/best_model.pt"),
+            deep_store,
+        )
 
     def health(self) -> dict[str, Any]:
         with self._lock:
             return {
                 "ok": True,
                 "service": "owner-gesture-recognition",
-                "prototypes": len(self.engine["prototypes"]),
-                "recording": get_recording_status(self.engine),
+                "activeAlgorithm": self.active_algorithm,
+                "prototypes": len(self._active_prototypes()),
+                "recording": self._active_recording_status(),
+                "algorithms": self.algorithm_state()["options"],
             }
+
+    def algorithm_state(self) -> dict[str, Any]:
+        return {
+            "active": self.active_algorithm,
+            "options": [
+                {
+                    "id": LEGACY_ALGORITHM_ID,
+                    "name": "MediaPipe 关键点原型",
+                    "description": "原有关键点余弦/轨迹匹配算法",
+                    "ready": True,
+                },
+                {
+                    "id": DINO_ALGORITHM_ID,
+                    "name": "DINOv2 + TCN 视频原型",
+                    "description": "RGB 视频与 175 维手部几何特征融合",
+                    **self.deep_runtime.status(),
+                },
+            ],
+        }
+
+    def select_algorithm(self, algorithm_id: str) -> dict[str, Any]:
+        target = str(algorithm_id or "").strip()
+        if target not in {LEGACY_ALGORITHM_ID, DINO_ALGORITHM_ID}:
+            raise ValueError("不支持的手势识别算法")
+        with self._lock:
+            if target == DINO_ALGORITHM_ID:
+                self.deep_runtime.ensure_ready()
+            cancel_recording(self.engine)
+            self.deep_runtime.cancel_recording()
+            self.deep_runtime.reset_live()
+            self.active_algorithm = target
+            self.engine["config"]["activeAlgorithm"] = target
+            self._persist_config()
+            return self._state_unlocked()
 
     def state(self, extra: dict[str, Any] | None = None) -> dict[str, Any]:
         with self._lock:
@@ -104,7 +157,7 @@ class GestureRecognitionService:
 
     def get_config(self) -> dict[str, Any]:
         with self._lock:
-            return {"config": self.engine["config"]}
+            return {"config": self._effective_config()}
 
     def update_config(self, payload: dict[str, Any], replace: bool = False) -> dict[str, Any]:
         with self._lock:
@@ -115,38 +168,68 @@ class GestureRecognitionService:
 
     def list_prototypes(self) -> dict[str, Any]:
         with self._lock:
-            return {"prototypes": summarize_prototypes(self.engine["prototypes"])}
+            return {"prototypes": self._active_prototypes(), "algorithm": self.algorithm_state()}
 
     def clear_prototypes(self) -> dict[str, Any]:
         with self._lock:
-            clear_prototypes(self.engine)
-            self._persist_prototypes()
+            if self._using_deep_algorithm():
+                self.deep_runtime.clear_prototypes()
+            else:
+                clear_prototypes(self.engine)
+                self._persist_prototypes()
             return self._state_unlocked()
 
     def delete_prototype(self, prototype_id: str) -> dict[str, Any]:
         with self._lock:
-            delete_prototype(self.engine, prototype_id)
-            self._persist_prototypes()
+            if self._using_deep_algorithm():
+                self.deep_runtime.delete_prototype(prototype_id)
+            else:
+                delete_prototype(self.engine, prototype_id)
+                self._persist_prototypes()
             return self._state_unlocked()
 
     def start_recording(self, payload: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
-            start_recording(self.engine, payload)
+            if self._using_deep_algorithm():
+                self.deep_runtime.start_recording(payload)
+            else:
+                start_recording(self.engine, payload)
             return self._state_unlocked()
 
     def cancel_recording(self) -> dict[str, Any]:
         with self._lock:
-            cancel_recording(self.engine)
+            if self._using_deep_algorithm():
+                self.deep_runtime.cancel_recording()
+            else:
+                cancel_recording(self.engine)
             return self._state_unlocked()
 
     def process_frame(self, vector: list[float]) -> dict[str, Any]:
+        """Backward-compatible entry point used by the original tests/API."""
         with self._lock:
             result = process_frame(self.engine, vector)
             if result.get("recordingComplete"):
                 self._persist_prototypes()
             return result
 
+    def process_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            if self._using_deep_algorithm():
+                result = self.deep_runtime.process(payload, self.engine["config"])
+                result["vehicle"] = get_vehicle_state(self.engine)
+                return result
+            vector = self._vector_from_payload(payload)
+            result = process_frame(self.engine, vector)
+            if result.get("recordingComplete"):
+                self._persist_prototypes()
+            result["algorithm"] = self.algorithm_state()
+            return result
+
     def recognize(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._using_deep_algorithm():
+            with self._lock:
+                result = self.deep_runtime.process(payload, self.engine["config"])
+                return {"recognition": result["recognition"], "algorithm": result["algorithm"]}
         vector = self._vector_from_payload(payload)
         sequence = payload.get("sequence") or []
         # 只在复制共享配置/原型时持锁；实际匹配使用请求私有快照，多个
@@ -158,6 +241,8 @@ class GestureRecognitionService:
         return {"recognition": recognition}
 
     def enroll(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._using_deep_algorithm():
+            raise ValueError("DINOv2-TCN 手势请通过视频录入流程建立原型")
         vectors = self._vectors_from_payload(payload)
         with self._lock:
             gesture = enroll_vectors(self.engine, payload, vectors)
@@ -165,6 +250,8 @@ class GestureRecognitionService:
             return self._legacy_payload({"gesture": self._legacy_gesture_for_summary(gesture)})
 
     def update(self, prototype_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._using_deep_algorithm():
+            raise ValueError("DINOv2-TCN 原型请重新录入以更新")
         with self._lock:
             gesture = update_prototype(self.engine, prototype_id, payload)
             self._persist_prototypes()
@@ -172,8 +259,11 @@ class GestureRecognitionService:
 
     def delete(self, prototype_id: str) -> dict[str, Any]:
         with self._lock:
-            delete_prototype(self.engine, prototype_id)
-            self._persist_prototypes()
+            if self._using_deep_algorithm():
+                self.deep_runtime.delete_prototype(prototype_id)
+            else:
+                delete_prototype(self.engine, prototype_id)
+                self._persist_prototypes()
             return self._legacy_payload()
 
     def legacy_library(self) -> dict[str, Any]:
@@ -218,25 +308,48 @@ class GestureRecognitionService:
 
     def _state_unlocked(self, extra: dict[str, Any] | None = None) -> dict[str, Any]:
         return {
-            "prototypes": summarize_prototypes(self.engine["prototypes"]),
-            "recording": get_recording_status(self.engine),
+            "algorithm": self.algorithm_state(),
+            "prototypes": self._active_prototypes(),
+            "recording": self._active_recording_status(),
             "vehicle": get_vehicle_state(self.engine),
-            "config": self.engine["config"],
+            "config": self._effective_config(),
             **(extra or {}),
         }
 
     def _legacy_payload(self, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+        raw_prototypes = self.deep_runtime.raw_prototypes() if self._using_deep_algorithm() else self.engine["prototypes"]
         return {
             "gestures": [
                 *self._built_in_legacy_gestures(),
-                *[self._legacy_gesture(prototype) for prototype in self.engine["prototypes"]],
+                *[self._legacy_gesture(prototype) for prototype in raw_prototypes],
             ],
-            "prototypes": summarize_prototypes(self.engine["prototypes"]),
-            "recording": get_recording_status(self.engine),
+            "algorithm": self.algorithm_state(),
+            "prototypes": self._active_prototypes(),
+            "recording": self._active_recording_status(),
             "vehicle": get_vehicle_state(self.engine),
-            "config": self.engine["config"],
+            "config": self._effective_config(),
             **(extra or {}),
         }
+
+    def _using_deep_algorithm(self) -> bool:
+        return self.active_algorithm == DINO_ALGORITHM_ID
+
+    def _active_prototypes(self) -> list[dict[str, Any]]:
+        if self._using_deep_algorithm():
+            return self.deep_runtime.list_prototypes()
+        return summarize_prototypes(self.engine["prototypes"])
+
+    def _active_recording_status(self) -> dict[str, Any]:
+        if self._using_deep_algorithm():
+            return self.deep_runtime.recording_status()
+        return get_recording_status(self.engine)
+
+    def _effective_config(self) -> dict[str, Any]:
+        effective = copy.deepcopy(self.engine["config"])
+        effective["activeAlgorithm"] = self.active_algorithm
+        if self._using_deep_algorithm():
+            effective["sampleTarget"] = self.deep_runtime.sequence_length
+        return effective
 
     def _legacy_gesture(self, prototype: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -432,4 +545,6 @@ def normalize_positive_int(value: Any, fallback: Any = None) -> int | None:
 gesture_service = GestureRecognitionService(
     config.GESTURE_CONFIG_PATH,
     config.GESTURE_PROTOTYPE_STORE,
+    config.DINO_GESTURE_CHECKPOINT,
+    config.DINO_GESTURE_PROTOTYPE_STORE,
 )

@@ -27,6 +27,9 @@ backend/.settings/
 backend/.env
 backend/.env.local
 backend/data/camera-slots.json
+deployment/server/backend.env
+deployment/server/turn.env
+deployment/server/coturn.runtime.conf
 
 # --- Python ---
 __pycache__/
@@ -45,6 +48,9 @@ algorithm/models/**/*.pth
 algorithm/models/**/*.onnx
 algorithm/models/**/*.h5
 algorithm/models/**/*.pb
+algorithm/gesture_dinov2_tcn/checkpoints/*.pt
+algorithm/gesture_dinov2_tcn/checkpoints/*.pth
+algorithm/gesture_dinov2_tcn/data/gesture_prototypes.json
 
 # --- Data ---
 data/datasets/

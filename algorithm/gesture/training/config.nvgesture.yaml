@@ -1,0 +1,38 @@
+data:
+  prepared_dir: /home/aoxiang/visiondrive/data/nvgesture_prepared
+  frames_per_video: 12
+  image_size: 224
+  workers: 2
+
+model:
+  dino_model: facebook/dinov2-small
+  fusion_dim: 256
+  embedding_dim: 128
+  tcn_dilations: [1, 2, 4, 8]
+  dropout: 0.20
+  unfrozen_dino_blocks: 2
+  dino_frame_chunk: 12
+
+episode:
+  n_way: 5
+  n_support: 1
+  n_query: 1
+
+augmentation:
+  scale_min: 0.72
+  scale_max: 1.30
+  blur_probability: 0.40
+  blur_sigma_min: 0.20
+  blur_sigma_max: 2.40
+
+training:
+  seed: 20260712
+  epochs: 35
+  episodes_per_epoch: 60
+  validation_episodes: 80
+  unfreeze_epoch: 5
+  encoder_lr: 0.00001
+  head_lr: 0.0003
+  weight_decay: 0.05
+  warmup_ratio: 0.08
+  gradient_clip_norm: 1.0

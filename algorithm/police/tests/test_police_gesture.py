@@ -92,6 +92,64 @@ def test_pipeline_keeps_skeleton_when_no_gesture_is_detected(tmp_path):
     assert len(result["detections"][0]["keypoints"]) == 14
 
 
+def test_streams_keep_independent_lstm_state(tmp_path):
+    import torch
+
+    class FakePG:
+        OUT_ARGMAX = "label"
+        OUT_SCORES = "scores"
+        COORD_NORM = "coordinates"
+
+    class FakeModel:
+        batch = 1
+        num_hidden = 1
+        device = torch.device("cpu")
+
+    class FakePredictor:
+        def __init__(self):
+            self.g_model = FakeModel()
+            self.h = torch.zeros((1, 1, 1))
+            self.c = torch.zeros((1, 1, 1))
+
+        def from_img(self, _image):
+            label = int(self.h.item())
+            self.h = self.h + 1
+            self.c = self.c + 1
+            return {
+                "label": label,
+                "scores": np.arange(9, dtype=float),
+                "coordinates": np.full((2, 14), 0.5, dtype=float),
+            }
+
+    pipeline = PoliceGesturePipeline({"source_dir": tmp_path})
+    pipeline.PG = FakePG
+    pipeline.predictor = FakePredictor()
+    image = np.zeros((8, 8, 3), dtype=np.uint8)
+
+    first_a = pipeline._predict_stream_frame(image, "camera-slot-1")
+    second_a = pipeline._predict_stream_frame(image, "camera-slot-1")
+    first_b = pipeline._predict_stream_frame(image, "camera-slot-2")
+
+    assert first_a["label"] == 0
+    assert second_a["label"] == 1
+    assert first_b["label"] == 0
+
+
+def test_pose_preprocessing_preserves_landscape_coordinates(tmp_path):
+    pipeline = PoliceGesturePipeline({"source_dir": tmp_path, "pose_input_size": 512})
+    image = np.zeros((720, 1280, 3), dtype=np.uint8)
+
+    resized, transform = pipeline._resize_pose_input(image)
+    restored = pipeline._restore_coordinates(
+        np.asarray([[0.5, 0.0], [0.5, 112 / 512]], dtype=np.float32),
+        transform,
+    )
+
+    assert resized.shape == (512, 512, 3)
+    assert np.allclose(restored[:, 0], [0.5, 0.5])
+    assert np.allclose(restored[:, 1], [0.0, 0.0])
+
+
 def _image_data_url() -> str:
     buffer = io.BytesIO()
     Image.new("RGB", (32, 24), color=(8, 12, 20)).save(buffer, format="PNG")

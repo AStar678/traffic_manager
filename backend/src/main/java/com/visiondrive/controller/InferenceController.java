@@ -48,6 +48,9 @@ public class InferenceController {
     public ApiResponse<MultiCameraInferenceResponse> cameraInference(
             @Valid @RequestBody CameraInferenceRequest request
     ) {
-        return ApiResponse.success(inferenceService.processCameraInference(request.getTaskType()));
+        return ApiResponse.success(inferenceService.processCameraInference(
+                request.getTaskType(),
+                Boolean.TRUE.equals(request.getIncludeVisuals())
+        ));
     }
 }

@@ -23,3 +23,13 @@ GESTURE_CONFIG_PATH = Path(
 GESTURE_PROTOTYPE_STORE = Path(
     os.getenv("GESTURE_PROTOTYPE_STORE", str(BASE_DIR / "data" / "gesture_prototypes.json"))
 )
+DINO_GESTURE_DIR = ALGORITHM_ROOT / "gesture_dinov2_tcn"
+DINO_GESTURE_CHECKPOINT = Path(
+    os.getenv("GESTURE_DINOV2_CHECKPOINT", str(DINO_GESTURE_DIR / "checkpoints" / "best_model.pt"))
+)
+DINO_GESTURE_PROTOTYPE_STORE = Path(
+    os.getenv(
+        "GESTURE_DINOV2_PROTOTYPE_STORE",
+        str(DINO_GESTURE_DIR / "data" / "gesture_prototypes.json"),
+    )
+)

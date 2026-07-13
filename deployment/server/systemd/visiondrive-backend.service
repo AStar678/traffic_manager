@@ -1,0 +1,18 @@
+[Unit]
+Description=VisionDrive Spring Boot Main Service
+After=network-online.target visiondrive-license.service visiondrive-police.service visiondrive-gesture.service
+Wants=network-online.target visiondrive-license.service visiondrive-police.service visiondrive-gesture.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/visiondrive/app/backend
+EnvironmentFile=%h/visiondrive/config/runtime.env
+Environment=VISIONDRIVE_SERVER_DIR=%h/visiondrive
+ExecStart=%h/visiondrive/deployment/server/start-backend.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=180
+
+[Install]
+WantedBy=visiondrive.target
+

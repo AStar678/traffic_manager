@@ -85,7 +85,11 @@ class LicensePlatePipeline:
                 "mode": "unavailable",
                 "message": self.init_error or "车牌识别服务未初始化",
             }
-        return self.service.status
+        status = dict(self.service.status)
+        device = getattr(getattr(self.service.recognizer, "clprnet", None), "device", None)
+        status["device"] = str(device or "unknown")
+        status["cuda"] = str(device).startswith("cuda")
+        return status
 
     def _init_external_service(self) -> None:
         if not self.source_dir.exists():

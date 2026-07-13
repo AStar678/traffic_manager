@@ -7,4 +7,6 @@ import lombok.Data;
 public class CameraInferenceRequest {
     @NotBlank(message = "任务类型不能为空")
     private String taskType;
+
+    private Boolean includeVisuals;
 }

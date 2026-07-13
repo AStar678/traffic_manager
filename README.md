@@ -152,6 +152,7 @@ gesture/.venv/bin/python -m gesture.main
 ## 文档
 
 - [启动教程](docs/启动教程.md)
+- [GPU 服务器部署与同步](docs/服务器部署与同步.md)
 - [产品需求文档](docs/prd/产品需求文档.md)
 - [产品设计文档](docs/design/产品设计文档.md)
 - [后端算法通讯协议](docs/design/后端算法通讯协议.md)

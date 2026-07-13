@@ -44,20 +44,53 @@ public class AlgorithmClient {
     }
 
     public InferenceResponse callFileInference(String taskType, String imagePath) {
-        return callInference(taskType, "image_path", imagePath);
+        return callFileInference(taskType, imagePath, null);
+    }
+
+    public InferenceResponse callFileInference(String taskType, String imagePath, String sourceId) {
+        return callFileInference(taskType, imagePath, sourceId, false);
+    }
+
+    public InferenceResponse callFileInference(
+            String taskType,
+            String imagePath,
+            String sourceId,
+            boolean includeVisuals
+    ) {
+        return callInference(taskType, "image_path", imagePath, sourceId, includeVisuals);
     }
 
     private InferenceResponse callInference(String taskType, String inputField, String inputValue) {
+        return callInference(taskType, inputField, inputValue, null, null);
+    }
+
+    private InferenceResponse callInference(String taskType, String inputField, String inputValue, String sourceId) {
+        return callInference(taskType, inputField, inputValue, sourceId, null);
+    }
+
+    private InferenceResponse callInference(
+            String taskType,
+            String inputField,
+            String inputValue,
+            String sourceId,
+            Boolean includeVisuals
+    ) {
         log.info("调用算法服务: taskType={}, inputField={}", taskType, inputField);
 
         String url = resolveInferenceBaseUrl(taskType) + inferencePath;
-        Map<String, String> requestBody = new HashMap<>();
+        Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("task_type", taskType);
         requestBody.put(inputField, inputValue);
+        if (sourceId != null && !sourceId.isBlank()) {
+            requestBody.put("source_id", sourceId);
+        }
+        if (includeVisuals != null) {
+            requestBody.put("include_visuals", includeVisuals);
+        }
 
         HttpHeaders headers = jsonHeaders();
         headers.set("X-Request-ID", "req_" + System.currentTimeMillis());
-        HttpEntity<Map<String, String>> entity = new HttpEntity<>(requestBody, headers);
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
         try {
             ResponseEntity<String> response = restTemplate.exchange(

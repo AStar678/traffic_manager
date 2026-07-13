@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 class AlgorithmClientTest {
@@ -53,6 +54,45 @@ class AlgorithmClientTest {
                 IllegalArgumentException.class,
                 () -> client.callImageInference("owner_gesture", "data:image/png;base64,AA==")
         );
+        server.verify();
+    }
+
+    @Test
+    void sendsCameraSourceIdForStatefulPoliceInference() {
+        server.expect(requestTo("http://police:8001/api/v1/inference/image"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(content().json("""
+                        {
+                          "task_type": "police_gesture",
+                          "image_path": "/tmp/camera-2.jpg",
+                          "source_id": "camera-slot-2"
+                        }
+                        """))
+                .andRespond(withSuccess(response("police_gesture"), MediaType.APPLICATION_JSON));
+
+        assertEquals("police_gesture", client.callFileInference(
+                "police_gesture", "/tmp/camera-2.jpg", "camera-slot-2"
+        ).getData().getTaskType());
+        server.verify();
+    }
+
+    @Test
+    void requestsPoliceKeypointsForDetailInference() {
+        server.expect(requestTo("http://police:8001/api/v1/inference/image"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(content().json("""
+                        {
+                          "task_type": "police_gesture",
+                          "image_path": "/tmp/camera-1.jpg",
+                          "source_id": "camera-slot-1",
+                          "include_visuals": true
+                        }
+                        """))
+                .andRespond(withSuccess(response("police_gesture"), MediaType.APPLICATION_JSON));
+
+        assertEquals("police_gesture", client.callFileInference(
+                "police_gesture", "/tmp/camera-1.jpg", "camera-slot-1", true
+        ).getData().getTaskType());
         server.verify();
     }
 

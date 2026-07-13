@@ -10,6 +10,9 @@ from typing import Any
 
 
 DEFAULT_CONFIG: dict[str, Any] = {
+    "activeAlgorithm": "mediapipe_prototype",
+    "dinov2MatchThreshold": 0.72,
+    "dinov2FrameIntervalMs": 150,
     "sampleTarget": 45,
     "staticMatchThreshold": 0.70,
     "dynamicMatchThreshold": 0.70,

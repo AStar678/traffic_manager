@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import pickle
 import sys
+import time
 import urllib.parse
 from collections import Counter
 from contextlib import contextmanager
@@ -12,6 +13,7 @@ from threading import RLock
 from typing import Any
 
 import numpy as np
+from PIL import Image
 
 from .image_utils import download_image, draw_keypoints
 
@@ -39,14 +41,18 @@ class PoliceGesturePipeline:
 
     def __init__(self, config: dict):
         self.source_dir = Path(config["source_dir"])
+        self.pose_input_size = max(128, int(config.get("pose_input_size", 512)))
+        self.temporal_steps = max(1, int(config.get("temporal_steps", 15)))
         self.predictor = None
         self.PG = None
         self.init_error = ""
         self._lock = RLock()
         self._sample_cache: dict[str, dict[str, np.ndarray]] = {}
+        self._stream_states: dict[str, tuple[Any, Any]] = {}
+        self._stream_last_seen: dict[str, float] = {}
         self._init_predictor()
 
-    def process(self, image_url: str, include_visuals: bool = True) -> dict:
+    def process(self, image_url: str, include_visuals: bool = True, source_id: str | None = None) -> dict:
         """运行关键点检测、LSTM 手势分类并组装统一推理结果。"""
         image = download_image(image_url)
         detections: list[dict[str, Any]] = []
@@ -64,10 +70,10 @@ class PoliceGesturePipeline:
         if sample_reference is not None:
             label_id, probabilities, coord_norm = self._predict_sample_frame(*sample_reference)
         else:
-            # GesturePred 保存 LSTM 隐状态，且旧模型通过相对路径读取资源；串行化
-            # 推理可同时保护模型状态和进程级工作目录。
-            with self._lock, self._working_directory():
-                result = self.predictor.from_img(np.asarray(image.convert("RGB"), dtype=np.uint8))
+            result = self._predict_stream_frame(
+                np.asarray(image.convert("RGB"), dtype=np.uint8),
+                source_id or "default",
+            )
             label_id = int(result[self.PG.OUT_ARGMAX])
             scores = np.asarray(result[self.PG.OUT_SCORES], dtype=float)
             probabilities = self._softmax(scores)
@@ -101,6 +107,72 @@ class PoliceGesturePipeline:
             "annotatedImageUrl": draw_keypoints(image, detections, self._bone_pairs()) if include_visuals else None,
             "modelStatus": self.status,
         }
+
+    def _predict_stream_frame(self, image: np.ndarray, source_id: str) -> dict:
+        """Keep independent deterministic LSTM state for every camera stream."""
+        import torch
+
+        normalized_id = str(source_id or "default")[:128]
+        now = time.monotonic()
+        with self._lock, self._working_directory():
+            if not hasattr(self.predictor, "g_model"):
+                return self.predictor.from_img(image)
+            state = self._stream_states.get(normalized_id)
+            if state is None or now - self._stream_last_seen.get(normalized_id, 0.0) > 10.0:
+                shape = (1, self.predictor.g_model.batch, self.predictor.g_model.num_hidden)
+                state = (
+                    torch.zeros(shape, device=self.predictor.g_model.device),
+                    torch.zeros(shape, device=self.predictor.g_model.device),
+                )
+            self.predictor.h, self.predictor.c = state
+            if hasattr(self.predictor, "p_predictor"):
+                pose_image, transform = self._resize_pose_input(image)
+                pose_result = self.predictor.p_predictor.get_coordinates(pose_image)
+                coordinates = np.asarray(pose_result[self.PG.COORD_NORM], dtype=np.float32)
+                result = None
+                for _ in range(self.temporal_steps):
+                    result = self.predictor.from_skeleton(coordinates[np.newaxis])
+                result[self.PG.COORD_NORM] = self._restore_coordinates(coordinates, transform)
+            else:
+                result = self.predictor.from_img(image)
+            self._stream_states[normalized_id] = (
+                self.predictor.h.detach(),
+                self.predictor.c.detach(),
+            )
+            self._stream_last_seen[normalized_id] = now
+            self._discard_stale_streams(now)
+            return result
+
+    def _resize_pose_input(self, image: np.ndarray) -> tuple[np.ndarray, tuple[float, int, int, int, int]]:
+        height, width = image.shape[:2]
+        target = self.pose_input_size
+        scale = min(target / max(width, 1), target / max(height, 1))
+        resized_width = max(1, min(target, int(round(width * scale))))
+        resized_height = max(1, min(target, int(round(height * scale))))
+        resized = Image.fromarray(image).resize((resized_width, resized_height), Image.Resampling.BILINEAR)
+        offset_x = (target - resized_width) // 2
+        offset_y = (target - resized_height) // 2
+        canvas = Image.new("RGB", (target, target))
+        canvas.paste(resized, (offset_x, offset_y))
+        return np.asarray(canvas, dtype=np.uint8), (scale, offset_x, offset_y, width, height)
+
+    def _restore_coordinates(
+            self,
+            coordinates: np.ndarray,
+            transform: tuple[float, int, int, int, int],
+    ) -> np.ndarray:
+        scale, offset_x, offset_y, width, height = transform
+        target = self.pose_input_size
+        restored = np.asarray(coordinates, dtype=np.float32).copy()
+        restored[0] = np.clip((restored[0] * target - offset_x) / max(scale * width, 1e-6), 0.0, 1.0)
+        restored[1] = np.clip((restored[1] * target - offset_y) / max(scale * height, 1e-6), 0.0, 1.0)
+        return restored
+
+    def _discard_stale_streams(self, now: float) -> None:
+        stale = [source_id for source_id, last_seen in self._stream_last_seen.items() if now - last_seen > 60.0]
+        for source_id in stale:
+            self._stream_last_seen.pop(source_id, None)
+            self._stream_states.pop(source_id, None)
 
     def _sample_reference(self, image_url: str) -> tuple[str, int] | None:
         """识别摄像头服务内置测试视频 URL，并提取样本号与准确帧号。"""
@@ -189,10 +261,15 @@ class PoliceGesturePipeline:
 
     @property
     def status(self) -> dict[str, Any]:
+        device = getattr(getattr(self.predictor, "g_model", None), "device", None)
         return {
             "ready": self.predictor is not None,
             "mode": "ctpgr-pytorch pose+lstm" if self.predictor is not None else "unavailable",
             "message": "已加载交警姿态与 LSTM 模型" if self.predictor is not None else self.init_error,
+            "device": str(device or "unknown"),
+            "cuda": str(device).startswith("cuda"),
+            "poseInputSize": self.pose_input_size,
+            "temporalSteps": self.temporal_steps,
         }
 
     def _init_predictor(self) -> None:
@@ -204,9 +281,13 @@ class PoliceGesturePipeline:
             sys.path.insert(0, str(ctpgr_root))
         try:
             with self._lock, self._working_directory(), self._torch_load_cpu_fallback():
+                import torch
                 from constants.enum_keys import PG  # type: ignore
                 from pred.gesture_pred import GesturePred  # type: ignore
 
+                torch.manual_seed(2026)
+                if torch.cuda.is_available():
+                    torch.cuda.manual_seed_all(2026)
                 self.PG = PG
                 self.predictor = GesturePred()
         except Exception as exc:  # noqa: BLE001

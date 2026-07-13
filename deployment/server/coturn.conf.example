@@ -1,0 +1,18 @@
+# VisionDrive 私有网络 TURN 中继模板。
+# 部署时将占位符替换成与 config/turn.env 相同的随机密钥。
+listening-port=3478
+listening-ip=100.73.64.55
+relay-ip=100.73.64.55
+external-ip=100.73.64.55
+min-port=49160
+max-port=49200
+fingerprint
+use-auth-secret
+static-auth-secret=CHANGE_ME
+realm=visiondrive.local
+stale-nonce=600
+no-cli
+no-tls
+no-dtls
+no-multicast-peers
+allow-loopback-peers

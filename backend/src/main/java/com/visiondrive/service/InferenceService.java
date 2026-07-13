@@ -20,9 +20,11 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Slf4j
 @Service
@@ -35,10 +37,14 @@ public class InferenceService {
     private final SystemLogService systemLogService;
     private final CameraManagerService cameraManagerService;
     private final ExecutorService multiCameraExecutor = Executors.newFixedThreadPool(6);
+    private final ExecutorService persistenceExecutor = Executors.newFixedThreadPool(2);
+    private final Map<String, Long> lastCameraPersistenceAt = new ConcurrentHashMap<>();
+    private static final long CAMERA_PERSISTENCE_INTERVAL_MS = 5_000;
 
     @PreDestroy
     public void shutdownInferenceExecutor() {
         multiCameraExecutor.shutdownNow();
+        persistenceExecutor.shutdownNow();
     }
 
     /**
@@ -87,6 +93,10 @@ public class InferenceService {
      * 对三个摄像头槽位并发取帧和推理。帧文件以本地绝对路径传给算法进程，不传输图像字节。
      */
     public MultiCameraInferenceResponse processCameraInference(String taskType) {
+        return processCameraInference(taskType, false);
+    }
+
+    public MultiCameraInferenceResponse processCameraInference(String taskType, boolean includeVisuals) {
         if (!"license_plate".equals(taskType) && !"police_gesture".equals(taskType)) {
             throw new IllegalArgumentException("三路摄像头推理仅支持 license_plate 和 police_gesture");
         }
@@ -94,7 +104,10 @@ public class InferenceService {
         long started = System.currentTimeMillis();
         List<CompletableFuture<MultiCameraInferenceResponse.CameraInferenceResult>> futures = cameraManagerService.listSlots()
                 .stream()
-                .map(slot -> CompletableFuture.supplyAsync(() -> inferCameraSlot(taskType, slot), multiCameraExecutor))
+                .map(slot -> CompletableFuture.supplyAsync(
+                        () -> inferCameraSlot(taskType, slot, includeVisuals),
+                        multiCameraExecutor
+                ))
                 .toList();
 
         List<MultiCameraInferenceResponse.CameraInferenceResult> cameraResults = futures.stream()
@@ -117,7 +130,8 @@ public class InferenceService {
 
     private MultiCameraInferenceResponse.CameraInferenceResult inferCameraSlot(
             String taskType,
-            CameraSlotResponse slot
+            CameraSlotResponse slot,
+            boolean includeVisuals
     ) {
         MultiCameraInferenceResponse.CameraInferenceResult result = new MultiCameraInferenceResponse.CameraInferenceResult();
         result.setSlotId(slot.getSlotId());
@@ -138,7 +152,12 @@ public class InferenceService {
         try {
             CameraManagerService.CameraFrame frame = cameraManagerService.captureSlot(slot.getSlotId());
             recordRequest.setImageUrl(frame.path().toString());
-            InferenceResponse inference = algorithmClient.callFileInference(taskType, frame.path().toString());
+            InferenceResponse inference = algorithmClient.callFileInference(
+                    taskType,
+                    frame.path().toString(),
+                    "camera-slot-" + slot.getSlotId(),
+                    includeVisuals
+            );
             InferenceResponse.InferenceData data = inference.getData();
             if (data != null && data.getDetections() != null) {
                 data.getDetections().forEach(detection -> {
@@ -148,17 +167,65 @@ public class InferenceService {
             }
             result.setResult(data);
             result.setStatus("ready");
-            saveInferenceRecord(recordRequest, inference, traceId, System.currentTimeMillis() - started, true, null);
-            recordInferenceSystemLog(recordRequest, inference, traceId, System.currentTimeMillis() - started, null);
+            persistCameraInferenceAsync(
+                    taskType,
+                    slot.getSlotId(),
+                    recordRequest,
+                    inference,
+                    traceId,
+                    System.currentTimeMillis() - started,
+                    true,
+                    null
+            );
         } catch (Exception error) {
             result.setStatus("error");
             result.setError(error.getMessage());
             if (recordRequest.getImageUrl() == null) recordRequest.setImageUrl(slot.getPath());
-            saveInferenceRecord(recordRequest, null, traceId, System.currentTimeMillis() - started, false, error.getMessage());
-            recordInferenceSystemLog(recordRequest, null, traceId, System.currentTimeMillis() - started, error.getMessage());
+            persistCameraInferenceAsync(
+                    taskType,
+                    slot.getSlotId(),
+                    recordRequest,
+                    null,
+                    traceId,
+                    System.currentTimeMillis() - started,
+                    false,
+                    error.getMessage()
+            );
             log.warn("摄像头 {} 推理失败: {}", slot.getSlotId(), error.getMessage());
         }
         return result;
+    }
+
+    private void persistCameraInferenceAsync(
+            String taskType,
+            int slotId,
+            InferenceRequest request,
+            InferenceResponse response,
+            String traceId,
+            long latencyMs,
+            boolean success,
+            String errorMessage
+    ) {
+        String key = taskType + ":" + slotId;
+        long now = System.currentTimeMillis();
+        AtomicBoolean accepted = new AtomicBoolean(false);
+        lastCameraPersistenceAt.compute(key, (ignored, previous) -> {
+            if (previous == null || now - previous >= CAMERA_PERSISTENCE_INTERVAL_MS) {
+                accepted.set(true);
+                return now;
+            }
+            return previous;
+        });
+        if (!accepted.get()) return;
+
+        CompletableFuture.runAsync(() -> {
+            saveInferenceRecord(request, response, traceId, latencyMs, success, errorMessage);
+            recordInferenceSystemLog(request, response, traceId, latencyMs, errorMessage);
+        }, persistenceExecutor).exceptionally(error -> {
+            log.warn("异步保存摄像头推理记录失败: taskType={}, slotId={}, error={}",
+                    taskType, slotId, error.getMessage());
+            return null;
+        });
     }
 
     /**

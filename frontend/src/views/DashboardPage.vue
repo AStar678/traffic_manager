@@ -179,7 +179,7 @@
             <span>{{ latestPoliceAction }}</span>
             <span>{{ policeConfidenceText }}</span>
           </div>
-          <button class="detail-button" type="button" @click="policeDialogOpen = true">
+          <button class="detail-button" type="button" @click="openPoliceDetail">
             查看细节 <el-icon><ArrowRight /></el-icon>
           </button>
         </article>
@@ -233,6 +233,10 @@ import {
   extractFeatureVector,
   sequenceMotion
 } from '@/utils/ownerGesturePrototype'
+import {
+  buildVideoPrototypePayload,
+  OWNER_GESTURE_ALGORITHMS
+} from '@/utils/ownerGestureVideoPrototype'
 
 const MODEL_PATH = '/models/gesture_recognizer.task'
 const GESTURE_FRAME_INTERVAL_MS = 33
@@ -294,6 +298,7 @@ const gestureCameraError = ref('')
 const gestureMatchLabel = ref('未录入')
 const gestureScoreLabel = ref('--')
 const gestureTriggerLabel = ref('等待')
+const activeGestureAlgorithm = ref(OWNER_GESTURE_ALGORITHMS.MEDIAPIPE)
 
 let gestureRecognizer
 let gestureDrawingUtils
@@ -471,7 +476,8 @@ async function recognizeRoadTask(taskType) {
   if (loading.value) return
   loading.value = true
   try {
-    const response = await inferenceCameras(taskType)
+    const includeVisuals = taskType === TASK_TYPES.POLICE_GESTURE && policeDialogOpen.value
+    const response = await inferenceCameras(taskType, includeVisuals)
     if (!perceptionEnabled.value) return
     const data = getInferenceData(response) || {}
     const nextResult = {
@@ -488,6 +494,11 @@ async function recognizeRoadTask(taskType) {
   } finally {
     loading.value = false
   }
+}
+
+function openPoliceDetail() {
+  policeDialogOpen.value = true
+  void recognizeRoadTask(TASK_TYPES.POLICE_GESTURE)
 }
 
 async function toggleUnifiedPerception() {
@@ -764,7 +775,7 @@ function recognizeGestureLoop() {
 
   try {
     const now = performance.now()
-    if (now - lastGestureFrameAt < GESTURE_FRAME_INTERVAL_MS) {
+    if (now - lastGestureFrameAt < dashboardGestureFrameInterval()) {
       return
     }
     lastGestureFrameAt = now
@@ -778,9 +789,17 @@ function recognizeGestureLoop() {
       const landmarks = result.landmarks?.[0]
       if (landmarks) {
         const vector = extractFeatureVector(landmarks, result.worldLandmarks?.[0])
-        applyBuiltInGestureRecognition(result.gestures?.[0]?.[0], vector)
+        if (activeGestureAlgorithm.value === OWNER_GESTURE_ALGORITHMS.MEDIAPIPE) {
+          applyBuiltInGestureRecognition(result.gestures?.[0]?.[0], vector)
+        } else {
+          resetBuiltInGestureState()
+        }
         if (gestureSocket?.readyState === WebSocket.OPEN) {
-          gestureSocket.send(JSON.stringify({ type: 'frame', vector }))
+          const payload = { type: 'frame', vector }
+          if (activeGestureAlgorithm.value === OWNER_GESTURE_ALGORITHMS.DINO_TCN) {
+            Object.assign(payload, buildVideoPrototypePayload(video, result) || {})
+          }
+          gestureSocket.send(JSON.stringify(payload))
         } else if (!lastGestureControl.value) {
           gestureControlStatus.value = '识别服务连接中'
           gestureTriggerLabel.value = '识别服务连接中'
@@ -803,6 +822,12 @@ function recognizeGestureLoop() {
       gestureFrameId = requestAnimationFrame(recognizeGestureLoop)
     }
   }
+}
+
+function dashboardGestureFrameInterval() {
+  if (activeGestureAlgorithm.value !== OWNER_GESTURE_ALGORITHMS.DINO_TCN) return GESTURE_FRAME_INTERVAL_MS
+  const configured = Number(gestureControlConfig?.dinov2FrameIntervalMs)
+  return Number.isFinite(configured) && configured >= 80 ? configured : 150
 }
 
 function applyBuiltInGestureRecognition(category, vector) {
@@ -970,6 +995,14 @@ function clearGestureOverlay() {
 }
 
 function applyGestureRecognitionState(state) {
+  if (state?.algorithm?.active) {
+    const changed = activeGestureAlgorithm.value !== state.algorithm.active
+    activeGestureAlgorithm.value = state.algorithm.active
+    if (changed) resetBuiltInGestureState()
+  }
+  if (state?.config) {
+    gestureControlConfig = { ...gestureControlConfig, ...state.config }
+  }
   const recognition = state?.recognition
   if (!recognition) return
   const shouldKeepBuiltInDisplay =
@@ -1305,7 +1338,7 @@ function restoreLastGestureRecognitionDisplay() {
 .gesture-camera-readout span {
   display: block;
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -1718,7 +1751,7 @@ function restoreLastGestureRecognitionDisplay() {
 
 .section-kicker {
   color: var(--primary-color);
-  font: 800 10px/1 "SF Mono", "Cascadia Code", monospace;
+  font: 800 11px/1 "SF Mono", "Cascadia Code", monospace;
   letter-spacing: 1.5px;
 }
 
@@ -1774,7 +1807,7 @@ function restoreLastGestureRecognitionDisplay() {
 .perception-state small {
   margin-top: 2px;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .perception-toggle {
@@ -1939,7 +1972,7 @@ function restoreLastGestureRecognitionDisplay() {
   border-radius: 7px;
   background: rgba(8,12,20,.7);
   color: var(--text-muted);
-  font: 800 9px/1 "SF Mono", monospace;
+  font: 800 11px/1 "SF Mono", monospace;
   cursor: pointer;
 }
 
@@ -1953,7 +1986,7 @@ function restoreLastGestureRecognitionDisplay() {
 
 .vision-caption span {
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.7px;
 }
@@ -1972,7 +2005,7 @@ function restoreLastGestureRecognitionDisplay() {
   grid-column: 1 / -1;
   overflow: hidden;
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2013,9 +2046,9 @@ function restoreLastGestureRecognitionDisplay() {
   white-space: nowrap;
 }
 
-.vehicle-metric span { color: var(--text-muted); font-size: 9px; }
+.vehicle-metric span { color: var(--text-muted); font-size: 11px; }
 .vehicle-metric strong { color: var(--text-primary); font-size: 12px; }
-.vehicle-metric small { color: var(--text-secondary); font-size: 9px; }
+.vehicle-metric small { color: var(--text-secondary); font-size: 11px; }
 
 .alert-shortcut {
   font: inherit;
@@ -2076,7 +2109,7 @@ function restoreLastGestureRecognitionDisplay() {
   white-space: nowrap;
 }
 
-.recognition-head small { color: var(--text-muted); font-size: 10px; }
+.recognition-head small { color: var(--text-muted); font-size: 11px; }
 .recognition-head strong { margin-top: 2px; color: var(--text-secondary); font-size: 11px; }
 
 .live-mark {
@@ -2084,7 +2117,7 @@ function restoreLastGestureRecognitionDisplay() {
   border-radius: 5px;
   background: rgba(0, 230, 118, 0.08);
   color: var(--success-color);
-  font: 800 9px/1 "SF Mono", monospace;
+  font: 800 11px/1 "SF Mono", monospace;
   letter-spacing: 0.7px;
 }
 
@@ -2116,7 +2149,7 @@ function restoreLastGestureRecognitionDisplay() {
   gap: 8px;
   margin: 5px 0 10px;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .recognition-meta span {
@@ -2199,12 +2232,12 @@ function restoreLastGestureRecognitionDisplay() {
   background: rgba(255,255,255,.025);
 }
 
-.all-plates-list span { color: var(--primary-color); font: 800 8px/1 "SF Mono", monospace; }
+.all-plates-list span { color: var(--primary-color); font: 800 11px/1 "SF Mono", monospace; }
 .all-plates-list strong, .all-plates-list small, .all-plates-list em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.all-plates-list strong { color: var(--text-primary); font-size: 10px; }
-.all-plates-list small, .all-plates-list em { font-size: 8px; font-style: normal; }
+.all-plates-list strong { color: var(--text-primary); font-size: 11px; }
+.all-plates-list small, .all-plates-list em { font-size: 11px; font-style: normal; }
 .all-plates-list em { color: var(--warning-color); text-align: right; }
-.all-plates-list p { padding: 10px; color: var(--text-muted); font-size: 10px; text-align: center; }
+.all-plates-list p { padding: 10px; color: var(--text-muted); font-size: 11px; text-align: center; }
 
 .owner-actions .detail-button { margin-top: 0; }
 .detail-button.secondary { border-color: var(--border-card); background: rgba(255, 255, 255, 0.03); color: var(--text-secondary); }

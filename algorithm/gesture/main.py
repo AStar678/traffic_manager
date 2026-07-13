@@ -20,8 +20,8 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="VisionDrive Owner Gesture Service",
-    description="独立 MediaPipe 关键点原型匹配与录入服务",
-    version="2.0.0",
+    description="可切换 MediaPipe 关键点原型与 DINOv2-TCN 视频原型的录入服务",
+    version="3.0.0",
     lifespan=lifespan,
 )
 app.include_router(router, prefix="/api/v1/owner-gestures", tags=["OwnerGesture"])
@@ -38,7 +38,7 @@ async def health_check():
             "gestureRecognition": {
                 "configPath": str(config.GESTURE_CONFIG_PATH),
                 "configExists": config.GESTURE_CONFIG_PATH.exists(),
-                "mode": "MediaPipe keypoints + prototype matching engine",
+                "mode": "switchable MediaPipe or DINOv2 + geometry + TCN prototype engine",
                 **health,
             }
         },

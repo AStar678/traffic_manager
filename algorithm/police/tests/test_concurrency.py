@@ -11,7 +11,7 @@ def test_image_requests_are_offloaded_concurrently(monkeypatch):
     barrier = Barrier(4, timeout=2)
 
     class FakePipeline:
-        def process(self, _image_url):
+        def process(self, _image_url, _include_visuals=True, _source_id="default"):
             barrier.wait()
             return {"detections": [], "detectionCount": 0}
 

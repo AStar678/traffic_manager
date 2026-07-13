@@ -1,0 +1,5 @@
+transformers==4.57.6
+mediapipe==0.10.35
+gdown==5.2.0
+scikit-learn>=1.5,<2
+tensorboard>=2.18,<3

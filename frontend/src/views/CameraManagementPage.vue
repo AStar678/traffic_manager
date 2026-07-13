@@ -200,33 +200,33 @@ function fileName(path = '') {
 <style scoped>
 .camera-management-page { display: flex; flex-direction: column; gap: 18px; min-height: 100%; }
 .camera-page-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 18px 20px; border: 1px solid var(--border-card); border-radius: var(--radius-md); background: linear-gradient(100deg, rgba(0,180,216,.1), var(--bg-card) 42%); }
-.eyebrow { color: var(--primary-color); font: 800 10px/1 "SF Mono", monospace; letter-spacing: 1.5px; }
+.eyebrow { color: var(--primary-color); font: 800 11px/1 "SF Mono", monospace; letter-spacing: 1.5px; }
 .camera-page-header h1 { margin-top: 5px; font-size: 24px; }
 .camera-page-header p { margin-top: 5px; color: var(--text-secondary); font-size: 12px; }
 .file-transport-badge { min-width: 250px; display: flex; align-items: center; gap: 11px; padding: 10px 14px; border: 1px solid rgba(0,230,118,.22); border-radius: 11px; background: rgba(0,230,118,.06); color: var(--success-color); }
 .file-transport-badge strong, .file-transport-badge span { display: block; }
 .file-transport-badge strong { font-size: 12px; }
-.file-transport-badge span { margin-top: 2px; color: var(--text-muted); font-size: 9px; }
+.file-transport-badge span { margin-top: 2px; color: var(--text-muted); font-size: 11px; }
 .camera-slot-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
 .camera-slot-card { min-width: 0; display: flex; flex-direction: column; gap: 13px; padding: 14px; border: 1px solid var(--border-card); border-radius: var(--radius-md); background: var(--bg-card); }
 .camera-slot-card.off { opacity: .72; }
 .slot-heading { display: flex; align-items: center; justify-content: space-between; }
 .slot-number { color: var(--text-primary); font: 800 13px/1 "SF Mono", monospace; letter-spacing: 1px; }
-.slot-status { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 10px; font-weight: 700; }
+.slot-status { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 11px; font-weight: 700; }
 .slot-status i { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); }
 .slot-status.ready { color: var(--success-color); } .slot-status.ready i { background: var(--success-color); box-shadow: 0 0 8px rgba(0,230,118,.5); }
 .slot-status.error { color: var(--danger-color); } .slot-status.error i { background: var(--danger-color); }
 .slot-preview { position: relative; aspect-ratio: 16/9; overflow: hidden; border-radius: 11px; background: #070b12; }
 .slot-preview img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .slot-preview-empty { height: 100%; display: grid; place-content: center; justify-items: center; gap: 8px; color: var(--text-muted); font-size: 11px; }
-.slot-source-label { position: absolute; left: 9px; bottom: 9px; padding: 4px 8px; border-radius: 6px; background: rgba(8,12,20,.76); color: var(--text-secondary); font-size: 9px; font-weight: 800; }
+.slot-source-label { position: absolute; left: 9px; bottom: 9px; padding: 4px 8px; border-radius: 6px; background: rgba(8,12,20,.86); color: var(--text-primary); font-size: 11px; font-weight: 800; }
 .slot-form { display: flex; flex-direction: column; gap: 10px; }
 .slot-form label { display: flex; flex-direction: column; gap: 5px; }
-.slot-form label > span { color: var(--text-muted); font-size: 10px; font-weight: 700; }
+.slot-form label > span { color: var(--text-secondary); font-size: 11px; font-weight: 700; }
 .slot-form input, .slot-form select { width: 100%; min-height: 39px; padding: 0 10px; border: 1px solid var(--border-card); border-radius: 9px; outline: none; background: rgba(255,255,255,.025); color: var(--text-primary); font-size: 12px; }
 .slot-form input:focus, .slot-form select:focus { border-color: var(--border-active); }
 .upload-field input { padding: 7px; }
-.upload-field small { overflow: hidden; color: var(--text-secondary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.upload-field small { overflow: hidden; color: var(--text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .slot-actions { display: grid; grid-template-columns: 1fr 42px; gap: 8px; margin-top: auto; }
 .save-slot-button, .refresh-slot-button { min-height: 40px; border: 1px solid rgba(0,180,216,.3); border-radius: 9px; background: rgba(0,180,216,.09); color: var(--primary-color); font-size: 11px; font-weight: 800; cursor: pointer; }
 .refresh-slot-button { display: grid; place-items: center; border-color: var(--border-card); background: rgba(255,255,255,.03); color: var(--text-secondary); }

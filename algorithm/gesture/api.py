@@ -61,6 +61,21 @@ async def state():
     return gesture_service.state()
 
 
+@router.get("/algorithm")
+async def get_algorithm():
+    return gesture_service.state()
+
+
+@router.put("/algorithm")
+async def put_algorithm(request: dict):
+    try:
+        return await run_in_threadpool(gesture_service.select_algorithm, request.get("algorithm"))
+    except ValueError as exc:
+        raise handle_value_error(exc) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @router.get("/config")
 async def get_config():
     return gesture_service.get_config()
@@ -138,9 +153,9 @@ async def recognition_stream(websocket: WebSocket):
     try:
         while True:
             payload = await websocket.receive_json()
-            if payload.get("type") != "frame" or not isinstance(payload.get("vector"), list):
+            if payload.get("type") != "frame":
                 continue
-            await websocket.send_json(gesture_service.process_frame(payload["vector"]))
+            await websocket.send_json(await run_in_threadpool(gesture_service.process_payload, payload))
     except WebSocketDisconnect:
         return
 
@@ -153,6 +168,16 @@ async def source_health():
 @source_router.get("/state")
 async def source_state():
     return await state()
+
+
+@source_router.get("/algorithm")
+async def source_get_algorithm():
+    return await get_algorithm()
+
+
+@source_router.put("/algorithm")
+async def source_put_algorithm(request: dict):
+    return await put_algorithm(request)
 
 
 @source_router.get("/config")

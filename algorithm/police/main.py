@@ -24,7 +24,11 @@ def get_pipeline() -> PoliceGesturePipeline:
     if _pipeline is None:
         with _pipeline_lock:
             if _pipeline is None:
-                _pipeline = PoliceGesturePipeline({"source_dir": config.SOURCE_DIR})
+                _pipeline = PoliceGesturePipeline({
+                    "source_dir": config.SOURCE_DIR,
+                    "pose_input_size": config.POSE_INPUT_SIZE,
+                    "temporal_steps": config.TEMPORAL_STEPS,
+                })
     return _pipeline
 
 
@@ -69,6 +73,8 @@ async def inference_image(request: dict):
     task_type = request.get("task_type") or request.get("taskType")
     image_path = request.get("image_path") or request.get("imagePath")
     image_url = image_path or request.get("image_url") or request.get("imageUrl")
+    source_id = request.get("source_id") or request.get("sourceId") or "default"
+    include_visuals = request.get("include_visuals", request.get("includeVisuals"))
     if not task_type:
         raise HTTPException(status_code=400, detail="task_type 不能为空")
     if task_type != TASK_TYPE:
@@ -79,7 +85,9 @@ async def inference_image(request: dict):
     started = time.perf_counter()
     request_id = request.get("request_id") or request.get("requestId") or f"alg_{uuid.uuid4().hex[:12]}"
     try:
-        data = await run_in_threadpool(get_pipeline().process, image_url, not bool(image_path))
+        if include_visuals is None:
+            include_visuals = not bool(image_path)
+        data = await run_in_threadpool(get_pipeline().process, image_url, bool(include_visuals), source_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001

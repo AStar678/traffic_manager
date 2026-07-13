@@ -6,6 +6,19 @@
         <h1>车主手势控车原型网络</h1>
       </div>
       <div class="top-actions">
+        <div class="algorithm-switch" role="radiogroup" aria-label="手势识别算法">
+          <button
+            v-for="option in algorithmOptions"
+            :key="option.id"
+            type="button"
+            role="radio"
+            :aria-checked="activeAlgorithm === option.id"
+            :class="{ active: activeAlgorithm === option.id }"
+            :disabled="algorithmSwitching"
+            :title="option.description"
+            @click="switchAlgorithm(option.id)"
+          >{{ algorithmShortName(option) }}</button>
+        </div>
         <button class="primary" type="button" @click="openManagementDialog">管理手势</button>
         <div class="status-pill" id="modelStatus">模型加载中</div>
       </div>
@@ -17,19 +30,26 @@
           <video id="webcam" autoplay playsinline muted></video>
           <canvas id="overlay"></canvas>
           <div class="camera-empty" id="cameraEmpty">
-            <strong>{{ props.embedded ? '识别在驾驶主界面持续运行' : '摄像头未启动' }}</strong>
-            <span>{{ props.embedded ? '此处用于查看结果和管理手势，关闭弹窗不会中断识别' : '点击“启动摄像头”后开始录入或识别动作' }}</span>
+            <strong>{{ cameraEmptyTitle }}</strong>
+            <span>{{ cameraEmptyDescription }}</span>
           </div>
           <div class="viewport-top">
-            <span class="chip live">● LIVE</span>
+            <span class="chip" :class="{ live: cameraActive }">{{ cameraActive ? '● LIVE' : '○ CAMERA' }}</span>
             <span class="chip">车内摄像头</span>
+            <span v-if="cameraActive" class="chip tracking">21 点手部追踪</span>
           </div>
         </div>
 
         <div class="toolbar">
           <button v-if="!props.embedded" class="primary" id="startCameraBtn" type="button" @click="startCamera">启动摄像头</button>
           <button v-if="!props.embedded" id="stopCameraBtn" type="button" disabled @click="stopCamera">停止</button>
-          <button v-if="props.embedded" class="primary" type="button" disabled>识别由驾驶主界面统一控制</button>
+          <button
+            v-if="props.embedded"
+            class="primary"
+            type="button"
+            :disabled="cameraActive || cameraStarting"
+            @click="startCamera"
+          >{{ cameraButtonText }}</button>
           <button id="manageGesturesBtn" type="button" @click="openManagementDialog">手势管理</button>
         </div>
 
@@ -156,7 +176,7 @@
 </template>
 
 <script setup>
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { DrawingUtils, FilesetResolver, GestureRecognizer } from '@/vendor/tasks-vision/vision_bundle.mjs'
 import {
@@ -171,6 +191,11 @@ import {
   extractFeatureVector,
   sequenceMotion
 } from '@/utils/ownerGesturePrototype'
+import {
+  buildVideoPrototypePayload,
+  DEFAULT_OWNER_GESTURE_ALGORITHM_OPTIONS,
+  OWNER_GESTURE_ALGORITHMS
+} from '@/utils/ownerGestureVideoPrototype'
 import { useVehicleStore } from '@/stores/vehicle'
 
 const props = defineProps({
@@ -200,6 +225,28 @@ const vehicleStore = useVehicleStore()
 const isManagementOpen = ref(false)
 const isCountdownOpen = ref(false)
 const recordingCountdown = ref(3)
+const cameraActive = ref(false)
+const cameraStarting = ref(false)
+const cameraError = ref('')
+const activeAlgorithm = ref(OWNER_GESTURE_ALGORITHMS.MEDIAPIPE)
+const algorithmOptions = ref([...DEFAULT_OWNER_GESTURE_ALGORITHM_OPTIONS])
+const algorithmSwitching = ref(false)
+
+const cameraButtonText = computed(() => {
+  if (cameraStarting.value) return '正在打开电脑摄像头'
+  if (cameraActive.value) return '电脑摄像头已自动打开'
+  return cameraError.value ? '重新打开电脑摄像头' : '打开电脑摄像头'
+})
+const cameraEmptyTitle = computed(() => {
+  if (cameraStarting.value) return '正在请求电脑摄像头权限'
+  if (cameraError.value) return '电脑摄像头启动失败'
+  return '摄像头未启动'
+})
+const cameraEmptyDescription = computed(() => {
+  if (cameraError.value) return cameraError.value
+  if (props.embedded) return '详情打开后会自动启动，并实时显示 21 点手部关键点'
+  return '点击“启动摄像头”后开始录入或识别动作'
+})
 
 defineExpose({ openManagementDialog })
 
@@ -287,9 +334,9 @@ async function init() {
   try {
     const vision = await FilesetResolver.forVisionTasks('/wasm')
     recognizer = await createRecognizer(vision)
-    els.modelStatus.textContent = '模型已就绪'
-    els.modelStatus.classList.add('ready')
+    syncAlgorithmStatus()
     updateRecordButton()
+    if (props.embedded) await startCamera()
   } catch (error) {
     console.error(error)
     els.modelStatus.textContent = '模型加载失败'
@@ -342,7 +389,13 @@ function connectRecognitionStream() {
 }
 
 async function startCamera() {
-  if (mediaStream) return true
+  if (mediaStream) {
+    cameraActive.value = true
+    predictLoop()
+    return true
+  }
+  cameraStarting.value = true
+  cameraError.value = ''
   try {
     mediaStream = await navigator.mediaDevices.getUserMedia({
       video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
@@ -355,15 +408,20 @@ async function startCamera() {
     await els.webcam.play()
     resizeCanvas()
     els.cameraEmpty.hidden = true
-    els.startCameraBtn.disabled = true
-    els.stopCameraBtn.disabled = false
+    cameraActive.value = true
+    if (els.startCameraBtn) els.startCameraBtn.disabled = true
+    if (els.stopCameraBtn) els.stopCameraBtn.disabled = false
     updateRecordButton()
     predictLoop()
     return true
   } catch (error) {
     console.error(error)
-    els.recordHint.textContent = '摄像头启动失败：请在浏览器里允许摄像头权限。'
+    cameraActive.value = false
+    cameraError.value = '请在浏览器地址栏允许摄像头权限，然后点击重新打开。'
+    els.recordHint.textContent = `摄像头启动失败：${cameraError.value}`
     return false
+  } finally {
+    cameraStarting.value = false
   }
 }
 
@@ -384,6 +442,7 @@ function stopCamera() {
   builtInGestureVectors = []
   mediaStream?.getTracks().forEach(track => track.stop())
   mediaStream = undefined
+  cameraActive.value = false
   if (els.webcam) {
     els.webcam.srcObject = null
   }
@@ -409,7 +468,7 @@ function predictLoop() {
 
   try {
     const now = performance.now()
-    if (now - lastPredictFrameAt < GESTURE_FRAME_INTERVAL_MS) {
+    if (now - lastPredictFrameAt < gestureFrameInterval()) {
       return
     }
     lastPredictFrameAt = now
@@ -461,8 +520,12 @@ function updateRecognition(result) {
   }
 
   const vector = extractFeatureVector(landmarks, result.worldLandmarks?.[0])
-  handleBuiltInRecognition(result.gestures?.[0]?.[0], vector)
-  sendRecognitionFrame(vector)
+  if (activeAlgorithm.value === OWNER_GESTURE_ALGORITHMS.MEDIAPIPE) {
+    handleBuiltInRecognition(result.gestures?.[0]?.[0], vector)
+  } else {
+    resetBuiltInGestureState()
+  }
+  sendRecognitionFrame(vector, result)
 }
 
 function handleBuiltInRecognition(category, vector) {
@@ -650,12 +713,24 @@ function recordingHint() {
   return `先选择静态姿态或动态轨迹，点击录入后倒数 3 秒并采集 ${sampleTarget()} 帧保存手势。`
 }
 
-function sendRecognitionFrame(vector) {
+function sendRecognitionFrame(vector, result) {
   if (!recognitionSocket || recognitionSocket.readyState !== WebSocket.OPEN) {
     els.triggerState.textContent = '识别服务未连接'
     return
   }
-  recognitionSocket.send(JSON.stringify({ type: 'frame', vector }))
+  const payload = { type: 'frame', vector }
+  if (activeAlgorithm.value === OWNER_GESTURE_ALGORITHMS.DINO_TCN) {
+    const videoPayload = buildVideoPrototypePayload(els.webcam, result)
+    if (!videoPayload) return
+    Object.assign(payload, videoPayload)
+  }
+  recognitionSocket.send(JSON.stringify(payload))
+}
+
+function gestureFrameInterval() {
+  if (activeAlgorithm.value !== OWNER_GESTURE_ALGORITHMS.DINO_TCN) return GESTURE_FRAME_INTERVAL_MS
+  const configured = Number(serviceConfig?.dinov2FrameIntervalMs)
+  return Number.isFinite(configured) && configured >= 80 ? configured : 150
 }
 
 async function apiRequest(path, options = {}) {
@@ -673,6 +748,13 @@ async function apiRequest(path, options = {}) {
 }
 
 function applyServiceState(state) {
+  if (state.algorithm) {
+    activeAlgorithm.value = state.algorithm.active || activeAlgorithm.value
+    if (Array.isArray(state.algorithm.options) && state.algorithm.options.length) {
+      algorithmOptions.value = state.algorithm.options
+    }
+    syncAlgorithmStatus()
+  }
   if (state.config) {
     serviceConfig = state.config
   }
@@ -732,6 +814,47 @@ function applyServiceState(state) {
   if (state.vehicle) {
     syncVehiclePanel()
   }
+}
+
+async function switchAlgorithm(algorithmId) {
+  if (algorithmId === activeAlgorithm.value || algorithmSwitching.value) return
+  algorithmSwitching.value = true
+  const previous = activeAlgorithm.value
+  try {
+    const state = await apiRequest('/api/algorithm', {
+      method: 'PUT',
+      body: { algorithm: algorithmId }
+    })
+    lastRecognizedGestureDisplay = undefined
+    resetBuiltInGestureState()
+    applyServiceState(state)
+    await loadControlSettings()
+    ElMessage.success(`已切换到${activeAlgorithmLabel()}`)
+  } catch (error) {
+    console.error(error)
+    activeAlgorithm.value = previous
+    syncAlgorithmStatus()
+    ElMessage.error('算法切换失败，请检查新模型权重与运行环境')
+  } finally {
+    algorithmSwitching.value = false
+  }
+}
+
+function algorithmShortName(option) {
+  return option.id === OWNER_GESTURE_ALGORITHMS.DINO_TCN ? 'DINOv2 + TCN' : 'MediaPipe 原型'
+}
+
+function activeAlgorithmLabel() {
+  return algorithmOptions.value.find(item => item.id === activeAlgorithm.value)?.name || '所选算法'
+}
+
+function syncAlgorithmStatus() {
+  if (!els.modelStatus) return
+  const option = algorithmOptions.value.find(item => item.id === activeAlgorithm.value)
+  const unavailable = option?.loadError || option?.checkpointExists === false
+  els.modelStatus.textContent = unavailable ? '模型不可用' : `${algorithmShortName(option || {})} 已就绪`
+  els.modelStatus.classList.toggle('error', Boolean(unavailable))
+  els.modelStatus.classList.toggle('ready', !unavailable)
 }
 
 function formatGestureScore(score) {
@@ -1182,6 +1305,32 @@ function escapeHtml(value = '') {
   gap: 10px;
 }
 
+.algorithm-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(124px, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border-card);
+  border-radius: 14px;
+  background: var(--bg-surface);
+}
+
+.owner-gesture-page .algorithm-switch button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 9px;
+  padding: 0 11px;
+  color: var(--text-muted);
+  background: transparent;
+  white-space: nowrap;
+}
+
+.owner-gesture-page .algorithm-switch button.active {
+  color: var(--text-primary);
+  background: var(--primary-soft);
+  box-shadow: inset 0 0 0 1px var(--border-active);
+}
+
 .eyebrow {
   margin: 0 0 4px;
   color: var(--text-muted);
@@ -1294,10 +1443,6 @@ canvas {
   pointer-events: none;
 }
 
-.video-shell canvas {
-  display: none;
-}
-
 .camera-empty {
   position: absolute;
   z-index: 2;
@@ -1352,6 +1497,11 @@ canvas {
 .chip.live {
   color: var(--danger-color);
   border-color: rgba(255, 61, 0, 0.4);
+}
+
+.chip.tracking {
+  color: var(--success-color);
+  border-color: rgba(0, 230, 118, 0.35);
 }
 
 .toolbar {
@@ -1868,6 +2018,10 @@ input[type="range"] {
     width: 100%;
     align-items: stretch;
     flex-direction: column-reverse;
+  }
+
+  .algorithm-switch {
+    width: 100%;
   }
 
   h1 {

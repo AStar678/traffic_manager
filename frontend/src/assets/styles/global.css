@@ -25,14 +25,14 @@
   --bg-overlay: rgba(15, 21, 34, 0.88);
 
   /* ---- 边框 ---- */
-  --border-subtle: rgba(255, 255, 255, 0.06);
-  --border-card: rgba(255, 255, 255, 0.08);
-  --border-active: rgba(0, 180, 216, 0.35);
+  --border-subtle: rgba(255, 255, 255, 0.10);
+  --border-card: rgba(255, 255, 255, 0.14);
+  --border-active: rgba(0, 180, 216, 0.48);
 
   /* ---- 文字 ---- */
   --text-primary: #eef2f7;
-  --text-secondary: #92a0b8;
-  --text-muted: #586680;
+  --text-secondary: #b2bdd0;
+  --text-muted: #8290a8;
   --text-inverse: #080c14;
 
   /* ---- 阴影 ---- */

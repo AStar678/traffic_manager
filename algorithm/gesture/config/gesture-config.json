@@ -1,4 +1,7 @@
 {
+  "activeAlgorithm": "mediapipe_prototype",
+  "dinov2MatchThreshold": 0.72,
+  "dinov2FrameIntervalMs": 150,
   "sampleTarget": 45,
   "staticMatchThreshold": 0.7,
   "dynamicMatchThreshold": 0.7,

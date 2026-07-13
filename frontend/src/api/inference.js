@@ -8,8 +8,8 @@ export function inferenceImage(taskType, imageUrl) {
   })
 }
 
-export function inferenceCameras(taskType) {
-  return request.post('/inference/cameras', { taskType }, { timeout: 45000 })
+export function inferenceCameras(taskType, includeVisuals = false) {
+  return request.post('/inference/cameras', { taskType, includeVisuals }, { timeout: 45000 })
 }
 
 export function getInferenceData(response) {

@@ -1,6 +1,7 @@
 // 任务类型
 export const TASK_TYPES = {
   LICENSE_PLATE: 'license_plate',
+  VEHICLE_TYPE: 'vehicle_type',
   POLICE_GESTURE: 'police_gesture',
   OWNER_GESTURE: 'owner_gesture'
 }

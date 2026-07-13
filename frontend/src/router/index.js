@@ -23,6 +23,11 @@ const routes = [
         component: () => import('@/views/LicensePlatePage.vue')
       },
       {
+        path: 'vehicle-type',
+        name: 'VehicleType',
+        component: () => import('@/views/VehicleTypePage.vue')
+      },
+      {
         path: 'police-gesture',
         name: 'PoliceGesture',
         component: () => import('@/views/PoliceGesturePage.vue')

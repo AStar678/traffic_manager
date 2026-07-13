@@ -1,0 +1,24 @@
+FROM python:3.10-slim
+
+ARG PADDLE_DETECTION_REF=release/2.9
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git libglib2.0-0 libgl1 libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY vehicle/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/ \
+    && git clone --depth 1 --branch ${PADDLE_DETECTION_REF} https://github.com/PaddlePaddle/PaddleDetection.git /opt/PaddleDetection \
+    && pip install --no-cache-dir -r /opt/PaddleDetection/requirements.txt
+
+COPY vehicle ./vehicle
+RUN mkdir -p /tmp/visiondrive-vehicle /models/ppvehicle
+
+ENV PADDLE_DETECTION_DIR=/opt/PaddleDetection \
+    PPVEHICLE_DEVICE=GPU \
+    VEHICLE_ALGORITHM_PORT=8004
+
+EXPOSE 8004
+CMD ["python", "-m", "vehicle.main"]

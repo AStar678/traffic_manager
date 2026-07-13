@@ -187,7 +187,7 @@ class Dinov2TcnPrototypeRuntime:
         prototype, cosine = max(scored, key=lambda item: item[1])
         # Normalized embedding cosine is mapped to [0, 1] for the existing UI.
         score = float(np.clip((cosine + 1.0) * 0.5, 0.0, 1.0))
-        threshold = float(config.get("dinov2MatchThreshold", 0.72))
+        threshold = float(config.get("dinov2MatchThreshold", 0.95))
         if score < threshold:
             self.last_stable_id = ""
             self.stable_since = 0.0

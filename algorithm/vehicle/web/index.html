@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23080c14'/%3E%3Cpath d='M14 18h36L38 48H26z' fill='none' stroke='%2300b4d8' stroke-width='6'/%3E%3C/svg%3E">
+  <title>VisionDrive · 车辆类别识别</title>
+  <style>
+    :root {
+      --bg-root: #080c14;
+      --bg-surface: #0f1522;
+      --bg-card: #161d2b;
+      --bg-card-hover: #1c2434;
+      --border: rgba(255, 255, 255, .14);
+      --border-soft: rgba(255, 255, 255, .08);
+      --primary: #00b4d8;
+      --primary-bright: #00e5ff;
+      --success: #00e676;
+      --warning: #ffab00;
+      --danger: #ff5b45;
+      --text: #eef2f7;
+      --text-secondary: #b2bdd0;
+      --text-muted: #8290a8;
+      --radius-sm: 8px;
+      --radius-md: 14px;
+      --ease: cubic-bezier(.16, 1, .3, 1);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: var(--bg-root); color: var(--text); }
+    body {
+      font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input { font: inherit; }
+    button:focus-visible, input:focus-visible, label:focus-within {
+      outline: 2px solid var(--primary-bright);
+      outline-offset: 3px;
+    }
+
+    .app-shell { min-height: 100vh; display: flex; flex-direction: column; }
+    .topbar {
+      height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      background: rgba(8, 12, 20, .92);
+      border-bottom: 1px solid var(--border-soft);
+      backdrop-filter: blur(12px);
+    }
+    .brand { display: flex; align-items: center; gap: 14px; }
+    .wordmark {
+      font-size: 17px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      background: linear-gradient(135deg, var(--primary), var(--primary-bright));
+      color: transparent;
+      background-clip: text;
+    }
+    .product-name { color: var(--text-secondary); font-size: 13px; }
+    .service-state { display: inline-flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 12px; }
+    .state-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); box-shadow: 0 0 0 4px rgba(130, 144, 168, .08); }
+    .service-state.ready .state-dot { background: var(--success); box-shadow: 0 0 12px rgba(0, 230, 118, .65); }
+    .service-state.degraded .state-dot { background: var(--warning); box-shadow: 0 0 12px rgba(255, 171, 0, .55); }
+
+    main {
+      width: min(1560px, 100%);
+      margin: 0 auto;
+      padding: 20px 24px 24px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 330px;
+      gap: 18px;
+      flex: 1;
+    }
+    .stage-column { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+    .stage {
+      position: relative;
+      aspect-ratio: 16 / 9;
+      min-height: 360px;
+      overflow: hidden;
+      background:
+        linear-gradient(rgba(0, 180, 216, .035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 180, 216, .035) 1px, transparent 1px),
+        #05080d;
+      background-size: 44px 44px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+    }
+    video, canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+    video { display: none; object-fit: contain; background: #030508; }
+    canvas { pointer-events: none; }
+    .stage.has-video video { display: block; }
+    .empty-stage {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      padding: 24px;
+    }
+    .empty-stage-inner { max-width: 370px; }
+    .target-mark {
+      width: 76px;
+      height: 52px;
+      margin: 0 auto 20px;
+      border: 2px solid var(--primary);
+      position: relative;
+      box-shadow: 0 0 24px rgba(0, 180, 216, .16), inset 0 0 22px rgba(0, 180, 216, .06);
+    }
+    .target-mark::before {
+      content: "";
+      position: absolute;
+      width: 34px;
+      height: 2px;
+      left: 19px;
+      top: 24px;
+      background: var(--primary-bright);
+      box-shadow: 0 0 12px var(--primary-bright);
+    }
+    .empty-stage strong { display: block; font-size: 19px; margin-bottom: 8px; }
+    .empty-stage p { margin: 0; color: var(--text-muted); font-size: 13px; line-height: 1.7; }
+    .stage.has-video .empty-stage { display: none; }
+
+    .stage-top {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      right: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      pointer-events: none;
+    }
+    .chips { display: flex; gap: 7px; }
+    .chip {
+      padding: 6px 10px;
+      border: 1px solid rgba(255, 255, 255, .16);
+      border-radius: 999px;
+      background: rgba(8, 12, 20, .74);
+      color: var(--text-secondary);
+      font: 700 11px/1 "SF Mono", "Cascadia Code", monospace;
+      backdrop-filter: blur(8px);
+    }
+    .chip.live { color: var(--success); border-color: rgba(0, 230, 118, .3); }
+    .chip.processing { color: var(--primary-bright); border-color: rgba(0, 229, 255, .3); }
+
+    .transport {
+      min-height: 60px;
+      display: grid;
+      grid-template-columns: auto minmax(140px, 1fr) auto;
+      align-items: center;
+      gap: 14px;
+      padding: 12px 16px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+    }
+    .icon-button {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      background: var(--bg-card-hover);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .icon-button:hover { border-color: rgba(0, 180, 216, .55); color: var(--primary-bright); }
+    input[type="range"] { width: 100%; accent-color: var(--primary); cursor: pointer; }
+    .timecode { color: var(--text-secondary); font: 600 12px "SF Mono", "Cascadia Code", monospace; white-space: nowrap; }
+
+    .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .metric {
+      min-height: 82px;
+      padding: 14px 16px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius-sm);
+    }
+    .metric span { display: block; margin-bottom: 9px; color: var(--text-muted); font-size: 11px; letter-spacing: .05em; }
+    .metric strong { font: 760 24px/1 "SF Mono", "Cascadia Code", monospace; }
+    .metric small { margin-left: 5px; color: var(--text-muted); font-size: 11px; }
+
+    aside { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+    .panel {
+      padding: 17px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+    }
+    .panel-title { margin: 0 0 13px; font-size: 13px; font-weight: 750; letter-spacing: .04em; }
+    .drop-zone {
+      min-height: 142px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 18px;
+      border: 1px dashed rgba(0, 180, 216, .5);
+      border-radius: var(--radius-sm);
+      background: rgba(0, 180, 216, .045);
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 180ms var(--ease), background 180ms var(--ease);
+    }
+    .drop-zone:hover, .drop-zone.dragging { border-color: var(--primary-bright); background: rgba(0, 180, 216, .09); }
+    .drop-zone input { display: none; }
+    .upload-symbol { color: var(--primary-bright); font-size: 28px; line-height: 1; }
+    .drop-zone strong { font-size: 14px; }
+    .drop-zone span { color: var(--text-muted); font-size: 11px; line-height: 1.5; }
+    .file-name { margin: 11px 0 0; overflow: hidden; color: var(--text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+    .action-button {
+      width: 100%;
+      min-height: 42px;
+      margin-top: 12px;
+      border: 0;
+      border-radius: 10px;
+      background: var(--primary);
+      color: #061015;
+      font-weight: 800;
+      cursor: pointer;
+      box-shadow: 0 0 20px rgba(0, 180, 216, .18);
+    }
+    .action-button:hover:not(:disabled) { background: var(--primary-bright); }
+    .action-button:disabled { cursor: not-allowed; opacity: .4; box-shadow: none; }
+    .progress-track { height: 3px; margin-top: 12px; overflow: hidden; border-radius: 99px; background: rgba(255, 255, 255, .06); }
+    .progress-bar { height: 100%; width: 0; background: linear-gradient(90deg, var(--primary), var(--primary-bright)); transition: width 120ms linear; }
+    .status-copy { min-height: 34px; margin: 10px 0 0; color: var(--text-muted); font-size: 11px; line-height: 1.55; }
+    .status-copy.error { color: #ff9284; }
+
+    .track-list { display: flex; flex-direction: column; gap: 7px; max-height: 330px; overflow: auto; }
+    .track-row {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 9px;
+      padding: 9px 10px;
+      background: rgba(255, 255, 255, .025);
+      border: 1px solid var(--border-soft);
+      border-radius: 8px;
+    }
+    .track-id { color: var(--primary-bright); font: 700 11px "SF Mono", "Cascadia Code", monospace; }
+    .track-type { min-width: 0; }
+    .track-type strong { display: block; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+    .track-type span { color: var(--text-muted); font-size: 10px; text-transform: uppercase; }
+    .confidence { color: var(--text-secondary); font: 600 10px "SF Mono", "Cascadia Code", monospace; }
+    .empty-list { padding: 18px 6px; color: var(--text-muted); font-size: 12px; text-align: center; }
+    .model-note { margin: 0; color: var(--text-muted); font-size: 11px; line-height: 1.7; }
+    .model-note strong { color: var(--text-secondary); }
+
+    @media (max-width: 900px) {
+      .topbar { padding: 0 16px; }
+      .product-name { display: none; }
+      main { grid-template-columns: 1fr; padding: 14px 14px 24px; }
+      .stage { min-height: 0; }
+      aside { display: grid; grid-template-columns: 1fr 1fr; }
+      .model-panel { grid-column: 1 / -1; }
+    }
+    @media (max-width: 560px) {
+      .topbar { height: 48px; }
+      main { padding: 10px; gap: 10px; }
+      .stage-column { gap: 10px; }
+      .stage { border-radius: 10px; }
+      .metrics { gap: 6px; }
+      .metric { min-height: 69px; padding: 11px; }
+      .metric strong { font-size: 19px; }
+      .transport { grid-template-columns: auto 1fr; }
+      .timecode { grid-column: 1 / -1; text-align: center; }
+      aside { display: flex; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="wordmark">VisionDrive</span>
+        <span class="product-name">车辆类别识别 / PP-Vehicle</span>
+      </div>
+      <div id="serviceState" class="service-state"><span class="state-dot"></span><span>正在检查服务</span></div>
+    </header>
+
+    <main>
+      <section class="stage-column" aria-label="视频识别画面">
+        <div id="stage" class="stage">
+          <video id="video" muted playsinline></video>
+          <canvas id="overlay" aria-hidden="true"></canvas>
+          <div class="empty-stage">
+            <div class="empty-stage-inner">
+              <div class="target-mark" aria-hidden="true"></div>
+              <strong>等待视频输入</strong>
+              <p>上传道路监控视频，画面将按 trackId 持续跟踪车辆，并标注稳定后的车辆类别。</p>
+            </div>
+          </div>
+          <div class="stage-top">
+            <div class="chips"><span id="liveChip" class="chip">IDLE</span><span id="frameChip" class="chip">FRAME --</span></div>
+            <span id="resolutionChip" class="chip">-- × --</span>
+          </div>
+        </div>
+
+        <div class="transport">
+          <button id="playButton" class="icon-button" type="button" aria-label="播放视频">▶</button>
+          <input id="seek" type="range" min="0" max="1000" value="0" aria-label="视频进度">
+          <span id="timecode" class="timecode">00:00 / 00:00</span>
+        </div>
+
+        <div class="metrics" aria-label="识别统计">
+          <div class="metric"><span>已跟踪车辆</span><strong id="vehicleCount">0</strong><small>辆</small></div>
+          <div class="metric"><span>当前目标</span><strong id="currentCount">0</strong><small>辆</small></div>
+          <div class="metric"><span>推理速率</span><strong id="processingFps">--</strong><small>FPS</small></div>
+        </div>
+      </section>
+
+      <aside aria-label="测试控制面板">
+        <section class="panel">
+          <h2 class="panel-title">视频输入</h2>
+          <label id="dropZone" class="drop-zone" tabindex="0">
+            <input id="fileInput" type="file" accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm,.m4v">
+            <span class="upload-symbol" aria-hidden="true">↑</span>
+            <strong>选择或拖入视频</strong>
+            <span>MP4 / MOV / AVI / MKV / WEBM<br>最大 500 MB</span>
+          </label>
+          <p id="fileName" class="file-name">未选择文件</p>
+          <button id="startButton" class="action-button" type="button" disabled>开始识别</button>
+          <div class="progress-track"><div id="progressBar" class="progress-bar"></div></div>
+          <p id="statusCopy" class="status-copy">选择视频后可开始流式识别。</p>
+        </section>
+
+        <section class="panel">
+          <h2 class="panel-title">当前跟踪目标</h2>
+          <div id="trackList" class="track-list"><div class="empty-list">暂无车辆目标</div></div>
+        </section>
+
+        <section class="panel model-panel">
+          <h2 class="panel-title">推理流水线</h2>
+          <p class="model-note"><strong>PP-YOLOE</strong> 检测 → <strong>OC-SORT</strong> 分配 trackId → <strong>PP-LCNet</strong> 识别车型和颜色 → 多帧投票稳定标签。</p>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <script>
+    const $ = id => document.getElementById(id)
+    const video = $('video')
+    const canvas = $('overlay')
+    const ctx = canvas.getContext('2d')
+    const frames = []
+    const seenTracks = new Set()
+    let selectedFile = null
+    let objectUrl = ''
+    let running = false
+    let latestFrame = null
+    let animationId = 0
+
+    const typeColors = {
+      sedan: '#00e5ff', suv: '#00e676', van: '#ffab00', hatchback: '#8ea1ff',
+      mpv: '#c77dff', pickup: '#ff7a59', bus: '#ffd166', truck: '#ff5b45',
+      estate: '#55d6be', unknown: '#b2bdd0'
+    }
+
+    async function checkHealth() {
+      try {
+        const response = await fetch('/health')
+        const data = await response.json()
+        const state = $('serviceState')
+        state.className = `service-state ${data.model?.ready ? 'ready' : 'degraded'}`
+        state.lastElementChild.textContent = data.model?.ready ? '模型已就绪' : '服务可用 · 模型未加载'
+        if (!data.model?.ready) $('statusCopy').textContent = data.model?.message || '首次识别时加载模型'
+      } catch {
+        const state = $('serviceState')
+        state.className = 'service-state degraded'
+        state.lastElementChild.textContent = '服务不可达'
+      }
+    }
+
+    function selectFile(file) {
+      if (!file) return
+      const allowed = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v']
+      const extension = file.name.split('.').pop().toLowerCase()
+      if (!allowed.includes(extension)) return setStatus('不支持该视频格式。', true)
+      if (file.size > 500 * 1024 * 1024) return setStatus('视频不能超过 500 MB。', true)
+      selectedFile = file
+      $('fileName').textContent = `${file.name} · ${(file.size / 1024 / 1024).toFixed(1)} MB`
+      $('startButton').disabled = false
+      setStatus('视频已就绪，可开始识别。')
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+      objectUrl = URL.createObjectURL(file)
+      video.src = objectUrl
+      video.load()
+      $('stage').classList.add('has-video')
+      clearResults()
+    }
+
+    function clearResults() {
+      frames.length = 0
+      seenTracks.clear()
+      latestFrame = null
+      $('vehicleCount').textContent = '0'
+      $('currentCount').textContent = '0'
+      $('processingFps').textContent = '--'
+      $('progressBar').style.width = '0%'
+      $('frameChip').textContent = 'FRAME --'
+      renderTrackList([])
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+    }
+
+    async function startInference() {
+      if (!selectedFile || running) return
+      running = true
+      clearResults()
+      $('startButton').disabled = true
+      $('startButton').textContent = '识别中…'
+      $('liveChip').className = 'chip processing'
+      $('liveChip').textContent = 'PROCESSING'
+      setStatus('正在上传并初始化 PP-Vehicle…')
+
+      const body = new FormData()
+      body.append('file', selectedFile)
+      try {
+        const response = await fetch('/api/v1/inference/video/upload', { method: 'POST', body })
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}))
+          throw new Error(error.detail || `服务返回 ${response.status}`)
+        }
+        if (!response.body) throw new Error('浏览器不支持流式响应')
+        setStatus('正在逐帧识别，结果将实时叠加到视频。')
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        while (true) {
+          const { value, done } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || ''
+          for (const line of lines) if (line.trim()) handleEvent(JSON.parse(line))
+        }
+        if (buffer.trim()) handleEvent(JSON.parse(buffer))
+      } catch (error) {
+        setStatus(error.message || '识别失败。', true)
+        $('liveChip').className = 'chip'
+        $('liveChip').textContent = 'ERROR'
+      } finally {
+        running = false
+        $('startButton').disabled = false
+        $('startButton').textContent = '重新识别'
+      }
+    }
+
+    function handleEvent(event) {
+      if (event.event === 'meta') {
+        const { width, height } = event.video
+        $('resolutionChip').textContent = `${width} × ${height}`
+        video.currentTime = 0
+        video.play().catch(() => {})
+        return
+      }
+      if (event.event === 'frame') {
+        frames.push(event)
+        latestFrame = event
+        for (const item of event.detections) seenTracks.add(item.trackId)
+        $('vehicleCount').textContent = seenTracks.size
+        $('processingFps').textContent = Number(event.processingFps || 0).toFixed(1)
+        $('progressBar').style.width = `${Math.max(0, Math.min(100, (event.progress || 0) * 100))}%`
+        return
+      }
+      if (event.event === 'complete') {
+        $('vehicleCount').textContent = event.summary.uniqueVehicleCount
+        $('processingFps').textContent = Number(event.summary.averageFps || 0).toFixed(1)
+        $('progressBar').style.width = '100%'
+        $('liveChip').className = 'chip live'
+        $('liveChip').textContent = 'READY'
+        setStatus(`识别完成：共跟踪 ${event.summary.uniqueVehicleCount} 辆车，处理 ${event.summary.processedFrames} 帧。`)
+        return
+      }
+      if (event.event === 'error') throw new Error(event.message || '识别流异常')
+    }
+
+    function drawLoop() {
+      resizeCanvas()
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      if (frames.length && video.readyState >= 1) {
+        const targetMs = video.currentTime * 1000
+        let left = 0, right = frames.length - 1, found = 0
+        while (left <= right) {
+          const mid = (left + right) >> 1
+          if (frames[mid].timestampMs <= targetMs + 40) { found = mid; left = mid + 1 } else right = mid - 1
+        }
+        const frame = frames[found] || latestFrame
+        if (frame && Math.abs(frame.timestampMs - targetMs) < 1200) drawDetections(frame)
+      }
+      animationId = requestAnimationFrame(drawLoop)
+    }
+
+    function resizeCanvas() {
+      const rect = canvas.getBoundingClientRect()
+      const dpr = window.devicePixelRatio || 1
+      const width = Math.round(rect.width * dpr)
+      const height = Math.round(rect.height * dpr)
+      if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height }
+    }
+
+    function drawDetections(frame) {
+      const dpr = window.devicePixelRatio || 1
+      const cw = canvas.clientWidth, ch = canvas.clientHeight
+      const vw = video.videoWidth || 1, vh = video.videoHeight || 1
+      const scale = Math.min(cw / vw, ch / vh)
+      const ox = (cw - vw * scale) / 2, oy = (ch - vh * scale) / 2
+      ctx.save()
+      ctx.scale(dpr, dpr)
+      ctx.lineWidth = 2
+      ctx.font = '700 12px "SF Mono", monospace'
+      for (const item of frame.detections) {
+        const color = typeColors[item.vehicleType] || typeColors.unknown
+        const x = ox + item.bbox.x1 * scale
+        const y = oy + item.bbox.y1 * scale
+        const w = (item.bbox.x2 - item.bbox.x1) * scale
+        const h = (item.bbox.y2 - item.bbox.y1) * scale
+        ctx.strokeStyle = color
+        ctx.shadowColor = color
+        ctx.shadowBlur = 7
+        ctx.strokeRect(x, y, w, h)
+        ctx.shadowBlur = 0
+        const label = `#${item.trackId}  ${item.vehicleTypeName}  ${Math.round(item.confidence * 100)}%`
+        const labelWidth = ctx.measureText(label).width + 18
+        const labelY = Math.max(4, y - 26)
+        ctx.fillStyle = color
+        ctx.fillRect(x, labelY, labelWidth, 23)
+        ctx.fillStyle = '#061015'
+        ctx.fillText(label, x + 9, labelY + 16)
+      }
+      ctx.restore()
+      $('currentCount').textContent = frame.detectionCount
+      $('frameChip').textContent = `FRAME ${String(frame.frameIndex).padStart(5, '0')}`
+      renderTrackList(frame.detections)
+    }
+
+    function renderTrackList(detections) {
+      if (!detections.length) { $('trackList').innerHTML = '<div class="empty-list">当前帧暂无车辆目标</div>'; return }
+      $('trackList').innerHTML = detections.map(item => `
+        <div class="track-row">
+          <span class="track-id">#${item.trackId}</span>
+          <div class="track-type"><strong>${escapeHtml(item.vehicleTypeName)}</strong><span>${escapeHtml(item.vehicleColor)}</span></div>
+          <span class="confidence">${Math.round(item.confidence * 100)}%</span>
+        </div>`).join('')
+    }
+
+    function escapeHtml(value) {
+      const node = document.createElement('span')
+      node.textContent = String(value)
+      return node.innerHTML
+    }
+    function setStatus(message, error = false) { $('statusCopy').textContent = message; $('statusCopy').className = `status-copy${error ? ' error' : ''}` }
+    function formatTime(seconds) { const value = Number.isFinite(seconds) ? seconds : 0; return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(Math.floor(value % 60)).padStart(2, '0')}` }
+
+    $('fileInput').addEventListener('change', event => selectFile(event.target.files[0]))
+    $('dropZone').addEventListener('dragover', event => { event.preventDefault(); $('dropZone').classList.add('dragging') })
+    $('dropZone').addEventListener('dragleave', () => $('dropZone').classList.remove('dragging'))
+    $('dropZone').addEventListener('drop', event => { event.preventDefault(); $('dropZone').classList.remove('dragging'); selectFile(event.dataTransfer.files[0]) })
+    $('startButton').addEventListener('click', startInference)
+    $('playButton').addEventListener('click', () => video.paused ? video.play() : video.pause())
+    video.addEventListener('play', () => { $('playButton').textContent = '❚❚'; $('playButton').setAttribute('aria-label', '暂停视频') })
+    video.addEventListener('pause', () => { $('playButton').textContent = '▶'; $('playButton').setAttribute('aria-label', '播放视频') })
+    video.addEventListener('timeupdate', () => { $('seek').value = video.duration ? Math.round(video.currentTime / video.duration * 1000) : 0; $('timecode').textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}` })
+    $('seek').addEventListener('input', () => { if (video.duration) video.currentTime = Number($('seek').value) / 1000 * video.duration })
+    window.addEventListener('beforeunload', () => { if (objectUrl) URL.revokeObjectURL(objectUrl); cancelAnimationFrame(animationId) })
+
+    checkHealth()
+    drawLoop()
+  </script>
+</body>
+</html>

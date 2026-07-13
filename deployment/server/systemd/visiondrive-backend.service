@@ -1,7 +1,7 @@
 [Unit]
 Description=VisionDrive Spring Boot Main Service
-After=network-online.target visiondrive-license.service visiondrive-police.service visiondrive-gesture.service
-Wants=network-online.target visiondrive-license.service visiondrive-police.service visiondrive-gesture.service
+After=network-online.target visiondrive-license.service visiondrive-vehicle.service visiondrive-police.service visiondrive-gesture.service
+Wants=network-online.target visiondrive-license.service visiondrive-vehicle.service visiondrive-police.service visiondrive-gesture.service
 
 [Service]
 Type=simple
@@ -15,4 +15,3 @@ TimeoutStartSec=180
 
 [Install]
 WantedBy=visiondrive.target
-

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sys
 import os
+from contextlib import nullcontext
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -21,6 +22,8 @@ class LicensePlatePipeline:
         self.model_path = Path(config["clprnet_model_path"])
         self.service = None
         self.init_error = ""
+        self._torch = None
+        self._gpu_optimizations: dict[str, bool] = {}
         self._lock = RLock()
         self._init_external_service()
 
@@ -40,7 +43,7 @@ class LicensePlatePipeline:
 
         # 外部 CLPRNet 服务未声明线程安全；单进程内保护模型状态，服务通过
         # 多个 Uvicorn worker 实现模型级并行。
-        with self._lock:
+        with self._lock, self._inference_context():
             candidates = self.service.recognize(image, source_name=image_url)
         for index, item in enumerate(candidates, 1):
             x, y, width, height = item.bbox
@@ -89,6 +92,7 @@ class LicensePlatePipeline:
         device = getattr(getattr(self.service.recognizer, "clprnet", None), "device", None)
         status["device"] = str(device or "unknown")
         status["cuda"] = str(device).startswith("cuda")
+        status["optimizations"] = dict(self._gpu_optimizations)
         return status
 
     def _init_external_service(self) -> None:
@@ -105,9 +109,38 @@ class LicensePlatePipeline:
             self.service = PlateRecognitionService()
             if not self.service.ready:
                 self.init_error = str(self.service.status.get("model", {}).get("message", "CLPRNet 不可用"))
+            else:
+                self._configure_torch_runtime()
         except Exception as exc:  # noqa: BLE001
             self.service = None
             self.init_error = f"加载 CLPRNet 车牌识别服务失败: {exc}"
+
+    def _configure_torch_runtime(self) -> None:
+        engine = getattr(getattr(self.service, "recognizer", None), "clprnet", None)
+        torch = getattr(engine, "torch", None)
+        device = getattr(engine, "device", None)
+        if torch is None:
+            return
+
+        self._torch = torch
+        self._gpu_optimizations["inferenceMode"] = True
+        if not str(device).startswith("cuda"):
+            return
+
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cuda.matmul.allow_tf32 = True
+        if hasattr(torch, "set_float32_matmul_precision"):
+            torch.set_float32_matmul_precision("high")
+        self._gpu_optimizations.update({
+            "cudnnBenchmark": True,
+            "tf32": True,
+        })
+
+    def _inference_context(self):
+        if self._torch is None:
+            return nullcontext()
+        return self._torch.inference_mode()
 
     @staticmethod
     def _normalize_color(label: str) -> str:

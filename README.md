@@ -44,15 +44,9 @@ cd backend
 
 脚本会建立本机到服务器 MySQL 的 SSH 隧道，再启动后端；退出后端时隧道会一并关闭。车辆配置接口只从 JWT 获取当前用户 ID，不接受客户端指定 userId。
 
-### 用户识别结果表
+### 用户识别历史
 
-三类识别结果分别保存在以下表中：
-
-- `license_plate_recognition_result`：车牌识别结果
-- `police_gesture_recognition_result`：交警手势识别结果
-- `user_gesture_recognition_result`：用户手势识别结果
-
-三张表均使用 `(user_id, created_at)` 联合主键，并包含 `recognition_result`（完整识别结果 JSON）和 `image_source`（图片 URL、摄像头编号或沙盘流标识）。`user_id` 外键关联 `user.id`，删除用户时同步删除其识别结果。建表脚本见 `scripts/create_recognition_result_tables.sql`。
+车牌、车辆类型、交警手势和车主手势统一保存到 `inference_record` 表。新记录绑定 JWT 中的 `user_id`，普通用户只能查看自己的记录；管理员还可查看升级前没有 `user_id` 的历史未归属记录。`result_json` 只保存用于历史展示的安全摘要，不向前端暴露服务器本地文件路径。
 
 > 车载视觉感知与人机交互Web系统
 

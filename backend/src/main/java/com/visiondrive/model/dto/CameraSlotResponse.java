@@ -13,6 +13,7 @@ public class CameraSlotResponse {
     private String sourceType;
     private String path;
     private Integer deviceIndex;
+    private Boolean weatherSimulationEnabled;
     private String status;
     private String error;
     private String frameUrl;

@@ -6,11 +6,14 @@ import com.visiondrive.model.dto.ApiResponse;
 import com.visiondrive.model.entity.AlertEvent;
 import com.visiondrive.model.entity.SystemLog;
 import com.visiondrive.service.AlertService;
+import com.visiondrive.service.EvidenceProxyService;
+import com.visiondrive.service.ManualAlertInjectionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -25,6 +28,8 @@ public class AlertController {
 
     private final AlertService alertService;
     private final LogMonitor logMonitor;
+    private final EvidenceProxyService evidenceProxyService;
+    private final ManualAlertInjectionService manualAlertInjectionService;
 
     @Operation(summary = "获取告警列表")
     @GetMapping
@@ -44,6 +49,12 @@ public class AlertController {
     public ApiResponse<Map<String, Object>> getAlertStats() {
         Map<String, Object> stats = alertService.getAlertStats();
         return ApiResponse.success(stats);
+    }
+
+    @Operation(summary = "读取失败样本图片或视频")
+    @GetMapping("/evidence")
+    public ResponseEntity<byte[]> getEvidence(@RequestParam String source) {
+        return evidenceProxyService.load(source);
     }
 
     @Operation(summary = "获取告警详情")
@@ -83,5 +94,11 @@ public class AlertController {
     @PostMapping("/agent/run")
     public ApiResponse<List<AnomalyEvent>> runAlertAgent() {
         return ApiResponse.success(logMonitor.manualDetect());
+    }
+
+    @Operation(summary = "手动注入数据库连接失败严重告警")
+    @PostMapping("/manual/database-failure")
+    public ApiResponse<Map<String, Object>> injectDatabaseFailureAlert() {
+        return ApiResponse.success(manualAlertInjectionService.injectDatabaseConnectionFailure());
     }
 }

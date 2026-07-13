@@ -10,4 +10,5 @@ public class CameraSlotRequest {
     private String name;
     private String path;
     private Integer deviceIndex;
+    private Boolean weatherSimulationEnabled;
 }

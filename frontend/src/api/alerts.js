@@ -23,3 +23,7 @@ export function getSystemLogs(params) {
 export function runAlertAgent() {
   return request.post('/alerts/agent/run')
 }
+
+export function injectDatabaseFailureAlert() {
+  return request.post('/alerts/manual/database-failure')
+}

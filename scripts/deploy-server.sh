@@ -26,12 +26,18 @@ jar_path="$(find "${PROJECT_ROOT}/backend/target" -maxdepth 1 -name 'vision-driv
 [[ -f "${PROJECT_ROOT}/deployment/server/turn.env" ]] || { echo "缺少 deployment/server/turn.env（TURN 运行密钥）" >&2; exit 1; }
 
 echo "[4/6] 同步应用代码"
-"${ssh_cmd[@]}" "${remote}" "mkdir -p '${VISIONDRIVE_SERVER_DIR}/app/backend' '${VISIONDRIVE_SERVER_DIR}/app/algorithm' '${VISIONDRIVE_SERVER_DIR}/config' '${VISIONDRIVE_SERVER_DIR}/deployment' '${VISIONDRIVE_SERVER_DIR}/models/license' '${VISIONDRIVE_SERVER_DIR}/models/police' '${VISIONDRIVE_SERVER_DIR}/shared/camera-sources' '${VISIONDRIVE_SERVER_DIR}/shared/camera-frames'"
+"${ssh_cmd[@]}" "${remote}" "mkdir -p '${VISIONDRIVE_SERVER_DIR}/app/backend' '${VISIONDRIVE_SERVER_DIR}/app/algorithm' '${VISIONDRIVE_SERVER_DIR}/app/frontend' '${VISIONDRIVE_SERVER_DIR}/config' '${VISIONDRIVE_SERVER_DIR}/deployment' '${VISIONDRIVE_SERVER_DIR}/models/license' '${VISIONDRIVE_SERVER_DIR}/models/police' '${VISIONDRIVE_SERVER_DIR}/models/ppvehicle' '${VISIONDRIVE_SERVER_DIR}/vendor/PaddleDetection' '${VISIONDRIVE_SERVER_DIR}/shared/camera-sources' '${VISIONDRIVE_SERVER_DIR}/shared/camera-frames'"
 rsync -az --delete -e "${rsync_ssh}" \
   --exclude '.venv/' --exclude '__pycache__/' --exclude '*.pyc' --exclude '.env' \
   "${PROJECT_ROOT}/algorithm/" \
   "${remote}:${VISIONDRIVE_SERVER_DIR}/app/algorithm/"
+rsync -az --delete -e "${rsync_ssh}" \
+  --exclude '.git/' --exclude '__pycache__/' --exclude '*.pyc' \
+  "${PROJECT_ROOT}/third_party/PaddleDetection/" \
+  "${remote}:${VISIONDRIVE_SERVER_DIR}/vendor/PaddleDetection/"
 rsync -az -e "${rsync_ssh}" "${jar_path}" "${remote}:${VISIONDRIVE_SERVER_DIR}/app/backend/vision-drive-backend.jar"
+rsync -az --delete -e "${rsync_ssh}" \
+  "${PROJECT_ROOT}/frontend/dist/" "${remote}:${VISIONDRIVE_SERVER_DIR}/app/frontend/"
 rsync -az --delete -e "${rsync_ssh}" \
   --exclude 'turn.env' --exclude 'coturn.runtime.conf' \
   "${PROJECT_ROOT}/deployment/server/" "${remote}:${VISIONDRIVE_SERVER_DIR}/deployment/server/"
@@ -40,8 +46,15 @@ rsync -az -e "${rsync_ssh}" "${PROJECT_ROOT}/deployment/server/runtime.env" "${r
 rsync -az -e "${rsync_ssh}" "${PROJECT_ROOT}/deployment/server/turn.env" "${remote}:${VISIONDRIVE_SERVER_DIR}/config/turn.env"
 "${ssh_cmd[@]}" "${remote}" "chmod 600 '${VISIONDRIVE_SERVER_DIR}/config/backend.env' '${VISIONDRIVE_SERVER_DIR}/config/turn.env'"
 
+echo "[5/6] 同步并校验 PP-Vehicle 官方模型"
+rsync -az --delete -e "${rsync_ssh}" \
+  "${PROJECT_ROOT}/models/ppvehicle/" \
+  "${remote}:${VISIONDRIVE_SERVER_DIR}/models/ppvehicle/"
+"${ssh_cmd[@]}" "${remote}" \
+  "cd '${VISIONDRIVE_SERVER_DIR}/models/ppvehicle' && sha256sum -c '${VISIONDRIVE_SERVER_DIR}/app/algorithm/vehicle/models.sha256'"
+
 if [[ "${SYNC_MODELS:-0}" == "1" ]]; then
-  echo "[5/6] 同步模型文件"
+  echo "[5/6] 同步车牌与交警模型文件"
   rsync -az --delete -e "${rsync_ssh}" \
     "/Users/aoxiang/Desktop/软件工程学期实训/车牌识别/" \
     "${remote}:${VISIONDRIVE_SERVER_DIR}/models/license/"
@@ -52,7 +65,7 @@ if [[ "${SYNC_MODELS:-0}" == "1" ]]; then
       "${remote}:${VISIONDRIVE_SERVER_DIR}/models/police/${directory}/"
   done
 else
-  echo "[5/6] 未同步模型（首次部署请设置 SYNC_MODELS=1）"
+  echo "[5/6] 未同步车牌与交警模型（车辆模型已同步）"
 fi
 
 echo "[6/6] 安装依赖并重启远端服务"

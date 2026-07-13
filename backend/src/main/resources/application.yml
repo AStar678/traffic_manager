@@ -7,7 +7,7 @@ spring:
 
   # 默认使用 H2；通过 DB_* 环境变量切换到云端 MySQL。
   datasource:
-    url: ${DB_URL:jdbc:h2:file:./data/visiondrive;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE}
+    url: ${DB_URL:jdbc:h2:file:./data/visiondrive;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;NON_KEYWORDS=USER}
     driver-class-name: ${DB_DRIVER:org.h2.Driver}
     username: ${DB_USERNAME:sa}
     password: ${DB_PASSWORD:}
@@ -31,19 +31,6 @@ spring:
       max-file-size: 200MB
       max-request-size: 220MB
 
-  # 邮件 (告警通知)
-  mail:
-    host: ${MAIL_HOST:smtp.example.com}
-    port: ${MAIL_PORT:587}
-    username: ${MAIL_USERNAME:}
-    password: ${MAIL_PASSWORD:}
-    properties:
-      mail:
-        smtp:
-          auth: ${MAIL_SMTP_AUTH:true}
-          starttls:
-            enable: ${MAIL_SMTP_STARTTLS:true}
-
 # 三个独立算法服务地址
 algorithm:
   license:
@@ -51,7 +38,9 @@ algorithm:
   police:
     base-url: ${POLICE_ALGORITHM_BASE_URL:http://localhost:8001}
   gesture:
-    base-url: ${GESTURE_ALGORITHM_BASE_URL:http://localhost:8002}
+    base-url: ${GESTURE_ALGORITHM_BASE_URL:http://100.73.64.55:8002}
+  vehicle:
+    base-url: ${VEHICLE_ALGORITHM_BASE_URL:http://localhost:8004}
   inference:
     image: /api/v1/inference/image
 
@@ -86,12 +75,19 @@ sms:
     sign-name: ${ALIYUN_SMS_SIGN_NAME:}
     template-code: ${ALIYUN_SMS_TEMPLATE_CODE:}
 
-# LLM API
+# 文件服务。生产环境配置公网地址后，千问可直接拉取较大的失败视频；本地小文件自动使用 Base64。
+file:
+  upload-dir: ${FILE_UPLOAD_DIR:./uploads}
+  public-base-url: ${FILE_PUBLIC_BASE_URL:}
+
+# 阿里云百炼 / 千问 API
 llm:
-  provider: deepseek
-  api-key: ${LLM_API_KEY:}
-  model: deepseek-chat
-  base-url: https://api.deepseek.com/v1
+  provider: qwen
+  api-key: ${DASHSCOPE_API_KEY:${LLM_API_KEY:}}
+  model: ${QWEN_TEXT_MODEL:qwen-plus}
+  vision-model: ${QWEN_VISION_MODEL:qwen-vl-plus}
+  base-url: ${DASHSCOPE_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+  vision-max-base64-bytes: ${QWEN_VISION_MAX_BASE64_BYTES:7340032}
 
 # 告警Agent
 alert:
@@ -101,8 +97,12 @@ alert:
     cooldown: ${ALERT_AGENT_COOLDOWN:300000}  # 同类告警冷却时间(毫秒)
     failure-rate-threshold: 0.3
     low-confidence-threshold: 0.5
+    recognition-review-enabled: ${RECOGNITION_REVIEW_ENABLED:true}
+    recognition-review-cooldown: ${RECOGNITION_REVIEW_COOLDOWN:60000}
     token-limit: 1000000
-  email:
-    enabled: ${ALERT_EMAIL_ENABLED:true}
-    recipients: ${ALERT_EMAIL_RECIPIENTS:}
-    from: ${ALERT_EMAIL_FROM:${MAIL_USERNAME:}}
+  report:
+    enabled: ${ALERT_SERVICE_ENABLED:true}
+    base-url: ${ALERT_SERVICE_BASE_URL:http://localhost:8096}
+    token: ${ALERT_SERVICE_TOKEN:}
+  evidence-proxy:
+    allowed-hosts: ${EVIDENCE_PROXY_ALLOWED_HOSTS:localhost,127.0.0.1,::1}

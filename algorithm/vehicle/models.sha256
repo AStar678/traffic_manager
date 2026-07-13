@@ -1,0 +1,11 @@
+# Official PP-Vehicle downloads:
+# https://bj.bcebos.com/v1/paddledet/models/pipeline/mot_ppyoloe_s_36e_ppvehicle.zip
+# https://bj.bcebos.com/v1/paddledet/models/pipeline/vehicle_attribute_model.zip
+d69d3f886044ace824d81059fc77937f8d28158887e137e547aaf28c2041c5ff  mot/infer_cfg.yml
+4af667f854d77236979b9091dbe78541d9ccfe3173dd568ab93758c86026a2e0  mot/model.pdiparams
+93798491d7414a632efd71ff2f81a44b83d8b4fa1a1d4c50c06540e6e801ed94  mot/model.pdiparams.info
+4cd7ddd8875a58f4ada3b42e88d2af0c991d89eff1035f30dda8e2a2e207f99f  mot/model.pdmodel
+c8a86f85ca5949a9874c3a569dac151e4b8e1f0a7ee3694de7afddc733b6281a  attr/infer_cfg.yml
+795677bdbf999cd9e72d648eb4b25917ccfa718b624d23a5653aa10001fd775c  attr/model.pdiparams
+bf8d45f136c8d2f12b8fd5f9c26d547cfcf7f347f4bc5436f443a3f8dbc8af2f  attr/model.pdiparams.info
+71f841019fdf0eec60bac8aee7b819173b28ada2b02e2e718a76de55c3793643  attr/model.pdmodel

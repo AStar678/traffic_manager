@@ -6,18 +6,9 @@
         <h1>车主手势控车原型网络</h1>
       </div>
       <div class="top-actions">
-        <div class="algorithm-switch" role="radiogroup" aria-label="手势识别算法">
-          <button
-            v-for="option in algorithmOptions"
-            :key="option.id"
-            type="button"
-            role="radio"
-            :aria-checked="activeAlgorithm === option.id"
-            :class="{ active: activeAlgorithm === option.id }"
-            :disabled="algorithmSwitching"
-            :title="option.description"
-            @click="switchAlgorithm(option.id)"
-          >{{ algorithmShortName(option) }}</button>
+        <div class="algorithm-badge" aria-label="当前手势识别算法">
+          <span>DINOv2-S</span>
+          <strong>TCN 视频原型</strong>
         </div>
         <button class="primary" type="button" @click="openManagementDialog">管理手势</button>
         <div class="status-pill" id="modelStatus">模型加载中</div>
@@ -36,7 +27,7 @@
           <div class="viewport-top">
             <span class="chip" :class="{ live: cameraActive }">{{ cameraActive ? '● LIVE' : '○ CAMERA' }}</span>
             <span class="chip">车内摄像头</span>
-            <span v-if="cameraActive" class="chip tracking">21 点手部追踪</span>
+            <span v-if="cameraActive" class="chip tracking">RGB + 21 点手部特征</span>
           </div>
         </div>
 
@@ -55,7 +46,7 @@
 
         <div class="readout-grid">
           <div class="readout">
-            <span>原型匹配</span>
+            <span>视频原型匹配</span>
             <strong id="prototypeMatch">未录入</strong>
           </div>
           <div class="readout">
@@ -72,7 +63,7 @@
       <aside class="side-panel">
         <section class="panel">
           <div class="panel-head">
-            <h2>手势库</h2>
+            <h2>用户手势库</h2>
             <span id="prototypeCount">0 个</span>
           </div>
           <div class="prototype-list" id="prototypeList"></div>
@@ -118,34 +109,33 @@
           <section class="manager-section record-section">
             <div class="panel-head">
               <h3>录入手势</h3>
-              <span id="sampleCount">0 / 45 帧</span>
+              <span id="sampleCount">0 / 12 帧</span>
+            </div>
+            <div class="record-preview" :class="{ active: cameraActive }">
+              <video id="managementWebcam" autoplay playsinline muted></video>
+              <div v-if="!cameraActive" class="record-preview-empty">
+                <strong>{{ cameraStarting ? '正在打开摄像头' : '等待摄像头' }}</strong>
+                <span>{{ cameraError || '打开管理面板后将自动启动预览' }}</span>
+              </div>
+              <span class="record-preview-status">{{ recordingActive ? '● 正在采样' : (cameraActive ? '● 实时预览' : '○ 待机') }}</span>
             </div>
             <label>
               动作名称
               <input id="gestureNameInput" type="text" placeholder="例如：挥手返回主页" />
             </label>
-            <div class="field-grid">
-              <label>
-                手势类型
-                <select id="gestureKindSelect">
-                  <option value="static" selected>静态姿态</option>
-                  <option value="dynamic">动态轨迹</option>
-                </select>
-              </label>
-              <label>
-                触发持续时间
-                <select id="holdMsSelect">
-                  <option value="900">0.9 秒</option>
-                  <option value="1200" selected>1.2 秒</option>
-                  <option value="1800">1.8 秒</option>
-                </select>
-              </label>
-            </div>
+            <label>
+              触发持续时间
+              <select id="holdMsSelect">
+                <option value="900">0.9 秒</option>
+                <option value="1200" selected>1.2 秒</option>
+                <option value="1800">1.8 秒</option>
+              </select>
+            </label>
             <div class="button-row">
               <button class="primary" id="recordBtn" type="button" disabled @click="startCountdownRecording">录入新手势</button>
               <button id="cancelRecordBtn" type="button" disabled @click="stopRecording">取消录入</button>
             </div>
-            <p class="hint" id="recordHint">先选择静态姿态或动态轨迹，点击录入后倒数 3 秒并采集 45 帧保存手势。</p>
+            <p class="hint" id="recordHint">录制一段短视频，由 DINOv2-S 与手部几何特征共同生成视频原型。</p>
           </section>
 
           <section class="manager-section gesture-management-panel">
@@ -180,22 +170,19 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { DrawingUtils, FilesetResolver, GestureRecognizer } from '@/vendor/tasks-vision/vision_bundle.mjs'
 import {
+  cancelOwnerGestureRecording,
+  deleteOwnerGesturePrototype,
   executeOwnerGestureControl,
   getOwnerGestureControlSettings,
   getOwnerGestureData,
+  getOwnerGestureState,
+  recognizeOwnerGesture,
+  startOwnerGestureRecording,
   saveOwnerGestureControlSettings
 } from '@/api/ownerGestures'
 import { OWNER_GESTURE_ACTIONS } from '@/utils/constants'
-import {
-  OWNER_GESTURE_RECOGNITION_CONFIG,
-  extractFeatureVector,
-  sequenceMotion
-} from '@/utils/ownerGesturePrototype'
-import {
-  buildVideoPrototypePayload,
-  DEFAULT_OWNER_GESTURE_ALGORITHM_OPTIONS,
-  OWNER_GESTURE_ALGORITHMS
-} from '@/utils/ownerGestureVideoPrototype'
+import { buildVideoPrototypePayload } from '@/utils/ownerGestureVideoPrototype'
+import { announceOwnerGestureAction } from '@/utils/speechAnnouncements'
 import { useVehicleStore } from '@/stores/vehicle'
 
 const props = defineProps({
@@ -204,33 +191,19 @@ const props = defineProps({
 })
 
 const MODEL_PATH = '/models/gesture_recognizer.task'
-const GESTURE_FRAME_INTERVAL_MS = 33
-const BUILT_IN_GESTURE_THRESHOLD = 0.7
-const BUILT_IN_GESTURE_FALLBACK_HOLD_MS = 1200
-const BUILT_IN_GESTURE_COOLDOWN_MS = 1500
-const BUILT_IN_DISPLAY_GRACE_MS = 500
-const BUILT_IN_GESTURE_LABELS = {
-  Closed_Fist: '握拳',
-  Open_Palm: '手掌张开',
-  Pointing_Up: '单指向上',
-  Thumb_Down: '拇指向下',
-  Thumb_Up: '拇指向上',
-  Victory: '胜利手势',
-  ILoveYou: 'I Love You',
-  None: '未识别'
-}
+const DEFAULT_HOLD_MS = 1200
+const DEFAULT_SAMPLE_TARGET = 12
+const VIDEO_GESTURE_KIND = 'dynamic'
 
 const pageRef = ref(null)
 const vehicleStore = useVehicleStore()
 const isManagementOpen = ref(false)
 const isCountdownOpen = ref(false)
+const recordingActive = ref(false)
 const recordingCountdown = ref(3)
 const cameraActive = ref(false)
 const cameraStarting = ref(false)
 const cameraError = ref('')
-const activeAlgorithm = ref(OWNER_GESTURE_ALGORITHMS.MEDIAPIPE)
-const algorithmOptions = ref([...DEFAULT_OWNER_GESTURE_ALGORITHM_OPTIONS])
-const algorithmSwitching = ref(false)
 
 const cameraButtonText = computed(() => {
   if (cameraStarting.value) return '正在打开电脑摄像头'
@@ -260,19 +233,14 @@ let lastVideoTime = -1
 let lastPredictFrameAt = 0
 let prototypes = []
 let isRecording = false
-let recognitionSocket
 let serviceConfig
-let shouldReconnectSocket = true
+let serviceConnected = false
+let recognitionRequestPending = false
 let controlSettings = []
 let actionOptions = OWNER_GESTURE_ACTIONS
 let countdownTimer
-let lastBuiltInGestureCode = ''
-let lastBuiltInGestureAt = 0
-let lastBuiltInMatchAt = 0
-let builtInGestureStableCode = ''
-let builtInGestureStableSince = 0
-let builtInGestureVectors = []
 let lastRecognizedGestureDisplay
+let recordingGestureName = ''
 
 onMounted(async () => {
   await nextTick()
@@ -282,11 +250,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  shouldReconnectSocket = false
   window.clearInterval(countdownTimer)
   stopCamera()
-  recognitionSocket?.close()
-  recognitionSocket = undefined
 })
 
 function bindElements() {
@@ -295,6 +260,7 @@ function bindElements() {
   els = {
     modelStatus: find('#modelStatus'),
     webcam: find('#webcam'),
+    managementWebcam: find('#managementWebcam'),
     countdownWebcam: find('#countdownWebcam'),
     overlay: find('#overlay'),
     cameraEmpty: find('#cameraEmpty'),
@@ -305,7 +271,6 @@ function bindElements() {
     similarityScore: find('#similarityScore'),
     triggerState: find('#triggerState'),
     gestureNameInput: find('#gestureNameInput'),
-    gestureKindSelect: find('#gestureKindSelect'),
     holdMsSelect: find('#holdMsSelect'),
     recordBtn: find('#recordBtn'),
     cancelRecordBtn: find('#cancelRecordBtn'),
@@ -329,7 +294,6 @@ async function init() {
   await loadServiceState()
   await loadControlSettings()
   syncVehiclePanel()
-  connectRecognitionStream()
 
   try {
     const vision = await FilesetResolver.forVisionTasks('/wasm')
@@ -347,9 +311,13 @@ async function init() {
 
 async function loadServiceState() {
   try {
-    applyServiceState(await apiRequest('/api/state'))
+    applyServiceState(getOwnerGestureData(await getOwnerGestureState()))
+    serviceConnected = true
+    syncAlgorithmStatus()
   } catch (error) {
     console.error(error)
+    serviceConnected = false
+    syncAlgorithmStatus()
     renderPrototypes()
     els.triggerState.textContent = '识别服务未连接'
     els.recordHint.textContent = recordingHint()
@@ -365,31 +333,9 @@ async function loadControlSettings() {
   }
 }
 
-function connectRecognitionStream() {
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  recognitionSocket = new WebSocket(`${protocol}//${location.host}/api/recognition/stream`)
-
-  recognitionSocket.addEventListener('open', () => {
-    els.triggerState.textContent = '识别服务已连接'
-  })
-
-  recognitionSocket.addEventListener('message', event => {
-    try {
-      applyServiceState(JSON.parse(event.data))
-    } catch (error) {
-      console.error(error)
-    }
-  })
-
-  recognitionSocket.addEventListener('close', () => {
-    if (!shouldReconnectSocket) return
-    els.triggerState.textContent = '识别服务重连中'
-    window.setTimeout(connectRecognitionStream, 1000)
-  })
-}
-
 async function startCamera() {
   if (mediaStream) {
+    await syncManagementPreview()
     cameraActive.value = true
     predictLoop()
     return true
@@ -405,7 +351,11 @@ async function startCamera() {
     if (els.countdownWebcam) {
       els.countdownWebcam.srcObject = mediaStream
     }
+    if (els.managementWebcam) {
+      els.managementWebcam.srcObject = mediaStream
+    }
     await els.webcam.play()
+    await syncManagementPreview()
     resizeCanvas()
     els.cameraEmpty.hidden = true
     cameraActive.value = true
@@ -434,12 +384,7 @@ function stopCamera() {
   isCountdownOpen.value = false
   recordingCountdown.value = 3
   lastPredictFrameAt = 0
-  lastBuiltInGestureCode = ''
-  lastBuiltInGestureAt = 0
-  lastBuiltInMatchAt = 0
-  builtInGestureStableCode = ''
-  builtInGestureStableSince = 0
-  builtInGestureVectors = []
+  recognitionRequestPending = false
   mediaStream?.getTracks().forEach(track => track.stop())
   mediaStream = undefined
   cameraActive.value = false
@@ -448,6 +393,9 @@ function stopCamera() {
   }
   if (els.countdownWebcam) {
     els.countdownWebcam.srcObject = null
+  }
+  if (els.managementWebcam) {
+    els.managementWebcam.srcObject = null
   }
   if (ctx && els.overlay) {
     ctx.clearRect(0, 0, els.overlay.width, els.overlay.height)
@@ -513,109 +461,24 @@ function drawResult(result) {
 function updateRecognition(result) {
   const landmarks = result.landmarks?.[0]
   if (!landmarks) {
-    resetBuiltInGestureState()
     restoreLastRecognizedGestureDisplay()
     els.triggerState.textContent = '未检测到手'
     return
   }
 
-  const vector = extractFeatureVector(landmarks, result.worldLandmarks?.[0])
-  if (activeAlgorithm.value === OWNER_GESTURE_ALGORITHMS.MEDIAPIPE) {
-    handleBuiltInRecognition(result.gestures?.[0]?.[0], vector)
-  } else {
-    resetBuiltInGestureState()
-  }
-  sendRecognitionFrame(vector, result)
+  void sendRecognitionFrame(result)
 }
 
-function handleBuiltInRecognition(category, vector) {
-  if (isRecording) return
-  const gestureCode = category?.categoryName
-  const score = Number(category?.score || 0)
-  const now = performance.now()
-  if (!gestureCode || gestureCode === 'None' || score < BUILT_IN_GESTURE_THRESHOLD) {
-    resetBuiltInGestureState()
-    return
-  }
-
-  const config = builtInGestureConfig()
-  const gestureName = translateBuiltin(gestureCode)
-  const recognitionHoldMs = builtInStaticRecognitionHoldMs(config)
-  const triggerHoldMs = builtInGestureHoldMs(gestureCode)
-  const motion = trackBuiltInGestureMotion(gestureCode, vector, config)
-  lastBuiltInMatchAt = now
-
-  if (motion > builtInStaticMotionLimit(config)) {
-    builtInGestureStableSince = 0
-    els.prototypeMatch.textContent = '静态确认中'
-    els.similarityScore.textContent = '--'
-    els.triggerState.textContent = '请保持静止'
-    return
-  }
-
-  if (!builtInGestureStableSince) {
-    builtInGestureStableSince = now
-  }
-  const stableElapsed = now - builtInGestureStableSince
-  if (stableElapsed < recognitionHoldMs) {
-    els.prototypeMatch.textContent = '静态确认中'
-    els.similarityScore.textContent = '--'
-    els.triggerState.textContent = builtInGestureHoldLabel(recognitionHoldMs - stableElapsed)
-    return
-  }
-
-  lastBuiltInMatchAt = now
-  rememberRecognizedGestureDisplay(gestureName, formatGestureScore(score))
-
-  if (gestureCode === lastBuiltInGestureCode && now - lastBuiltInGestureAt < BUILT_IN_GESTURE_COOLDOWN_MS) {
-    return
-  }
-
-  const binding = controlSettings.find(item => String(item.gestureCode) === String(gestureCode))
-  if (!binding?.enabled || binding.actionType === 'NONE') {
-    els.triggerState.textContent = '已识别，未关联车辆功能'
-    return
-  }
-
-  if (stableElapsed < triggerHoldMs) {
-    els.triggerState.textContent = `稳定中 ${formatHoldSeconds(triggerHoldMs - stableElapsed)}s`
-    return
-  }
-
-  lastBuiltInGestureCode = gestureCode
-  lastBuiltInGestureAt = now
-  void executeRecognizedGesture({
-    gestureCode,
-    name: gestureName,
-    score
-  })
-}
-
-function trackBuiltInGestureMotion(gestureCode, vector, config) {
-  if (gestureCode !== builtInGestureStableCode) {
-    builtInGestureStableCode = gestureCode
-    builtInGestureStableSince = 0
-    builtInGestureVectors = []
-  }
-  builtInGestureVectors.push(vector)
-  const sampleTarget = positiveMs(config.sampleTarget, OWNER_GESTURE_RECOGNITION_CONFIG.sampleTarget)
-  if (builtInGestureVectors.length > sampleTarget) {
-    builtInGestureVectors = builtInGestureVectors.slice(-sampleTarget)
-  }
-  return sequenceMotion(builtInGestureVectors, config)
-}
-
-function resetBuiltInGestureState() {
-  lastBuiltInMatchAt = 0
-  builtInGestureStableCode = ''
-  builtInGestureStableSince = 0
-  builtInGestureVectors = []
-}
-
-function openManagementDialog() {
+async function openManagementDialog() {
   isManagementOpen.value = true
   renderPrototypes()
   renderGestureMappings()
+  await nextTick()
+  if (!mediaStream) {
+    await startCamera()
+  } else {
+    await syncManagementPreview()
+  }
 }
 
 function closeManagementDialog() {
@@ -666,6 +529,18 @@ async function syncCountdownPreview() {
   }
 }
 
+async function syncManagementPreview() {
+  if (!els.managementWebcam || !mediaStream) return
+  if (els.managementWebcam.srcObject !== mediaStream) {
+    els.managementWebcam.srcObject = mediaStream
+  }
+  try {
+    await els.managementWebcam.play()
+  } catch (error) {
+    console.warn('Management camera preview could not autoplay.', error)
+  }
+}
+
 async function beginRecording() {
   const name = els.gestureNameInput.value.trim()
   if (!name) {
@@ -675,18 +550,15 @@ async function beginRecording() {
   }
 
   try {
-    const state = await apiRequest('/api/recordings/start', {
-      method: 'POST',
-      body: {
-        name,
-        kind: els.gestureKindSelect.value,
-        holdMs: Number(els.holdMsSelect.value)
-      }
-    })
+    recordingGestureName = name
+    const state = getOwnerGestureData(await startOwnerGestureRecording({
+      name,
+      kind: VIDEO_GESTURE_KIND,
+      holdMs: Number(els.holdMsSelect.value)
+    }))
     els.recordHint.textContent = recordingPhaseHint({
       active: true,
       phase: 'sampling',
-      kind: els.gestureKindSelect.value,
       sampleCount: 0,
       sampleTarget: sampleTarget()
     })
@@ -699,10 +571,11 @@ async function beginRecording() {
 
 async function stopRecording(options = {}) {
   try {
-    applyServiceState(await apiRequest('/api/recordings/cancel', { method: 'POST' }))
+    applyServiceState(getOwnerGestureData(await cancelOwnerGestureRecording()))
   } catch (error) {
     console.error(error)
   } finally {
+    recordingGestureName = ''
     if (!options.keepHint) {
       els.recordHint.textContent = recordingHint()
     }
@@ -710,51 +583,39 @@ async function stopRecording(options = {}) {
 }
 
 function recordingHint() {
-  return `先选择静态姿态或动态轨迹，点击录入后倒数 3 秒并采集 ${sampleTarget()} 帧保存手势。`
+  return `录入将采集 ${sampleTarget()} 帧 RGB 视频与手部几何特征，不使用系统预设手势。`
 }
 
-function sendRecognitionFrame(vector, result) {
-  if (!recognitionSocket || recognitionSocket.readyState !== WebSocket.OPEN) {
+async function sendRecognitionFrame(result) {
+  if (recognitionRequestPending) return
+  const videoPayload = buildVideoPrototypePayload(els.webcam, result)
+  if (!videoPayload) return
+  recognitionRequestPending = true
+  try {
+    const state = getOwnerGestureData(await recognizeOwnerGesture({ type: 'frame', ...videoPayload }))
+    serviceConnected = true
+    applyServiceState(state)
+    if (isRecording) {
+      await loadServiceState()
+    }
+  } catch (error) {
+    console.error(error)
+    serviceConnected = false
+    syncAlgorithmStatus()
     els.triggerState.textContent = '识别服务未连接'
-    return
+  } finally {
+    recognitionRequestPending = false
   }
-  const payload = { type: 'frame', vector }
-  if (activeAlgorithm.value === OWNER_GESTURE_ALGORITHMS.DINO_TCN) {
-    const videoPayload = buildVideoPrototypePayload(els.webcam, result)
-    if (!videoPayload) return
-    Object.assign(payload, videoPayload)
-  }
-  recognitionSocket.send(JSON.stringify(payload))
 }
 
 function gestureFrameInterval() {
-  if (activeAlgorithm.value !== OWNER_GESTURE_ALGORITHMS.DINO_TCN) return GESTURE_FRAME_INTERVAL_MS
   const configured = Number(serviceConfig?.dinov2FrameIntervalMs)
   return Number.isFinite(configured) && configured >= 80 ? configured : 150
 }
 
-async function apiRequest(path, options = {}) {
-  const response = await fetch(path, {
-    method: options.method || 'GET',
-    headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
-    body: options.body ? JSON.stringify(options.body) : undefined
-  })
-
-  if (!response.ok) {
-    throw new Error(`API ${path} failed: ${response.status}`)
-  }
-
-  return response.json()
-}
-
 function applyServiceState(state) {
-  if (state.algorithm) {
-    activeAlgorithm.value = state.algorithm.active || activeAlgorithm.value
-    if (Array.isArray(state.algorithm.options) && state.algorithm.options.length) {
-      algorithmOptions.value = state.algorithm.options
-    }
-    syncAlgorithmStatus()
-  }
+  if (!state) return
+  syncAlgorithmStatus()
   if (state.config) {
     serviceConfig = state.config
   }
@@ -766,46 +627,40 @@ function applyServiceState(state) {
   }
 
   if (state.recording) {
+    const wasRecording = isRecording
     isRecording = state.recording.active
+    recordingActive.value = isRecording
     els.sampleCount.textContent = recordingProgressText(state.recording)
-    if (isRecording && state.recording.kind && els.gestureKindSelect) {
-      els.gestureKindSelect.value = state.recording.kind
-    }
     els.cancelRecordBtn.disabled = !isRecording
     updateRecordButton()
     if (isRecording) {
       els.recordHint.textContent = recordingPhaseHint(state.recording)
+    } else if (wasRecording && recordingGestureName) {
+      els.recordHint.textContent = `已完成“${recordingGestureName}”的 DINOv2 视频原型录入。`
+      els.gestureNameInput.value = ''
+      recordingGestureName = ''
+      void loadControlSettings()
     }
   }
 
   if (state.recordingComplete) {
-    els.recordHint.textContent = `已录入“${state.recordingComplete.name}”为${kindLabel(state.recordingComplete.kind)}。`
-    if (els.gestureKindSelect) {
-      els.gestureKindSelect.value = state.recordingComplete.kind || els.gestureKindSelect.value
-    }
+    els.recordHint.textContent = `已完成“${state.recordingComplete.name}”的 DINOv2 视频原型录入。`
     els.gestureNameInput.value = ''
     void loadControlSettings()
   }
 
   if (state.recognition) {
     const recognition = state.recognition
-    const shouldKeepBuiltInDisplay =
-      !recognition.accepted &&
-      lastBuiltInMatchAt &&
-      performance.now() - lastBuiltInMatchAt < BUILT_IN_DISPLAY_GRACE_MS
-
     const scoreText =
       recognition.score === null || recognition.score === undefined
         ? recognition.motionLabel || '--'
         : formatGestureScore(recognition.score)
     const recognized = recognition.accepted && rememberRecognizedGestureDisplay(recognition.name, scoreText)
 
-    if (!shouldKeepBuiltInDisplay) {
-      if (!recognized) {
-        restoreLastRecognizedGestureDisplay()
-      }
-      els.triggerState.textContent = recognition.triggerState
+    if (!recognized) {
+      restoreLastRecognizedGestureDisplay()
     }
+    els.triggerState.textContent = recognition.triggerState || '识别中'
     if (recognition.triggered) {
       void executeRecognizedGesture(recognition)
     }
@@ -816,45 +671,12 @@ function applyServiceState(state) {
   }
 }
 
-async function switchAlgorithm(algorithmId) {
-  if (algorithmId === activeAlgorithm.value || algorithmSwitching.value) return
-  algorithmSwitching.value = true
-  const previous = activeAlgorithm.value
-  try {
-    const state = await apiRequest('/api/algorithm', {
-      method: 'PUT',
-      body: { algorithm: algorithmId }
-    })
-    lastRecognizedGestureDisplay = undefined
-    resetBuiltInGestureState()
-    applyServiceState(state)
-    await loadControlSettings()
-    ElMessage.success(`已切换到${activeAlgorithmLabel()}`)
-  } catch (error) {
-    console.error(error)
-    activeAlgorithm.value = previous
-    syncAlgorithmStatus()
-    ElMessage.error('算法切换失败，请检查新模型权重与运行环境')
-  } finally {
-    algorithmSwitching.value = false
-  }
-}
-
-function algorithmShortName(option) {
-  return option.id === OWNER_GESTURE_ALGORITHMS.DINO_TCN ? 'DINOv2 + TCN' : 'MediaPipe 原型'
-}
-
-function activeAlgorithmLabel() {
-  return algorithmOptions.value.find(item => item.id === activeAlgorithm.value)?.name || '所选算法'
-}
-
 function syncAlgorithmStatus() {
   if (!els.modelStatus) return
-  const option = algorithmOptions.value.find(item => item.id === activeAlgorithm.value)
-  const unavailable = option?.loadError || option?.checkpointExists === false
-  els.modelStatus.textContent = unavailable ? '模型不可用' : `${algorithmShortName(option || {})} 已就绪`
-  els.modelStatus.classList.toggle('error', Boolean(unavailable))
-  els.modelStatus.classList.toggle('ready', !unavailable)
+  const ready = Boolean(recognizer && serviceConnected)
+  els.modelStatus.textContent = ready ? 'DINOv2-TCN 已就绪' : '识别服务未就绪'
+  els.modelStatus.classList.toggle('error', !ready)
+  els.modelStatus.classList.toggle('ready', ready)
 }
 
 function formatGestureScore(score) {
@@ -889,35 +711,6 @@ function restoreLastRecognizedGestureDisplay() {
   els.similarityScore.textContent = '--'
 }
 
-function translateBuiltin(name) {
-  return BUILT_IN_GESTURE_LABELS[name] || name
-}
-
-function builtInGestureHoldMs(gestureCode) {
-  const setting = controlSettings.find(item => String(item.gestureCode) === String(gestureCode))
-  return positiveMs(setting?.holdMs, positiveMs(serviceConfig?.defaultHoldMs, BUILT_IN_GESTURE_FALLBACK_HOLD_MS))
-}
-
-function builtInStaticRecognitionHoldMs(config) {
-  return positiveMs(config.staticRecognitionHoldMs, OWNER_GESTURE_RECOGNITION_CONFIG.staticRecognitionHoldMs)
-}
-
-function builtInStaticMotionLimit(config) {
-  return positiveMs(config.staticMotionHardLimit, positiveMs(config.staticStillMotionLimit, OWNER_GESTURE_RECOGNITION_CONFIG.staticStillMotionLimit))
-}
-
-function builtInGestureConfig() {
-  return { ...OWNER_GESTURE_RECOGNITION_CONFIG, ...(serviceConfig || {}) }
-}
-
-function builtInGestureHoldLabel(remainingMs) {
-  return `静态保持 ${formatHoldSeconds(remainingMs)}s`
-}
-
-function formatHoldSeconds(ms) {
-  return (Math.ceil(Math.max(ms, 0) / 100) / 10).toFixed(1).replace(/\.0$/, '')
-}
-
 function positiveMs(value, fallback) {
   const numeric = Number(value)
   return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback
@@ -936,9 +729,6 @@ function applyControlSettings(data = {}) {
 function updateRecordButton() {
   if (els.recordBtn) {
     els.recordBtn.disabled = isRecording || isCountdownOpen.value || !recognizer
-  }
-  if (els.gestureKindSelect) {
-    els.gestureKindSelect.disabled = isRecording || isCountdownOpen.value
   }
 }
 
@@ -981,24 +771,12 @@ function renderPrototypes() {
     item.innerHTML = `
       <div>
         <strong>${escapeHtml(row.gestureName)}</strong>
-        <span>${sourceLabel(row.gestureSource)} · ${kindLabel(row.gestureKind)} · ${row.enabled ? escapeHtml(row.actionLabel) : '未关联控制'}</span>
+        <span>用户视频原型 · ${row.enabled ? escapeHtml(row.actionLabel) : '未关联控制'}</span>
       </div>
       <button type="button">管理</button>
     `
     item.querySelector('button').addEventListener('click', openManagementDialog)
     els.prototypeList.append(item)
-  }
-}
-
-async function clearPrototypes() {
-  try {
-    applyServiceState(await apiRequest('/api/prototypes', { method: 'DELETE' }))
-    await loadControlSettings()
-    lastRecognizedGestureDisplay = undefined
-    els.prototypeMatch.textContent = '未录入'
-    els.similarityScore.textContent = '--'
-  } catch (error) {
-    console.error(error)
   }
 }
 
@@ -1017,12 +795,12 @@ function renderGestureMappings() {
     item.innerHTML = `
       <div class="mapping-meta">
         <strong>${escapeHtml(row.gestureName)}</strong>
-        <span>${sourceLabel(row.gestureSource)} · ${kindLabel(row.gestureKind)}</span>
+        <span>用户视频原型</span>
       </div>
       <select aria-label="关联 ${escapeHtml(row.gestureName)} 到车辆功能" data-gesture-code="${escapeHtml(row.gestureCode)}">
         ${actionOptionsHtml(row.actionType)}
       </select>
-      <button class="delete-gesture-button" type="button" ${isSystemGesture(row) ? 'disabled' : ''}>删除</button>
+      <button class="delete-gesture-button" type="button">删除</button>
     `
     item.querySelector('select').addEventListener('change', event => {
       updateLocalControlSetting(row, event.target.value)
@@ -1036,11 +814,10 @@ function renderGestureMappings() {
 }
 
 async function deleteGesture(row) {
-  if (isSystemGesture(row)) return
   const gestureCode = row?.gestureCode
   if (!gestureCode) return
   try {
-    applyServiceState(await apiRequest(`/api/prototypes/${encodeURIComponent(gestureCode)}`, { method: 'DELETE' }))
+    applyServiceState(getOwnerGestureData(await deleteOwnerGesturePrototype(gestureCode)))
     await loadControlSettings()
     ElMessage.success('手势已删除')
   } catch (error) {
@@ -1049,35 +826,24 @@ async function deleteGesture(row) {
 }
 
 function gestureManagementRows() {
-  const rows = new Map()
-  for (const prototype of prototypes) {
+  const settingsByCode = new Map(
+    controlSettings.map(setting => [String(setting.gestureCode || ''), setting])
+  )
+  return prototypes.map(prototype => {
     const gestureCode = prototype.id || prototype.gestureCode || prototype.name
-    rows.set(String(gestureCode), {
+    const setting = settingsByCode.get(String(gestureCode)) || {}
+    const actionType = setting.actionType || 'NONE'
+    return {
       gestureCode: String(gestureCode),
       gestureName: prototype.name || prototype.gestureName || String(gestureCode),
-      gestureKind: prototype.kind || 'static',
-      gestureSource: prototype.source || 'custom',
-      holdMs: positiveMs(prototype.holdMs, positiveMs(serviceConfig?.defaultHoldMs, BUILT_IN_GESTURE_FALLBACK_HOLD_MS)),
-      actionType: 'NONE',
-      actionLabel: '不触发控制',
-      enabled: false
-    })
-  }
-  for (const setting of controlSettings) {
-    const gestureCode = String(setting.gestureCode || '')
-    if (!gestureCode) continue
-    rows.set(gestureCode, {
-      ...(rows.get(gestureCode) || {}),
-      ...setting,
-      gestureCode,
-      gestureName: setting.gestureName || rows.get(gestureCode)?.gestureName || gestureCode,
-      holdMs: positiveMs(setting.holdMs, rows.get(gestureCode)?.holdMs || positiveMs(serviceConfig?.defaultHoldMs, BUILT_IN_GESTURE_FALLBACK_HOLD_MS)),
-      actionType: setting.actionType || 'NONE',
-      actionLabel: setting.actionLabel || actionLabel(setting.actionType),
-      enabled: Boolean(setting.enabled) && setting.actionType !== 'NONE'
-    })
-  }
-  return Array.from(rows.values())
+      gestureKind: prototype.kind || VIDEO_GESTURE_KIND,
+      gestureSource: 'custom',
+      holdMs: positiveMs(setting.holdMs, positiveMs(prototype.holdMs, positiveMs(serviceConfig?.defaultHoldMs, DEFAULT_HOLD_MS))),
+      actionType,
+      actionLabel: setting.actionLabel || actionLabel(actionType),
+      enabled: Boolean(setting.enabled) && actionType !== 'NONE'
+    }
+  })
 }
 
 function updateLocalControlSetting(row, actionType) {
@@ -1102,8 +868,8 @@ async function saveControlBindings() {
     gestureCode: row.gestureCode,
     gestureName: row.gestureName,
     gestureKind: row.gestureKind,
-    gestureSource: row.gestureSource,
-    holdMs: positiveMs(row.holdMs, positiveMs(serviceConfig?.defaultHoldMs, BUILT_IN_GESTURE_FALLBACK_HOLD_MS)),
+    gestureSource: 'custom',
+    holdMs: positiveMs(row.holdMs, positiveMs(serviceConfig?.defaultHoldMs, DEFAULT_HOLD_MS)),
     actionType: row.actionType || 'NONE',
     enabled: Boolean(row.actionType && row.actionType !== 'NONE')
   }))
@@ -1132,6 +898,7 @@ async function executeRecognizedGesture(recognition) {
       els.triggerState.textContent = '已识别，未关联车辆功能'
       return
     }
+    announceOwnerGestureAction(control.actionLabel)
     vehicleStore.applyGestureControl(control)
     syncVehiclePanel()
     els.triggerState.textContent = `已触发：${control.actionLabel}`
@@ -1181,20 +948,8 @@ function actionOptionsHtml(selectedAction) {
   }).join('')
 }
 
-function sourceLabel(source) {
-  return source === 'built_in' || source === 'system' ? '系统手势' : '自定义手势'
-}
-
-function isSystemGesture(row) {
-  return row.gestureSource === 'built_in' || row.gestureSource === 'system'
-}
-
-function kindLabel(kind) {
-  return kind === 'dynamic' ? '动态轨迹' : '静态姿态'
-}
-
 function sampleTarget() {
-  return serviceConfig?.sampleTarget || 45
+  return serviceConfig?.sampleTarget || DEFAULT_SAMPLE_TARGET
 }
 
 function recordingProgressText(recording) {
@@ -1208,7 +963,7 @@ function recordingPhaseHint(recording) {
   if (recording?.phase === 'sampling') {
     const count = recording.sampleCount ?? 0
     const target = recording.sampleTarget ?? sampleTarget()
-    return `正在录入${kindLabel(recording.kind)}：${count} / ${target} 帧。`
+    return `正在录入视频原型：${count} / ${target} 帧。`
   }
   return recordingHint()
 }
@@ -1305,30 +1060,35 @@ function escapeHtml(value = '') {
   gap: 10px;
 }
 
-.algorithm-switch {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(124px, 1fr));
-  gap: 4px;
-  padding: 4px;
+.algorithm-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 4px 12px 4px 5px;
   border: 1px solid var(--border-card);
   border-radius: 14px;
   background: var(--bg-surface);
 }
 
-.owner-gesture-page .algorithm-switch button {
-  min-height: 34px;
-  border: 0;
+.algorithm-badge span {
+  display: grid;
+  place-items: center;
+  min-height: 32px;
   border-radius: 9px;
   padding: 0 11px;
-  color: var(--text-muted);
-  background: transparent;
+  color: var(--primary-color);
+  background: var(--primary-soft);
+  box-shadow: inset 0 0 0 1px var(--border-active);
+  font-size: 12px;
+  font-weight: 800;
   white-space: nowrap;
 }
 
-.owner-gesture-page .algorithm-switch button.active {
-  color: var(--text-primary);
-  background: var(--primary-soft);
-  box-shadow: inset 0 0 0 1px var(--border-active);
+.algorithm-badge strong {
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .eyebrow {
@@ -1615,12 +1375,6 @@ input[type="range"] {
 }
 
 .button-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
-.field-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
@@ -1915,6 +1669,66 @@ input[type="range"] {
   align-self: start;
 }
 
+.record-preview {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  margin-bottom: 14px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-sm);
+  background: #070b12;
+  aspect-ratio: 16 / 9;
+}
+
+.record-preview.active {
+  border-color: rgba(0, 230, 118, 0.3);
+}
+
+.record-preview video {
+  z-index: 1;
+}
+
+.record-preview-empty {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 5px;
+  padding: 18px;
+  text-align: center;
+  background:
+    linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px),
+    linear-gradient(rgba(255,255,255,0.018) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+.record-preview-empty strong {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.record-preview-empty span {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.record-preview-status {
+  position: absolute;
+  z-index: 3;
+  top: 9px;
+  left: 9px;
+  border: 1px solid rgba(0, 230, 118, 0.32);
+  border-radius: 999px;
+  padding: 5px 8px;
+  color: var(--success-color);
+  background: rgba(0, 0, 0, 0.64);
+  font-size: 11px;
+  font-weight: 800;
+  backdrop-filter: blur(6px);
+}
+
 .countdown-screen {
   z-index: 3100;
 }
@@ -2020,8 +1834,8 @@ input[type="range"] {
     flex-direction: column-reverse;
   }
 
-  .algorithm-switch {
-    width: 100%;
+  .algorithm-badge {
+    justify-content: center;
   }
 
   h1 {

@@ -23,8 +23,8 @@ public class FileStorageService {
     @Value("${file.upload-dir:./uploads}")
     private String uploadDir;
 
-    @Value("${server.port:8080}")
-    private int serverPort;
+    @Value("${file.public-base-url:}")
+    private String publicBaseUrl;
 
     /**
      * 上传文件
@@ -69,7 +69,10 @@ public class FileStorageService {
             log.info("文件保存成功: {}", filePath.toAbsolutePath());
 
             // 5. 返回访问URL
-            String url = "http://localhost:" + serverPort + "/api/files/" + subDir + "/" + dateDir + "/" + newFilename;
+            String relativeUrl = "/api/files/" + subDir + "/" + dateDir + "/" + newFilename;
+            String url = publicBaseUrl == null || publicBaseUrl.isBlank()
+                    ? relativeUrl
+                    : publicBaseUrl.replaceFirst("/+$", "") + relativeUrl;
             log.info("文件访问URL: {}", url);
 
             return url;

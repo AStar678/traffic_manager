@@ -36,16 +36,32 @@ for variable_name in "${required_variables[@]}"; do
   fi
 done
 
-ssh -N \
-  -L "${DB_SSH_LOCAL_PORT}:127.0.0.1:3306" \
-  -o ExitOnForwardFailure=yes \
-  -o ServerAliveInterval=30 \
-  -o ServerAliveCountMax=3 \
-  "${DB_SSH_USER}@${DB_SSH_HOST}" &
-TUNNEL_PID=$!
+TUNNEL_PID=""
+if ! nc -z 127.0.0.1 "${DB_SSH_LOCAL_PORT}" 2>/dev/null; then
+  ssh_options=(
+    -o BatchMode=yes
+    -o ConnectTimeout=10
+    -o ExitOnForwardFailure=yes
+    -o ServerAliveInterval=30
+    -o ServerAliveCountMax=3
+  )
+  if [[ -n "${DB_SSH_IDENTITY_FILE:-}" ]]; then
+    ssh_options+=(-i "${DB_SSH_IDENTITY_FILE}")
+  fi
+
+  ssh -N \
+    -L "${DB_SSH_LOCAL_PORT}:${DB_SSH_REMOTE_HOST:-127.0.0.1}:${DB_SSH_REMOTE_PORT:-3306}" \
+    "${ssh_options[@]}" \
+    "${DB_SSH_USER}@${DB_SSH_HOST}" &
+  TUNNEL_PID=$!
+else
+  echo "复用已有数据库隧道：127.0.0.1:${DB_SSH_LOCAL_PORT}"
+fi
 
 cleanup() {
-  kill "${TUNNEL_PID}" 2>/dev/null || true
+  if [[ -n "${TUNNEL_PID}" ]]; then
+    kill "${TUNNEL_PID}" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT INT TERM
 

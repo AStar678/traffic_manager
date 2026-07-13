@@ -1,19 +1,15 @@
 package com.visiondrive.agent;
 
+import com.visiondrive.client.AlertReportClient;
 import com.visiondrive.model.entity.AlertEvent;
 import com.visiondrive.repository.AlertEventRepository;
 import com.visiondrive.websocket.AlertWebSocketHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Component;
 
-import java.util.Arrays;
 import java.time.LocalDateTime;
 import java.util.Map;
-import java.util.Objects;
 
 @Slf4j
 @Component
@@ -23,16 +19,7 @@ public class AlertDispatcher {
     private final AlertEventRepository alertEventRepository;
     private final AlertWebSocketHandler webSocketHandler;
     private final LlmSummarizer llmSummarizer;
-    private final JavaMailSender mailSender;
-
-    @Value("${alert.email.enabled:true}")
-    private boolean emailEnabled;
-
-    @Value("${alert.email.recipients:}")
-    private String emailRecipients;
-
-    @Value("${alert.email.from:}")
-    private String emailFrom;
+    private final AlertReportClient alertReportClient;
 
     /**
      * 分发告警
@@ -66,87 +53,26 @@ public class AlertDispatcher {
 
         webSocketHandler.pushAlertToAllClients(summary);
 
-        // 4. 邮件通知（警告及严重告警）
-        if (shouldSendEmail(summary)) {
-            sendEmailNotification(summary);
-        }
-
-    }
-
-    /**
-     * 发送邮件通知
-     */
-    private void sendEmailNotification(Map<String, Object> alert) {
-        if (!emailEnabled) {
-            log.debug("邮件告警已关闭，跳过发送: {}", alert.get("title"));
-            return;
-        }
-
-        String[] recipients = parseRecipients();
-        if (recipients.length == 0) {
-            log.warn("邮件告警未配置收件人，跳过发送: {}", alert.get("title"));
-            return;
-        }
-
-        try {
-            SimpleMailMessage message = new SimpleMailMessage();
-            if (emailFrom != null && !emailFrom.isBlank()) {
-                message.setFrom(emailFrom);
+        // 4. 需要邮件通知的告警上报独立微服务，由微服务完成邮件发送。
+        if (shouldReportToMailService(summary)) {
+            try {
+                alertReportClient.report(summary);
+            } catch (Exception error) {
+                // 告警持久化和 WebSocket 推送已经完成，邮件链路失败不能回滚主体告警。
+                log.error("告警邮件微服务上报失败: alertId={}, error={}",
+                        summary.get("alertId"), error.getMessage());
             }
-            message.setTo(recipients);
-            message.setSubject(String.format("[VisionDrive][%s] %s",
-                    Objects.toString(alert.get("severityLabel"), "告警"),
-                    Objects.toString(alert.get("title"), "系统告警")));
-            message.setText(buildEmailBody(alert));
-            mailSender.send(message);
-            log.info("邮件告警已发送: recipients={}, alertId={}", recipients.length, alert.get("alertId"));
-        } catch (Exception e) {
-            log.error("邮件告警发送失败: alertId={}, error={}", alert.get("alertId"), e.getMessage());
         }
     }
 
-    private boolean shouldSendEmail(Map<String, Object> alert) {
-        String severity = Objects.toString(alert.get("severity"), "");
-        return "warning".equals(severity) || "critical".equals(severity);
-    }
-
-    private String[] parseRecipients() {
-        if (emailRecipients == null || emailRecipients.isBlank()) {
-            return new String[0];
+    private boolean shouldReportToMailService(Map<String, Object> alert) {
+        if ("critical".equalsIgnoreCase(String.valueOf(alert.get("severity")))) {
+            return true;
         }
-        return Arrays.stream(emailRecipients.split("[,;]"))
-                .map(String::trim)
-                .filter(item -> !item.isBlank())
-                .toArray(String[]::new);
-    }
-
-    private String buildEmailBody(Map<String, Object> alert) {
-        return """
-                VisionDrive 监控告警
-
-                告警ID：%s
-                告警级别：%s
-                异常类型：%s
-                影响模块：%s
-                发生时间：%s
-
-                摘要：
-                %s
-
-                指标：
-                %s
-
-                建议处置：
-                %s
-                """.formatted(
-                alert.get("alertId"),
-                alert.get("severityLabel"),
-                alert.get("anomalyType"),
-                alert.get("affectedModule"),
-                alert.get("occurredAt"),
-                alert.get("summary"),
-                alert.get("metrics"),
-                alert.get("suggestedActions")
-        );
+        if (!AnomalyType.RECOGNITION_FAILURE_REVIEW.name().equals(String.valueOf(alert.get("anomalyType")))) {
+            return false;
+        }
+        String module = String.valueOf(alert.get("affectedModule"));
+        return "license_plate".equals(module) || "police_gesture".equals(module);
     }
 }

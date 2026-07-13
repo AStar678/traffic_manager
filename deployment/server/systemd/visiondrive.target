@@ -1,6 +1,6 @@
 [Unit]
 Description=VisionDrive Server Services
-Wants=visiondrive-license.service visiondrive-police.service visiondrive-gesture.service visiondrive-backend.service visiondrive-webrtc.service
+Wants=visiondrive-license.service visiondrive-vehicle.service visiondrive-police.service visiondrive-gesture.service visiondrive-backend.service visiondrive-webrtc.service
 After=network-online.target
 
 [Install]

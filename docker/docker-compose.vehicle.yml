@@ -1,0 +1,23 @@
+services:
+  vehicle:
+    build:
+      context: ../algorithm
+      dockerfile: ../docker/Dockerfile.vehicle
+    ports:
+      - "8004:8004"
+    environment:
+      VEHICLE_ALGORITHM_PORT: 8004
+      PPVEHICLE_DEVICE: ${PPVEHICLE_DEVICE:-GPU}
+      PPVEHICLE_RUN_MODE: ${PPVEHICLE_RUN_MODE:-paddle}
+      PPVEHICLE_MOT_MODEL_DIR: /models/ppvehicle/mot
+      PPVEHICLE_ATTR_MODEL_DIR: /models/ppvehicle/attr
+      VEHICLE_PRELOAD_MODEL: ${VEHICLE_PRELOAD_MODEL:-0}
+    gpus: all
+    volumes:
+      - ${PPVEHICLE_MODEL_DIR:-../models/ppvehicle}:/models/ppvehicle:ro
+      - camera_frames:/shared/camera-frames:ro
+      - backend_uploads:/app/uploads:ro
+
+volumes:
+  camera_frames:
+  backend_uploads:

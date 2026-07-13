@@ -24,6 +24,8 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class AlgorithmClient {
 
+    public static final String OWNER_GESTURE_ALGORITHM = "dinov2_tcn_prototype";
+
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
@@ -35,6 +37,9 @@ public class AlgorithmClient {
 
     @Value("${algorithm.gesture.base-url:http://localhost:8002}")
     private String gestureAlgorithmBaseUrl;
+
+    @Value("${algorithm.vehicle.base-url:http://localhost:8004}")
+    private String vehicleAlgorithmBaseUrl;
 
     @Value("${algorithm.inference.image:/api/v1/inference/image}")
     private String inferencePath;
@@ -112,6 +117,15 @@ public class AlgorithmClient {
 
     public Map<String, Object> getOwnerGestureLibrary() {
         return requestOwnerGesture("", HttpMethod.GET, null, "获取手势库失败");
+    }
+
+    public Map<String, Object> activateOwnerGestureAlgorithm() {
+        return requestOwnerGesture(
+                "/algorithm",
+                HttpMethod.PUT,
+                Map.of("algorithm", OWNER_GESTURE_ALGORITHM),
+                "启用 DINOv2 手势算法失败"
+        );
     }
 
     public Map<String, Object> enrollOwnerGesture(Map<String, Object> requestBody) {
@@ -212,6 +226,9 @@ public class AlgorithmClient {
         }
         if ("police_gesture".equals(taskType)) {
             return policeAlgorithmBaseUrl;
+        }
+        if ("vehicle_type".equals(taskType)) {
+            return vehicleAlgorithmBaseUrl;
         }
         throw new IllegalArgumentException("不支持的图片推理任务类型: " + taskType);
     }

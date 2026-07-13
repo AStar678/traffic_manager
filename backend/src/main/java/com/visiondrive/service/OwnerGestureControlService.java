@@ -14,11 +14,29 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
+
+import static com.visiondrive.client.AlgorithmClient.OWNER_GESTURE_ALGORITHM;
 
 @Service
 @RequiredArgsConstructor
 public class OwnerGestureControlService {
+
+    private static final Set<String> DINO_CONFIG_KEYS = Set.of(
+            "activeAlgorithm",
+            "dinov2MatchThreshold",
+            "dinov2FrameIntervalMs",
+            "sampleTarget",
+            "defaultHoldMs",
+            "triggerCooldownMs"
+    );
+    private static final Set<String> MUTABLE_DINO_CONFIG_KEYS = Set.of(
+            "dinov2MatchThreshold",
+            "dinov2FrameIntervalMs",
+            "defaultHoldMs",
+            "triggerCooldownMs"
+    );
 
     private static final List<Map<String, String>> ACTION_OPTIONS = List.of(
             action("NONE", "不触发控制"),
@@ -66,10 +84,13 @@ public class OwnerGestureControlService {
 
     public Map<String, Object> getControlSettings() {
         List<Map<String, Object>> gestures = availableGestures();
-        Map<String, OwnerGestureControlBinding> bindings = bindingRepository
-                .findByGestureCodeIn(gestures.stream().map(item -> stringValue(item.get("gestureCode"))).toList())
-                .stream()
-                .collect(Collectors.toMap(OwnerGestureControlBinding::getGestureCode, item -> item));
+        List<String> gestureCodes = gestures.stream()
+                .map(item -> stringValue(item.get("gestureCode")))
+                .toList();
+        Map<String, OwnerGestureControlBinding> bindings = gestureCodes.isEmpty()
+                ? Map.of()
+                : bindingRepository.findByGestureCodeIn(gestureCodes).stream()
+                        .collect(Collectors.toMap(OwnerGestureControlBinding::getGestureCode, item -> item));
 
         List<Map<String, Object>> settings = gestures.stream()
                 .map(gesture -> mergeGestureBinding(gesture, bindings.get(stringValue(gesture.get("gestureCode")))))
@@ -82,8 +103,58 @@ public class OwnerGestureControlService {
         );
     }
 
+    public Map<String, Object> getPrototypeLibrary() {
+        List<Map<String, Object>> prototypes = availableGestures();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("algorithm", OWNER_GESTURE_ALGORITHM);
+        result.put("presetGestures", false);
+        result.put("gestures", prototypes);
+        result.put("prototypes", prototypes);
+        return result;
+    }
+
+    public Map<String, Object> getRecognitionState() {
+        Map<String, Object> rawState = algorithmClient.getOwnerGestureState();
+        Map<String, Object> state = new LinkedHashMap<>(rawState);
+        state.put("algorithm", Map.of(
+                "active", OWNER_GESTURE_ALGORITHM,
+                "presetGestures", false
+        ));
+        state.put("prototypes", normalizePrototypes(rawState.get("prototypes")));
+        state.put("config", sanitizeConfig(rawState.get("config")));
+        return state;
+    }
+
+    public Map<String, Object> getRecognitionConfig() {
+        Map<String, Object> raw = algorithmClient.getOwnerGestureConfig();
+        return Map.of("config", sanitizeConfig(raw.get("config")));
+    }
+
+    public Map<String, Object> updateRecognitionConfig(Map<String, Object> payload) {
+        Map<String, Object> patch = new LinkedHashMap<>();
+        if (payload != null) {
+            payload.forEach((key, value) -> {
+                if (MUTABLE_DINO_CONFIG_KEYS.contains(key)) {
+                    patch.put(key, value);
+                }
+            });
+        }
+        if (patch.isEmpty()) {
+            return getRecognitionConfig();
+        }
+        Map<String, Object> updated = algorithmClient.patchOwnerGestureConfig(patch);
+        return Map.of("config", sanitizeConfig(updated.get("config")));
+    }
+
     @Transactional
     public Map<String, Object> saveControlSettings(Map<String, Object> payload) {
+        List<Map<String, Object>> gestures = availableGestures();
+        Map<String, Map<String, Object>> allowedGestures = gestures.stream().collect(Collectors.toMap(
+                item -> stringValue(item.get("gestureCode")),
+                item -> item,
+                (first, ignored) -> first,
+                LinkedHashMap::new
+        ));
         Object rawSettings = payload == null ? null : payload.get("settings");
         if (!(rawSettings instanceof List<?> settings)) {
             return getControlSettings();
@@ -94,7 +165,8 @@ public class OwnerGestureControlService {
                 continue;
             }
             String gestureCode = stringValue(item.get("gestureCode")).trim();
-            if (gestureCode.isBlank()) {
+            Map<String, Object> prototype = allowedGestures.get(gestureCode);
+            if (gestureCode.isBlank() || prototype == null) {
                 continue;
             }
 
@@ -103,13 +175,15 @@ public class OwnerGestureControlService {
             OwnerGestureControlBinding binding = bindingRepository.findByGestureCode(gestureCode)
                     .orElseGet(OwnerGestureControlBinding::new);
             binding.setGestureCode(gestureCode);
-            binding.setGestureName(defaultIfBlank(stringValue(item.get("gestureName")), gestureCode));
-            binding.setGestureKind(defaultIfBlank(stringValue(item.get("gestureKind")), stringValue(item.get("kind"))));
-            binding.setGestureSource(defaultIfBlank(stringValue(item.get("gestureSource")), stringValue(item.get("source"))));
+            binding.setGestureName(stringValue(prototype.get("gestureName")));
+            binding.setGestureKind(stringValue(prototype.get("gestureKind")));
+            binding.setGestureSource("custom");
             binding.setActionType(actionType);
             binding.setEnabled(enabled);
             bindingRepository.save(binding);
         }
+
+        deleteObsoleteBindings(allowedGestures.keySet());
 
         return getControlSettings();
     }
@@ -119,24 +193,26 @@ public class OwnerGestureControlService {
         String gestureName = stringValue(payload == null ? null : payload.get("gestureName")).trim();
         Object confidence = payload == null ? null : payload.get("confidence");
 
-        Optional<OwnerGestureControlBinding> optional = bindingRepository.findByGestureCode(gestureCode);
-        if (optional.isEmpty() && !gestureName.isBlank()) {
-            optional = availableGestures().stream()
-                    .filter(item -> gestureName.equals(stringValue(item.get("gestureName"))))
-                    .map(item -> stringValue(item.get("gestureCode")))
-                    .filter(code -> !code.isBlank())
-                    .findFirst()
-                    .flatMap(bindingRepository::findByGestureCode);
+        List<Map<String, Object>> available = availableGestures();
+        Map<String, Object> prototype = available.stream()
+                .filter(item -> gestureCode.equals(stringValue(item.get("gestureCode"))))
+                .findFirst()
+                .orElseGet(() -> available.stream()
+                        .filter(item -> !gestureName.isBlank() && gestureName.equals(stringValue(item.get("gestureName"))))
+                        .findFirst()
+                        .orElse(null));
+
+        if (prototype == null) {
+            return disabledControl(gestureCode, gestureName);
         }
 
+        String activeGestureCode = stringValue(prototype.get("gestureCode"));
+        String activeGestureName = stringValue(prototype.get("gestureName"));
+
+        Optional<OwnerGestureControlBinding> optional = bindingRepository.findByGestureCode(activeGestureCode);
+
         if (optional.isEmpty()) {
-            return Map.of(
-                    "enabled", false,
-                    "gestureCode", gestureCode,
-                    "gestureName", gestureName,
-                    "actionType", "NONE",
-                    "actionLabel", ACTION_LABELS.get("NONE")
-            );
+            return disabledControl(activeGestureCode, activeGestureName);
         }
 
         OwnerGestureControlBinding binding = optional.get();
@@ -162,12 +238,22 @@ public class OwnerGestureControlService {
         bindingRepository.findByGestureCode(gestureCode).ifPresent(bindingRepository::delete);
     }
 
+    @Transactional
+    public int reconcileBindings() {
+        Set<String> activeGestureCodes = availableGestures().stream()
+                .map(item -> stringValue(item.get("gestureCode")))
+                .filter(code -> !code.isBlank())
+                .collect(Collectors.toSet());
+        return deleteObsoleteBindings(activeGestureCodes);
+    }
+
     private List<Map<String, Object>> availableGestures() {
+        return normalizePrototypes(algorithmClient.getOwnerGesturePrototypes().get("prototypes"));
+    }
+
+    private List<Map<String, Object>> normalizePrototypes(Object rawItems) {
         Map<String, Map<String, Object>> gestures = new LinkedHashMap<>();
-        Map<String, Object> library = algorithmClient.getOwnerGestureLibrary();
-        collectGestures(gestures, library.get("gestures"));
-        collectGestures(gestures, library.get("prototypes"));
-        collectGestures(gestures, algorithmClient.getOwnerGesturePrototypes().get("prototypes"));
+        collectGestures(gestures, rawItems);
         return new ArrayList<>(gestures.values());
     }
 
@@ -177,6 +263,9 @@ public class OwnerGestureControlService {
         }
         for (Object rawItem : items) {
             if (!(rawItem instanceof Map<?, ?> item)) {
+                continue;
+            }
+            if (!OWNER_GESTURE_ALGORITHM.equals(stringValue(item.get("algorithm")))) {
                 continue;
             }
             Map<String, Object> normalized = normalizeGesture(item);
@@ -201,8 +290,50 @@ public class OwnerGestureControlService {
         gesture.put("gestureName", gestureName);
         gesture.put("gestureKind", kind);
         gesture.put("gestureSource", source);
+        gesture.put("algorithm", OWNER_GESTURE_ALGORITHM);
         gesture.put("holdMs", holdMs);
         return gesture;
+    }
+
+    private Map<String, Object> sanitizeConfig(Object rawConfig) {
+        Map<String, Object> config = new LinkedHashMap<>();
+        if (rawConfig instanceof Map<?, ?> values) {
+            values.forEach((key, value) -> {
+                String name = stringValue(key);
+                if (DINO_CONFIG_KEYS.contains(name)) {
+                    config.put(name, value);
+                }
+            });
+        }
+        config.put("activeAlgorithm", OWNER_GESTURE_ALGORITHM);
+        config.put("sampleTarget", 12);
+        return config;
+    }
+
+    private int deleteObsoleteBindings(Set<String> activeGestureCodes) {
+        List<OwnerGestureControlBinding> obsolete = bindingRepository.findAll().stream()
+                .filter(binding -> isLegacySource(binding.getGestureSource())
+                        || !activeGestureCodes.contains(binding.getGestureCode()))
+                .toList();
+        if (!obsolete.isEmpty()) {
+            bindingRepository.deleteAll(obsolete);
+        }
+        return obsolete.size();
+    }
+
+    private boolean isLegacySource(String source) {
+        String normalized = stringValue(source).trim().toLowerCase(Locale.ROOT);
+        return "built_in".equals(normalized) || "system".equals(normalized);
+    }
+
+    private Map<String, Object> disabledControl(String gestureCode, String gestureName) {
+        return Map.of(
+                "enabled", false,
+                "gestureCode", gestureCode,
+                "gestureName", gestureName,
+                "actionType", "NONE",
+                "actionLabel", ACTION_LABELS.get("NONE")
+        );
     }
 
     private Map<String, Object> mergeGestureBinding(Map<String, Object> gesture, OwnerGestureControlBinding binding) {

@@ -1,13 +1,17 @@
 package com.visiondrive.controller;
 
 import com.visiondrive.client.AlgorithmClient;
+import com.visiondrive.common.utils.JsonLogBuilder;
 import com.visiondrive.model.dto.ApiResponse;
+import com.visiondrive.security.AuthenticatedUser;
 import com.visiondrive.service.OwnerGestureControlService;
+import com.visiondrive.service.RecognitionHistoryService;
 import com.visiondrive.service.SystemLogService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -32,16 +36,17 @@ public class OwnerGestureController {
 
     private final AlgorithmClient algorithmClient;
     private final OwnerGestureControlService ownerGestureControlService;
+    private final RecognitionHistoryService recognitionHistoryService;
     private final SystemLogService systemLogService;
 
     @GetMapping
-    @Operation(summary = "查询手势库", description = "兼容入口，返回新原型库与识别配置")
+    @Operation(summary = "查询手势库", description = "仅返回 DINOv2-TCN 用户录入的视频原型，不包含预设系统手势")
     public ApiResponse<Map<String, Object>> listGestures() {
-        return ApiResponse.success(algorithmClient.getOwnerGestureLibrary());
+        return ApiResponse.success(ownerGestureControlService.getPrototypeLibrary());
     }
 
     @PostMapping("/enroll")
-    @Operation(summary = "直接录入手势", description = "使用前端采集的关键点特征向量写入新原型库")
+    @Operation(summary = "直接录入手势", description = "DINOv2-TCN 手势应通过视频录入流程建立原型")
     public ApiResponse<Map<String, Object>> enrollGesture(@RequestBody Map<String, Object> request) {
         log.info("收到新手势录入请求: gestureName={}", request.get("gestureName"));
         Map<String, Object> result = algorithmClient.enrollOwnerGesture(request);
@@ -76,33 +81,33 @@ public class OwnerGestureController {
     }
 
     @GetMapping("/state")
-    @Operation(summary = "查询识别状态", description = "返回原型库、录入状态、车辆状态和识别参数")
+    @Operation(summary = "查询识别状态", description = "仅返回 DINOv2-TCN 原型库、录入状态和相关参数")
     public ApiResponse<Map<String, Object>> state() {
-        return ApiResponse.success(algorithmClient.getOwnerGestureState());
+        return ApiResponse.success(ownerGestureControlService.getRecognitionState());
     }
 
     @GetMapping("/config")
     @Operation(summary = "查询识别参数")
     public ApiResponse<Map<String, Object>> config() {
-        return ApiResponse.success(algorithmClient.getOwnerGestureConfig());
+        return ApiResponse.success(ownerGestureControlService.getRecognitionConfig());
     }
 
     @PatchMapping("/config")
     @Operation(summary = "局部更新识别参数")
     public ApiResponse<Map<String, Object>> patchConfig(@RequestBody Map<String, Object> request) {
-        return ApiResponse.success(algorithmClient.patchOwnerGestureConfig(request));
+        return ApiResponse.success(ownerGestureControlService.updateRecognitionConfig(request));
     }
 
     @PutMapping("/config")
-    @Operation(summary = "完整替换识别参数")
+    @Operation(summary = "更新 DINOv2-TCN 识别参数", description = "忽略旧 MediaPipe 原型网络参数")
     public ApiResponse<Map<String, Object>> putConfig(@RequestBody Map<String, Object> request) {
-        return ApiResponse.success(algorithmClient.putOwnerGestureConfig(request));
+        return ApiResponse.success(ownerGestureControlService.updateRecognitionConfig(request));
     }
 
     @GetMapping("/prototypes")
     @Operation(summary = "查询原型库")
     public ApiResponse<Map<String, Object>> prototypes() {
-        return ApiResponse.success(algorithmClient.getOwnerGesturePrototypes());
+        return ApiResponse.success(ownerGestureControlService.getPrototypeLibrary());
     }
 
     @DeleteMapping("/prototypes")
@@ -132,8 +137,13 @@ public class OwnerGestureController {
     }
 
     @PostMapping("/recognize")
-    @Operation(summary = "单次识别", description = "输入关键点特征向量，返回原型匹配结果")
-    public ApiResponse<Map<String, Object>> recognize(@RequestBody Map<String, Object> request) {
+    @Operation(summary = "单次识别", description = "输入 RGB 视频帧与手部几何特征，返回 DINOv2-TCN 原型匹配结果")
+    public ApiResponse<Map<String, Object>> recognize(
+            @AuthenticationPrincipal AuthenticatedUser principal,
+            @RequestBody Map<String, Object> request
+    ) {
+        long started = System.currentTimeMillis();
+        String traceId = JsonLogBuilder.generateTraceId();
         try {
             Map<String, Object> result = algorithmClient.recognizeOwnerGesture(request);
             Map<String, Object> detail = new LinkedHashMap<>();
@@ -141,10 +151,25 @@ public class OwnerGestureController {
             detail.put("gestureName", firstString(result, "gestureName", "gesture_name", "label", "name"));
             detail.put("confidence", extractConfidence(result));
             detail.put("matched", result.getOrDefault("matched", result.getOrDefault("recognized", true)));
-            systemLogService.info("owner_gesture", "success", detail);
+            recognitionHistoryService.saveOwnerGesture(
+                    principal.id(), result, traceId, System.currentTimeMillis() - started, true, null
+            );
+            systemLogService.record(
+                    "INFO", "owner_gesture", "success", JsonLogBuilder.toJson(detail), principal.id(), traceId
+            );
             return ApiResponse.success(result);
         } catch (Exception e) {
-            systemLogService.error("owner_gesture", "failure", Map.of("errorMessage", Objects.toString(e.getMessage(), "")));
+            recognitionHistoryService.saveOwnerGesture(
+                    principal.id(), null, traceId, System.currentTimeMillis() - started, false, e.getMessage()
+            );
+            systemLogService.record(
+                    "ERROR",
+                    "owner_gesture",
+                    "failure",
+                    JsonLogBuilder.toJson(Map.of("errorMessage", Objects.toString(e.getMessage(), ""))),
+                    principal.id(),
+                    traceId
+            );
             throw e;
         }
     }

@@ -18,18 +18,22 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
 @Service
@@ -38,6 +42,8 @@ public class CameraManagerService {
 
     public static final int SLOT_COUNT = 3;
     private static final long FRAME_CACHE_MILLIS = 350;
+    private static final long INFERENCE_FRAME_RETENTION_MILLIS = 5 * 60_000;
+    private static final int FRAME_COPY_ATTEMPTS = 5;
     private static final Duration CAPTURE_TIMEOUT = Duration.ofSeconds(8);
     private static final List<String> SOURCE_TYPES = List.of("OFF", "IMAGE", "VIDEO", "RTSP", "SANDBOX", "DEVICE");
 
@@ -46,6 +52,7 @@ public class CameraManagerService {
     private final Object[] slotLocks = {new Object(), new Object(), new Object()};
     private final ExecutorService captureExecutor = Executors.newFixedThreadPool(SLOT_COUNT);
     private final Map<Integer, Double> videoPositions = new ConcurrentHashMap<>();
+    private final AtomicLong lastInferenceCleanupAt = new AtomicLong();
     private final List<CameraSlotResponse> slots = new ArrayList<>();
 
     @Value("${camera.state-file:./data/camera-slots.json}")
@@ -128,6 +135,9 @@ public class CameraManagerService {
                 sourceType,
                 "OFF".equals(sourceType) ? null : nextPath,
                 request.getDeviceIndex() == null ? 0 : request.getDeviceIndex(),
+                !"OFF".equals(sourceType) && (request.getWeatherSimulationEnabled() == null
+                        ? Boolean.TRUE.equals(existing.getWeatherSimulationEnabled())
+                        : request.getWeatherSimulationEnabled()),
                 "OFF".equals(sourceType) ? "off" : "ready",
                 null,
                 frameUrl(slotId)
@@ -140,6 +150,20 @@ public class CameraManagerService {
         videoPositions.remove(slotId);
         deleteQuietly(framePath(slotId));
         return copySlot(updated);
+    }
+
+    public CameraSlotResponse updateWeatherSimulation(int slotId, boolean enabled) {
+        CameraSlotResponse updated;
+        synchronized (stateLock) {
+            CameraSlotResponse slot = slots.get(requireSlotIndex(slotId));
+            if (enabled && "OFF".equals(slot.getSourceType())) {
+                throw new IllegalStateException("请先开启摄像头输入源");
+            }
+            slot.setWeatherSimulationEnabled(enabled);
+            persistState();
+            updated = copySlot(slot);
+        }
+        return updated;
     }
 
     public CameraSlotResponse uploadMedia(int slotId, MultipartFile file) {
@@ -188,18 +212,9 @@ public class CameraManagerService {
         }
 
         synchronized (slotLocks[slotId - 1]) {
-            Path output = framePath(slotId);
             try {
-                if (Files.exists(output)
-                        && System.currentTimeMillis() - Files.getLastModifiedTime(output).toMillis() < FRAME_CACHE_MILLIS) {
-                    return new CameraFrame(slotId, slot.getName(), slot.getSourceType(), output, frameUrl(slotId));
-                }
-                Files.createDirectories(output.getParent());
-                Path temporary = output.resolveSibling(output.getFileName() + ".tmp.jpg");
-                captureFrame(slot, temporary);
-                moveReplacing(temporary, output);
-                updateRuntimeState(slotId, "ready", null);
-                return new CameraFrame(slotId, slot.getName(), slot.getSourceType(), output, frameUrl(slotId));
+                Path output = ensureCurrentFrame(slot);
+                return copyStableInferenceFrame(slot, output);
             } catch (Exception error) {
                 updateRuntimeState(slotId, "error", error.getMessage());
                 throw new RuntimeException("摄像头 " + slotId + " 取帧失败: " + error.getMessage(), error);
@@ -208,7 +223,119 @@ public class CameraManagerService {
     }
 
     public Path currentFramePath(int slotId) {
-        return captureSlot(slotId).path();
+        CameraSlotResponse slot = requireSlot(slotId);
+        if ("OFF".equals(slot.getSourceType())) {
+            throw new IllegalStateException("摄像头 " + slotId + " 已关闭");
+        }
+        synchronized (slotLocks[slotId - 1]) {
+            try {
+                return ensureCurrentFrame(slot);
+            } catch (Exception error) {
+                updateRuntimeState(slotId, "error", error.getMessage());
+                throw new RuntimeException("摄像头 " + slotId + " 取帧失败: " + error.getMessage(), error);
+            }
+        }
+    }
+
+    private Path ensureCurrentFrame(CameraSlotResponse slot) throws Exception {
+        Path output = framePath(slot.getSlotId());
+        if (Files.exists(output)
+                && System.currentTimeMillis() - Files.getLastModifiedTime(output).toMillis() < FRAME_CACHE_MILLIS) {
+            return output;
+        }
+
+        Files.createDirectories(output.getParent());
+        Path temporary = output.resolveSibling(output.getFileName() + ".tmp.jpg");
+        captureFrame(slot, temporary);
+        moveReplacing(temporary, output);
+        // A locally captured fallback frame has no matching WebRTC PTS.  Remove a
+        // stale gateway manifest so callers cannot bind it to the wrong video frame.
+        deleteQuietly(frameMetadataPath(slot.getSlotId()));
+        updateRuntimeState(slot.getSlotId(), "ready", null);
+        return output;
+    }
+
+    private CameraFrame copyStableInferenceFrame(CameraSlotResponse slot, Path source) throws Exception {
+        Path inferenceDirectory = Path.of(frameDir).toAbsolutePath().normalize().resolve("inference");
+        Files.createDirectories(inferenceDirectory);
+
+        for (int attempt = 0; attempt < FRAME_COPY_ATTEMPTS; attempt++) {
+            PublishedFrameMetadata before = readPublishedFrameMetadata(slot.getSlotId());
+            Path snapshot = inferenceDirectory.resolve(
+                    "camera-" + slot.getSlotId() + "-" + UUID.randomUUID() + ".jpg"
+            );
+            Files.copy(source, snapshot, StandardCopyOption.REPLACE_EXISTING);
+            PublishedFrameMetadata after = readPublishedFrameMetadata(slot.getSlotId());
+
+            if (before != null
+                    && before.sameFrame(after)
+                    && before.sha256() != null
+                    && before.sha256().equalsIgnoreCase(sha256(snapshot))) {
+                cleanupOldInferenceFrames(inferenceDirectory);
+                return new CameraFrame(
+                        slot.getSlotId(), slot.getName(), slot.getSourceType(), snapshot, frameUrl(slot.getSlotId()),
+                        before.frameId(), before.framePts(), before.frameTimeBase(), before.frameCapturedAtMs()
+                );
+            }
+
+            deleteQuietly(snapshot);
+            if (before == null && after == null) break;
+            Thread.sleep(12);
+        }
+
+        // WebRTC may be unavailable during startup.  Preserve the old direct-frame
+        // fallback, but mark it with a synthetic ID and no PTS so the UI can avoid
+        // claiming exact frame synchronization.
+        long capturedAtMs = Files.getLastModifiedTime(source).toMillis();
+        Path snapshot = inferenceDirectory.resolve(
+                "camera-" + slot.getSlotId() + "-fallback-" + UUID.randomUUID() + ".jpg"
+        );
+        Files.copy(source, snapshot, StandardCopyOption.REPLACE_EXISTING);
+        cleanupOldInferenceFrames(inferenceDirectory);
+        return new CameraFrame(
+                slot.getSlotId(), slot.getName(), slot.getSourceType(), snapshot, frameUrl(slot.getSlotId()),
+                slot.getSlotId() + "-fallback-" + capturedAtMs, null, null, capturedAtMs
+        );
+    }
+
+    private PublishedFrameMetadata readPublishedFrameMetadata(int slotId) {
+        Path path = frameMetadataPath(slotId);
+        if (!Files.isRegularFile(path)) return null;
+        try {
+            return objectMapper.readValue(path.toFile(), PublishedFrameMetadata.class);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private String sha256(Path path) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        try (var input = Files.newInputStream(path)) {
+            byte[] buffer = new byte[16 * 1024];
+            int read;
+            while ((read = input.read(buffer)) >= 0) {
+                if (read > 0) digest.update(buffer, 0, read);
+            }
+        }
+        return HexFormat.of().formatHex(digest.digest());
+    }
+
+    private void cleanupOldInferenceFrames(Path directory) {
+        long now = System.currentTimeMillis();
+        long previous = lastInferenceCleanupAt.get();
+        if (now - previous < 30_000 || !lastInferenceCleanupAt.compareAndSet(previous, now)) return;
+        long cutoff = now - INFERENCE_FRAME_RETENTION_MILLIS;
+        try (var files = Files.list(directory)) {
+            files.filter(Files::isRegularFile).forEach(path -> {
+                try {
+                    if (Files.getLastModifiedTime(path).toMillis() < cutoff) Files.deleteIfExists(path);
+                } catch (IOException ignored) {
+                    // Retention cleanup never blocks the current inference request.
+                }
+            });
+        } catch (IOException ignored) {
+            // Retention cleanup never blocks the current inference request.
+        }
     }
 
     private void captureFrame(CameraSlotResponse slot, Path output) throws Exception {
@@ -271,10 +398,15 @@ public class CameraManagerService {
     }
 
     private CameraSlotResponse requireSlot(int slotId) {
-        if (slotId < 1 || slotId > SLOT_COUNT) throw new IllegalArgumentException("摄像头槽位必须是 1-3");
+        int slotIndex = requireSlotIndex(slotId);
         synchronized (stateLock) {
-            return copySlot(slots.get(slotId - 1));
+            return copySlot(slots.get(slotIndex));
         }
+    }
+
+    private int requireSlotIndex(int slotId) {
+        if (slotId < 1 || slotId > SLOT_COUNT) throw new IllegalArgumentException("摄像头槽位必须是 1-3");
+        return slotId - 1;
     }
 
     private void validateSource(String sourceType, String path, Integer deviceIndex) {
@@ -308,6 +440,10 @@ public class CameraManagerService {
         return Path.of(frameDir).toAbsolutePath().normalize().resolve("camera-" + slotId + ".jpg");
     }
 
+    private Path frameMetadataPath(int slotId) {
+        return Path.of(frameDir).toAbsolutePath().normalize().resolve("camera-" + slotId + ".meta.json");
+    }
+
     private String frameUrl(int slotId) {
         return "/api/v1/cameras/slots/" + slotId + "/frame.jpg";
     }
@@ -333,6 +469,7 @@ public class CameraManagerService {
                 persistState();
             }
             slots.forEach(slot -> {
+                slot.setWeatherSimulationEnabled(Boolean.TRUE.equals(slot.getWeatherSimulationEnabled()));
                 slot.setStatus("OFF".equals(slot.getSourceType()) ? "off" : "ready");
                 slot.setError(null);
                 slot.setFrameUrl(frameUrl(slot.getSlotId()));
@@ -342,9 +479,9 @@ public class CameraManagerService {
 
     private List<CameraSlotResponse> defaultSlots() {
         return List.of(
-                new CameraSlotResponse(1, "沙盘 live3 · 行人检测", "SANDBOX", "live3", 0, "ready", null, frameUrl(1)),
-                new CameraSlotResponse(2, "沙盘 live5 · 桥出口", "SANDBOX", "live5", 0, "ready", null, frameUrl(2)),
-                new CameraSlotResponse(3, "沙盘 live6 · 桥入口", "SANDBOX", "live6", 0, "ready", null, frameUrl(3))
+                new CameraSlotResponse(1, "沙盘 live3 · 行人检测", "SANDBOX", "live3", 0, false, "ready", null, frameUrl(1)),
+                new CameraSlotResponse(2, "沙盘 live5 · 桥出口", "SANDBOX", "live5", 0, false, "ready", null, frameUrl(2)),
+                new CameraSlotResponse(3, "沙盘 live6 · 桥入口", "SANDBOX", "live6", 0, false, "ready", null, frameUrl(3))
         );
     }
 
@@ -361,7 +498,8 @@ public class CameraManagerService {
     private CameraSlotResponse copySlot(CameraSlotResponse slot) {
         return new CameraSlotResponse(
                 slot.getSlotId(), slot.getName(), slot.getSourceType(), slot.getPath(), slot.getDeviceIndex(),
-                slot.getStatus(), slot.getError(), frameUrl(slot.getSlotId())
+                Boolean.TRUE.equals(slot.getWeatherSimulationEnabled()), slot.getStatus(), slot.getError(),
+                frameUrl(slot.getSlotId())
         );
     }
 
@@ -396,6 +534,26 @@ public class CameraManagerService {
             String cameraName,
             String sourceType,
             Path path,
-            String frameUrl
+            String frameUrl,
+            String frameId,
+            Long framePts,
+            String frameTimeBase,
+            Long frameCapturedAtMs
     ) {}
+
+    public record PublishedFrameMetadata(
+            String frameId,
+            Long framePts,
+            String frameTimeBase,
+            Long frameCapturedAtMs,
+            String sha256
+    ) {
+        boolean sameFrame(PublishedFrameMetadata other) {
+            return other != null
+                    && Objects.equals(frameId, other.frameId)
+                    && Objects.equals(framePts, other.framePts)
+                    && Objects.equals(frameCapturedAtMs, other.frameCapturedAtMs)
+                    && Objects.equals(sha256, other.sha256);
+        }
+    }
 }

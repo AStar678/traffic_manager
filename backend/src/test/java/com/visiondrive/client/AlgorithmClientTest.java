@@ -9,6 +9,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestTemplate;
 
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
@@ -28,6 +30,7 @@ class AlgorithmClientTest {
         ReflectionTestUtils.setField(client, "licenseAlgorithmBaseUrl", "http://license:8000");
         ReflectionTestUtils.setField(client, "policeAlgorithmBaseUrl", "http://police:8001");
         ReflectionTestUtils.setField(client, "gestureAlgorithmBaseUrl", "http://gesture:8002");
+        ReflectionTestUtils.setField(client, "vehicleAlgorithmBaseUrl", "http://vehicle:8004");
         ReflectionTestUtils.setField(client, "inferencePath", "/api/v1/inference/image");
         server = MockRestServiceServer.bindTo(restTemplate).build();
     }
@@ -40,10 +43,15 @@ class AlgorithmClientTest {
         server.expect(requestTo("http://police:8001/api/v1/inference/image"))
                 .andExpect(method(HttpMethod.POST))
                 .andRespond(withSuccess(response("police_gesture"), MediaType.APPLICATION_JSON));
+        server.expect(requestTo("http://vehicle:8004/api/v1/inference/image"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess(response("vehicle_type"), MediaType.APPLICATION_JSON));
 
         assertEquals("license_plate", client.callImageInference("license_plate", "data:image/png;base64,AA==")
                 .getData().getTaskType());
         assertEquals("police_gesture", client.callImageInference("police_gesture", "data:image/png;base64,AA==")
+                .getData().getTaskType());
+        assertEquals("vehicle_type", client.callImageInference("vehicle_type", "data:image/png;base64,AA==")
                 .getData().getTaskType());
         server.verify();
     }
@@ -93,6 +101,30 @@ class AlgorithmClientTest {
         assertEquals("police_gesture", client.callFileInference(
                 "police_gesture", "/tmp/camera-1.jpg", "camera-slot-1", true
         ).getData().getTaskType());
+        server.verify();
+    }
+
+    @Test
+    void activatesDinov2OwnerGestureAlgorithm() {
+        server.expect(requestTo("http://gesture:8002/api/v1/owner-gestures/algorithm"))
+                .andExpect(method(HttpMethod.PUT))
+                .andExpect(content().json("""
+                        {
+                          "algorithm": "dinov2_tcn_prototype"
+                        }
+                        """))
+                .andRespond(withSuccess("""
+                        {
+                          "algorithm": {
+                            "active": "dinov2_tcn_prototype"
+                          }
+                        }
+                        """, MediaType.APPLICATION_JSON));
+
+        Map<String, Object> result = client.activateOwnerGestureAlgorithm();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> algorithm = (Map<String, Object>) result.get("algorithm");
+        assertEquals("dinov2_tcn_prototype", algorithm.get("active"));
         server.verify();
     }
 

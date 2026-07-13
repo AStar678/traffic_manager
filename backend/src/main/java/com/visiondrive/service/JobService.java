@@ -34,40 +34,29 @@ public class JobService {
         job.setTotalFrames(0);
         job.setUserId(1L);  // TODO: 从SecurityContext获取
 
-        jobRepository.save(job);
+        Job savedJob = jobRepository.save(job);
         log.info("创建视频任务成功: jobId={}", jobId);
 
         // TODO: 实际调用算法服务的创建任务接口
         // algorithmClient.createVideoJob(request, callbackUrl);
 
-        return new JobStatusResponse(jobId, "queued");
+        return toStatusResponse(savedJob);
     }
 
     /**
      * 查询任务状态
      */
     public JobStatusResponse getJobStatus(String jobId) {
-        Job job = jobRepository.findByJobId(jobId)
-                .orElseThrow(() -> new RuntimeException("任务不存在: " + jobId));
+        Job job = getJob(jobId);
 
-        return new JobStatusResponse(
-                job.getJobId(),
-                job.getTaskType(),
-                job.getStatus(),
-                job.getProgress(),
-                job.getProcessedFrames(),
-                job.getTotalFrames(),
-                job.getCreatedAt(),
-                job.getUpdatedAt()
-        );
+        return toStatusResponse(job);
     }
 
     /**
      * 取消任务
      */
     public JobStatusResponse cancelJob(String jobId) {
-        Job job = jobRepository.findByJobId(jobId)
-                .orElseThrow(() -> new RuntimeException("任务不存在: " + jobId));
+        Job job = getJob(jobId);
 
         if ("completed".equals(job.getStatus()) || "cancelled".equals(job.getStatus())) {
             throw new RuntimeException("任务已完成或已取消，无法再次取消");
@@ -87,8 +76,7 @@ public class JobService {
     public void updateJobStatus(String jobId, String status, Integer progress,
                                 Integer processedFrames, Integer totalFrames,
                                 String resultUrl, String errorMessage) {
-        Job job = jobRepository.findByJobId(jobId)
-                .orElseThrow(() -> new RuntimeException("任务不存在: " + jobId));
+        Job job = getJob(jobId);
 
         job.setStatus(status);
         if (progress != null) job.setProgress(progress);
@@ -100,5 +88,23 @@ public class JobService {
 
         jobRepository.save(job);
         log.info("任务状态更新: jobId={}, status={}, progress={}", jobId, status, progress);
+    }
+
+    public Job getJob(String jobId) {
+        return jobRepository.findByJobId(jobId)
+                .orElseThrow(() -> new RuntimeException("任务不存在: " + jobId));
+    }
+
+    private JobStatusResponse toStatusResponse(Job job) {
+        return new JobStatusResponse(
+                job.getJobId(),
+                job.getTaskType(),
+                job.getStatus(),
+                job.getProgress(),
+                job.getProcessedFrames(),
+                job.getTotalFrames(),
+                job.getCreatedAt(),
+                job.getUpdatedAt()
+        );
     }
 }

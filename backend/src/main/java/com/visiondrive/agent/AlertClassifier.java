@@ -23,6 +23,7 @@ public class AlertClassifier {
             case LLM_TIMEOUT:
             case LLM_TOKEN_EXCEEDED:
             case SYSTEM_RESOURCE_HIGH:
+            case RECOGNITION_FAILURE_REVIEW:
                 // 根据上下文判断
                 if (context.containsKey("severity") && "critical".equals(context.get("severity"))) {
                     return AlertSeverity.CRITICAL;

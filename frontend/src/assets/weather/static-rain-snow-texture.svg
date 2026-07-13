@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <pattern id="rain" width="160" height="140" patternUnits="userSpaceOnUse">
+      <g fill="none" stroke="#d8efff" stroke-linecap="round">
+        <path d="M30 10 12 82" stroke-width="3" opacity=".62"/>
+        <path d="M92 48 80 98" stroke-width="2" opacity=".42"/>
+        <path d="M148 4 132 68" stroke-width="3" opacity=".54"/>
+        <path d="M62 106 54 136" stroke-width="2" opacity=".34"/>
+        <path d="M126 92 116 132" stroke-width="2.5" opacity=".5"/>
+      </g>
+      <g fill="#f5fbff">
+        <circle cx="18" cy="118" r="2.5" opacity=".55"/>
+        <circle cx="74" cy="25" r="3" opacity=".66"/>
+        <circle cx="112" cy="75" r="2" opacity=".5"/>
+        <circle cx="152" cy="121" r="3.5" opacity=".62"/>
+      </g>
+    </pattern>
+    <radialGradient id="drop" cx="35%" cy="25%" r="75%">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".42"/>
+      <stop offset=".25" stop-color="#d9f0ff" stop-opacity=".12"/>
+      <stop offset=".72" stop-color="#8dc4e3" stop-opacity=".05"/>
+      <stop offset="1" stop-color="#dff4ff" stop-opacity=".3"/>
+    </radialGradient>
+  </defs>
+  <rect width="1600" height="900" fill="#09243a" opacity=".13"/>
+  <rect width="1600" height="900" fill="url(#rain)" opacity=".78"/>
+  <g fill="url(#drop)" stroke="#e5f6ff" stroke-opacity=".22">
+    <ellipse cx="214" cy="180" rx="20" ry="28"/>
+    <ellipse cx="470" cy="622" rx="13" ry="18"/>
+    <ellipse cx="760" cy="286" rx="24" ry="33"/>
+    <ellipse cx="1008" cy="712" rx="18" ry="25"/>
+    <ellipse cx="1270" cy="190" rx="15" ry="21"/>
+    <ellipse cx="1452" cy="520" rx="27" ry="37"/>
+    <ellipse cx="1168" cy="418" rx="11" ry="16"/>
+    <ellipse cx="342" cy="805" rx="17" ry="24"/>
+  </g>
+</svg>

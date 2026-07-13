@@ -11,7 +11,7 @@ from typing import Any
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "activeAlgorithm": "mediapipe_prototype",
-    "dinov2MatchThreshold": 0.72,
+    "dinov2MatchThreshold": 0.95,
     "dinov2FrameIntervalMs": 150,
     "sampleTarget": 45,
     "staticMatchThreshold": 0.70,

@@ -14,7 +14,20 @@
         <div class="section-head">
           <h3 class="card-title">实时告警时间线</h3>
           <div class="section-actions">
-            <button class="tool-button" type="button" @click="openLogTable">
+            <button class="tool-button error-log-button" type="button" @click="openLogTable('ERROR')">
+              <el-icon><WarningFilled /></el-icon>
+              <span>错误日志</span>
+            </button>
+            <button
+              class="tool-button danger"
+              type="button"
+              :disabled="manualInjecting"
+              @click="injectCriticalDatabaseFailure"
+            >
+              <el-icon :class="{ spinning: manualInjecting }"><WarningFilled /></el-icon>
+              <span>注入严重告警</span>
+            </button>
+            <button class="tool-button" type="button" @click="openLogTable('')">
               <el-icon><Document /></el-icon>
               <span>系统日志</span>
             </button>
@@ -75,7 +88,7 @@
     <!-- 系统日志表 -->
     <el-dialog
       v-model="logDialogVisible"
-      title="系统监控日志"
+      :title="logFilters.level === 'ERROR' ? '错误日志与失败样本' : '系统监控日志'"
       width="min(1120px, calc(100vw - 20px))"
       class="system-log-dialog"
       append-to-body
@@ -126,6 +139,15 @@
             <div class="log-detail-block">
               <strong>日志详情</strong>
               <pre>{{ formatLogDetail(row.detail) }}</pre>
+              <button
+                v-if="evidenceFrom(row)"
+                class="tool-button evidence-inline-button"
+                type="button"
+                @click="showEvidence(row)"
+              >
+                <el-icon><VideoPlay /></el-icon>
+                <span>{{ isVideoEvidence(row) ? '回放失败视频' : '查看失败图片' }}</span>
+              </button>
             </div>
           </template>
         </el-table-column>
@@ -148,7 +170,59 @@
         <el-table-column label="详情摘要" min-width="260" show-overflow-tooltip>
           <template #default="{ row }">{{ detailSnippet(row.detail) }}</template>
         </el-table-column>
+        <el-table-column label="失败样本" width="112" fixed="right">
+          <template #default="{ row }">
+            <button
+              v-if="evidenceFrom(row)"
+              class="evidence-link"
+              type="button"
+              :aria-label="isVideoEvidence(row) ? '回放失败视频' : '查看失败图片'"
+              @click="showEvidence(row)"
+            >
+              {{ isVideoEvidence(row) ? '回放视频' : '查看图片' }}
+            </button>
+            <span v-else class="text-muted">-</span>
+          </template>
+        </el-table-column>
       </el-table>
+    </el-dialog>
+
+    <el-dialog
+      v-model="evidenceDialogVisible"
+      :title="selectedEvidence.video ? '失败视频回放' : '失败图片查看'"
+      width="min(860px, calc(100vw - 20px))"
+      class="evidence-dialog"
+      append-to-body
+      destroy-on-close
+    >
+      <div class="evidence-viewer">
+        <video
+          v-if="selectedEvidence.video"
+          :src="selectedEvidence.url"
+          controls
+          preload="metadata"
+          aria-label="识别失败视频"
+          @error="markEvidenceLoadError"
+        />
+        <img v-else :src="selectedEvidence.url" alt="识别失败样本" @error="markEvidenceLoadError" />
+        <div v-if="selectedEvidence.loadError" class="evidence-error">
+          <strong>失败样本暂时无法直接预览</strong>
+          <span>{{ selectedEvidence.rawUrl || selectedEvidence.url }}</span>
+          <button class="tool-button" type="button" @click="openEvidenceSource">
+            <el-icon><Link /></el-icon>
+            <span>新窗口打开</span>
+          </button>
+        </div>
+        <div class="evidence-meta">
+          <span>{{ moduleLabel(selectedEvidence.module) }}</span>
+          <span>{{ selectedEvidence.createdAt }}</span>
+          <span v-if="selectedEvidence.agentStatus">Agent：{{ selectedEvidence.agentStatus }}</span>
+          <span v-if="selectedEvidence.proxied">经后端代理读取</span>
+        </div>
+        <p v-if="selectedEvidence.analysis" class="agent-analysis">
+          <strong>千问复核：</strong>{{ selectedEvidence.analysis }}
+        </p>
+      </div>
     </el-dialog>
 
     <!-- 选中告警详情弹窗 -->
@@ -181,7 +255,7 @@ import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
 import { useAlertStore } from '@/stores/alert'
-import { getSystemLogs, runAlertAgent } from '@/api/alerts'
+import { getSystemLogs, injectDatabaseFailureAlert, runAlertAgent } from '@/api/alerts'
 
 const alertStore = useAlertStore()
 alertStore.fetchAlerts()
@@ -190,9 +264,22 @@ const alerts = computed(() => alertStore.alerts)
 const stats = computed(() => alertStore.stats)
 const selectedAlert = ref(null)
 const agentRunning = ref(false)
+const manualInjecting = ref(false)
 const logDialogVisible = ref(false)
 const logsLoading = ref(false)
 const systemLogs = ref([])
+const evidenceDialogVisible = ref(false)
+const selectedEvidence = reactive({
+  url: '',
+  rawUrl: '',
+  video: false,
+  module: '',
+  createdAt: '',
+  agentStatus: '',
+  analysis: '',
+  proxied: false,
+  loadError: false
+})
 const logFilters = reactive({
   module: '',
   event: '',
@@ -207,7 +294,7 @@ const statCards = computed(() => [
   { label: '提示', value: stats.value.info || 0, css: 'info' },
 ])
 
-const agentSteps = ['写入JSON日志', 'Agent监听异常', 'LLM生成摘要', '存储告警事件', 'WS/邮件推送']
+const agentSteps = ['写入JSON日志', 'Agent监听异常', '千问生成摘要', '存储告警事件', 'WS/邮件微服务']
 
 const moduleOptions = [
   { label: '车牌识别', value: 'license_plate' },
@@ -224,6 +311,9 @@ const moduleOptions = [
 const eventOptions = [
   { label: '成功', value: 'success' },
   { label: '失败', value: 'failure' },
+  { label: '低置信度', value: 'low_confidence' },
+  { label: 'Agent 复核', value: 'agent_review' },
+  { label: 'Agent 复核失败', value: 'agent_review_failed' },
   { label: '超时', value: 'timeout' },
   { label: '未授权', value: 'unauthorized' },
   { label: '连接异常', value: 'connection_error' },
@@ -281,6 +371,92 @@ function formatLogDetail(detail) {
   }
 }
 
+function parsedLogDetail(detail) {
+  if (!detail) return {}
+  if (typeof detail === 'object') return detail
+  try {
+    return JSON.parse(detail)
+  } catch (error) {
+    return {}
+  }
+}
+
+function evidenceFrom(row) {
+  const detail = parsedLogDetail(row?.detail)
+  const raw = detail.evidenceUrl || detail.videoUrl || detail.imageUrl || ''
+  if (!raw) return ''
+  return resolveEvidenceUrl(raw).url
+}
+
+function evidenceInfoFrom(row) {
+  const detail = parsedLogDetail(row?.detail)
+  const raw = detail.evidenceUrl || detail.videoUrl || detail.imageUrl || ''
+  return resolveEvidenceUrl(raw)
+}
+
+function resolveEvidenceUrl(raw) {
+  if (!raw) return { url: '', rawUrl: '', proxied: false }
+  if (shouldProxyEvidence(raw)) {
+    return {
+      url: `/api/v1/alerts/evidence?source=${encodeURIComponent(raw)}`,
+      rawUrl: raw,
+      proxied: true
+    }
+  }
+  try {
+    const url = new URL(raw, window.location.origin)
+    return { url: url.href, rawUrl: raw, proxied: false }
+  } catch (error) {
+    return { url: raw, rawUrl: raw, proxied: false }
+  }
+}
+
+function isVideoEvidence(row) {
+  const detail = parsedLogDetail(row?.detail)
+  if (detail.mediaType) return detail.mediaType === 'video'
+  return /\.(mp4|avi|mov|mkv|flv|wmv)(\?.*)?$/i.test(evidenceFrom(row))
+}
+
+function showEvidence(row) {
+  const detail = parsedLogDetail(row.detail)
+  const evidence = evidenceInfoFrom(row)
+  Object.assign(selectedEvidence, {
+    url: evidence.url,
+    rawUrl: evidence.rawUrl,
+    video: isVideoEvidence(row),
+    module: row.module,
+    createdAt: row.createdAt,
+    agentStatus: detail.agentReviewStatus || (detail.agentReviewQueued ? '排队中' : ''),
+    analysis: detail.agentAnalysis || '',
+    proxied: evidence.proxied,
+    loadError: false
+  })
+  evidenceDialogVisible.value = true
+}
+
+function shouldProxyEvidence(raw) {
+  if (raw.startsWith('/api/files/')) return false
+  if (raw.startsWith('/')) return true
+  if (!/^https?:\/\//i.test(raw)) return raw.includes('/') || raw.includes('\\')
+  try {
+    const url = new URL(raw)
+    return ['localhost', '127.0.0.1', '::1'].includes(url.hostname)
+  } catch (error) {
+    return false
+  }
+}
+
+function markEvidenceLoadError() {
+  selectedEvidence.loadError = true
+}
+
+function openEvidenceSource() {
+  const target = selectedEvidence.rawUrl || selectedEvidence.url
+  if (target) {
+    window.open(target, '_blank', 'noopener,noreferrer')
+  }
+}
+
 function logQueryParams() {
   const params = { limit: logFilters.limit }
   if (logFilters.module) params.module = logFilters.module
@@ -301,7 +477,8 @@ async function fetchSystemLogs() {
   }
 }
 
-function openLogTable() {
+function openLogTable(level = '') {
+  logFilters.level = level
   logDialogVisible.value = true
   fetchSystemLogs()
 }
@@ -318,6 +495,20 @@ async function runAgentOnce() {
     }
   } finally {
     agentRunning.value = false
+  }
+}
+
+async function injectCriticalDatabaseFailure() {
+  manualInjecting.value = true
+  try {
+    await injectDatabaseFailureAlert()
+    ElMessage.success('严重告警已注入：数据库连接失败已记录，邮件链路已触发')
+    await alertStore.fetchAlerts()
+    if (logDialogVisible.value) {
+      await fetchSystemLogs()
+    }
+  } finally {
+    manualInjecting.value = false
   }
 }
 
@@ -454,6 +645,23 @@ onBeforeUnmount(() => {
   border-color: rgba(0,180,216,0.30);
   background: var(--primary-soft);
   color: var(--primary-color);
+}
+
+.tool-button.error-log-button {
+  border-color: rgba(255,61,0,0.24);
+  color: var(--danger-color);
+  background: rgba(255,61,0,0.07);
+}
+
+.tool-button.danger {
+  border-color: rgba(255,61,0,0.34);
+  color: var(--danger-color);
+  background: rgba(255,61,0,0.10);
+}
+
+.tool-button.danger:hover {
+  border-color: rgba(255,61,0,0.55);
+  background: rgba(255,61,0,0.16);
 }
 
 .tool-button:disabled {
@@ -661,6 +869,92 @@ onBeforeUnmount(() => {
   user-select: text;
 }
 
+.evidence-inline-button {
+  margin-top: 12px;
+}
+
+.evidence-link {
+  border: 0;
+  background: transparent;
+  color: var(--primary-color);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.evidence-link:hover,
+.evidence-link:focus-visible {
+  text-decoration: underline;
+  outline: none;
+}
+
+.evidence-viewer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.evidence-viewer video,
+.evidence-viewer img {
+  display: block;
+  width: 100%;
+  max-height: min(62vh, 600px);
+  object-fit: contain;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-sm);
+  background: #05080e;
+}
+
+.evidence-error {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(255,171,0,0.24);
+  border-radius: var(--radius-sm);
+  background: rgba(255,171,0,0.08);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.evidence-error strong {
+  color: var(--warning-color);
+  font-size: 13px;
+}
+
+.evidence-error span {
+  word-break: break-all;
+  user-select: text;
+}
+
+.evidence-error .tool-button {
+  align-self: flex-start;
+  flex: none;
+}
+
+.evidence-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.agent-analysis {
+  padding: 12px 14px;
+  border-left: 3px solid var(--primary-color);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--primary-soft);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.7;
+  user-select: text;
+}
+
+.agent-analysis strong {
+  color: var(--text-primary);
+}
+
 .level-pill {
   display: inline-flex;
   align-items: center;
@@ -698,6 +992,15 @@ onBeforeUnmount(() => {
 
 :deep(.system-log-table .el-table__inner-wrapper::before) {
   display: none;
+}
+
+:global(.system-log-dialog .system-log-table th.el-table-fixed-column--right),
+:global(.system-log-dialog .system-log-table td.el-table-fixed-column--right) {
+  background-color: #0f1522 !important;
+}
+
+:global(.system-log-dialog .system-log-table .el-table__body tr:hover td.el-table-fixed-column--right) {
+  background-color: #1c2434 !important;
 }
 
 @media (max-width: 1180px) {

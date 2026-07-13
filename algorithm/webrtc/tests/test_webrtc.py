@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import time
+from fractions import Fraction
 from types import SimpleNamespace
 
 from aioice import stun
@@ -46,8 +47,10 @@ def test_offer_delivers_camera_video_track(tmp_path, monkeypatch):
         answer = await main.offer(1, {
             "type": client.localDescription.type,
             "sdp": client.localDescription.sdp,
+            "delayMs": 1000,
         }, SimpleNamespace(client=SimpleNamespace(host="127.0.0.1")))
         assert answer["type"] == "answer"
+        assert answer["delayMs"] == 1000
         assert "m=video" in answer["sdp"]
         await main.close_peer(answer["sessionId"])
         await client.close()
@@ -135,11 +138,14 @@ def test_codec_preferences_are_limited_to_vp8():
     asyncio.run(exercise())
 
 
-def test_bounded_track_returns_an_independent_frame():
+def test_bounded_track_returns_an_independent_full_resolution_frame(monkeypatch):
+    monkeypatch.setattr(config, "FALLBACK_WIDTH", 32)
+    monkeypatch.setattr(config, "FALLBACK_HEIGHT", 24)
+
     class Source:
         async def recv(self):
             return main.VideoFrame.from_ndarray(
-                main.np.zeros((24, 32, 3), dtype=main.np.uint8),
+                main.np.zeros((1080, 1920, 3), dtype=main.np.uint8),
                 format="rgb24",
             )
 
@@ -153,7 +159,191 @@ def test_bounded_track_returns_an_independent_frame():
 
         copied = await main.BoundedVideoTrack(ExactSource()).recv()
         assert copied is not original
-        assert copied.width == original.width
-        assert copied.height == original.height
+        assert copied.width == original.width == 1920
+        assert copied.height == original.height == 1080
+
+    asyncio.run(exercise())
+
+
+def test_bounded_track_stop_propagates_to_source():
+    class Source:
+        def __init__(self):
+            self.stopped = False
+
+        def stop(self):
+            self.stopped = True
+
+    source = Source()
+    track = main.BoundedVideoTrack(source)
+
+    track.stop()
+
+    assert source.stopped
+
+
+def test_delayed_track_releases_frames_at_configured_offset(monkeypatch):
+    monkeypatch.setattr(config, "OUTPUT_FPS", 10)
+
+    class Source:
+        def __init__(self):
+            self.next_pts = 0
+            self.stopped = False
+
+        async def recv(self):
+            frame = main.VideoFrame.from_ndarray(
+                main.np.zeros((24, 32, 3), dtype=main.np.uint8),
+                format="rgb24",
+            )
+            frame.pts = self.next_pts
+            self.next_pts += 1
+            return frame
+
+        def stop(self):
+            self.stopped = True
+
+    async def exercise():
+        source = Source()
+        delayed = main.DelayedVideoTrack(source, delay_ms=200)
+
+        first = await delayed.recv()
+        second = await delayed.recv()
+
+        assert delayed.delay_frames == 2
+        assert first.pts == 0
+        assert second.pts == 1
+        assert source.next_pts == 4
+        delayed.stop()
+        assert source.stopped
+
+    asyncio.run(exercise())
+
+
+def test_published_snapshot_includes_verifiable_frame_metadata(tmp_path):
+    output = tmp_path / "camera-2.jpg"
+    frame = main.VideoFrame.from_ndarray(
+        main.np.zeros((24, 32, 3), dtype=main.np.uint8),
+        format="rgb24",
+    )
+    frame.pts = 180_000
+    frame.time_base = Fraction(1, 90_000)
+
+    main.CameraRegistry._save_frame(2, frame, output)
+
+    metadata = main.json.loads((tmp_path / "camera-2.meta.json").read_text(encoding="utf-8"))
+    assert metadata["frameId"].startswith("2-180000-")
+    assert metadata["framePts"] == 180_000
+    assert metadata["frameTimeBase"] == "1/90000"
+    assert metadata["sha256"] == main.hashlib.sha256(output.read_bytes()).hexdigest()
+    with Image.open(output) as saved:
+        assert saved.size == (32, 24)
+
+
+def test_ffmpeg_track_uses_probed_source_resolution_without_scale(monkeypatch):
+    monkeypatch.setattr(config, "PRESERVE_SOURCE_RESOLUTION", True)
+    monkeypatch.setattr(config, "OUTPUT_FPS", 20)
+    commands = []
+
+    class Process:
+        def __init__(self):
+            self.returncode = None
+
+        def terminate(self):
+            self.returncode = 0
+
+        def kill(self):
+            self.returncode = -9
+
+        async def wait(self):
+            return self.returncode
+
+    async def exercise():
+        track = main.FfmpegProcessTrack(["-i", "source"], ["source"])
+
+        async def fake_probe():
+            return 1920, 1080
+
+        async def fake_exec(*args, **kwargs):
+            commands.append(args)
+            return Process()
+
+        monkeypatch.setattr(track, "_probe_source_dimensions", fake_probe)
+        monkeypatch.setattr(main.asyncio, "create_subprocess_exec", fake_exec)
+        await track._start()
+
+        assert track.output_width == 1920
+        assert track.output_height == 1080
+        assert track.frame_size == 1920 * 1080 * 3
+        filter_graph = commands[0][commands[0].index("-vf") + 1]
+        assert filter_graph == "fps=20"
+        assert "scale=" not in filter_graph
+        await track._stop_process()
+
+    asyncio.run(exercise())
+
+
+def test_ffmpeg_track_refuses_to_downsample_when_probe_fails(monkeypatch):
+    monkeypatch.setattr(config, "PRESERVE_SOURCE_RESOLUTION", True)
+
+    async def exercise():
+        track = main.FfmpegProcessTrack(["-i", "source"], ["source"])
+
+        async def fake_probe():
+            return None
+
+        monkeypatch.setattr(track, "_probe_source_dimensions", fake_probe)
+        try:
+            await track._start()
+        except RuntimeError as error:
+            assert "拒绝降采样" in str(error)
+        else:
+            raise AssertionError("原分辨率探测失败时不应启动缩放解码")
+
+    asyncio.run(exercise())
+
+
+def test_ffmpeg_track_restarts_after_frame_read_timeout(monkeypatch):
+    monkeypatch.setattr(config, "FALLBACK_WIDTH", 32)
+    monkeypatch.setattr(config, "FALLBACK_HEIGHT", 24)
+    monkeypatch.setattr(config, "FRAME_READ_TIMEOUT_SECONDS", 0.01)
+
+    class Reader:
+        def __init__(self, should_stall):
+            self.should_stall = should_stall
+
+        async def readexactly(self, size):
+            if self.should_stall:
+                await asyncio.sleep(1)
+            return bytes(size)
+
+    class Process:
+        def __init__(self, should_stall):
+            self.returncode = None
+            self.stdout = Reader(should_stall)
+
+        def terminate(self):
+            self.returncode = 0
+
+        def kill(self):
+            self.returncode = -9
+
+        async def wait(self):
+            return self.returncode
+
+    async def exercise():
+        track = main.FfmpegProcessTrack([])
+        starts = 0
+
+        async def fake_start():
+            nonlocal starts
+            starts += 1
+            track.process = Process(should_stall=starts == 1)
+
+        monkeypatch.setattr(track, "_start", fake_start)
+        frame = await asyncio.wait_for(track.recv(), timeout=1)
+
+        assert starts == 2
+        assert frame.width == 32
+        assert frame.height == 24
+        track.stop()
 
     asyncio.run(exercise())

@@ -17,7 +17,20 @@ CAMERA_STATE_FILE = Path(os.getenv("WEBRTC_CAMERA_STATE_FILE", os.getenv("CAMERA
 CAMERA_FRAME_DIR = Path(os.getenv("CAMERA_FRAME_DIR", "./uploads/camera-frames"))
 FRAME_PUBLISH_FPS = max(1.0, float(os.getenv("WEBRTC_FRAME_PUBLISH_FPS", "4")))
 SANDBOX_BASE_URL = os.getenv("CAMERA_SANDBOX_BASE_URL", "rtsp://10.126.59.120:8554/live").rstrip("/")
-MAX_WIDTH = max(320, int(os.getenv("WEBRTC_MAX_WIDTH", "1280")))
-MAX_HEIGHT = max(240, int(os.getenv("WEBRTC_MAX_HEIGHT", "720")))
+PRESERVE_SOURCE_RESOLUTION = os.getenv("WEBRTC_PRESERVE_SOURCE_RESOLUTION", "true").lower() in {
+    "1", "true", "yes", "on",
+}
+FALLBACK_WIDTH = max(
+    320,
+    int(os.getenv("WEBRTC_FALLBACK_WIDTH", os.getenv("WEBRTC_MAX_WIDTH", "1280"))),
+)
+FALLBACK_HEIGHT = max(
+    240,
+    int(os.getenv("WEBRTC_FALLBACK_HEIGHT", os.getenv("WEBRTC_MAX_HEIGHT", "720"))),
+)
 OUTPUT_FPS = max(5, int(os.getenv("WEBRTC_OUTPUT_FPS", "15")))
+FRAME_READ_TIMEOUT_SECONDS = max(1.0, float(os.getenv("WEBRTC_FRAME_READ_TIMEOUT_SECONDS", "5")))
+PROBE_TIMEOUT_SECONDS = max(1.0, float(os.getenv("WEBRTC_PROBE_TIMEOUT_SECONDS", "10")))
+SNAPSHOT_JPEG_QUALITY = max(90, min(100, int(os.getenv("WEBRTC_SNAPSHOT_JPEG_QUALITY", "100"))))
 FFMPEG_BINARY = os.getenv("WEBRTC_FFMPEG_BINARY", "ffmpeg")
+FFPROBE_BINARY = os.getenv("WEBRTC_FFPROBE_BINARY", "ffprobe")

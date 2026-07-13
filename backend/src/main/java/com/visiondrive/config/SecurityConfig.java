@@ -47,10 +47,8 @@ public class SecurityConfig {
                                 "/api/v1/auth/send-code"
                         ).permitAll()
                         .requestMatchers(
-                                "/api/v1/inference/**",
                                 "/api/v1/jobs/**",
                                 "/api/v1/alerts/**",
-                                "/api/v1/records/**",
                                 "/api/files/**",
                                 "/api/alerts/**",
                                 "/api/records/**",
@@ -59,7 +57,13 @@ public class SecurityConfig {
                                 "/swagger-ui/**",
                                 "/v3/api-docs/**"
                         ).permitAll()
-                        .requestMatchers("/api/v1/auth/me", "/api/v1/cars/**").authenticated()
+                        .requestMatchers(
+                                "/api/v1/auth/me",
+                                "/api/v1/cars/**",
+                                "/api/v1/inference/**",
+                                "/api/v1/owner-gestures/**",
+                                "/api/v1/records/**"
+                        ).authenticated()
                         .anyRequest().permitAll()
                 )
                 .exceptionHandling(errors -> errors.authenticationEntryPoint((request, response, exception) -> {

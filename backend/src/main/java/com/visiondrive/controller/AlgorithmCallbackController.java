@@ -1,7 +1,9 @@
 package com.visiondrive.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.visiondrive.agent.RecognitionFailureAgent;
 import com.visiondrive.model.dto.ApiResponse;
+import com.visiondrive.model.entity.Job;
 import com.visiondrive.service.JobService;
 import com.visiondrive.service.SystemLogService;
 import com.visiondrive.websocket.AlertWebSocketHandler;
@@ -30,6 +32,7 @@ public class AlgorithmCallbackController {
     private final AlertWebSocketHandler webSocketHandler;
     private final ObjectMapper objectMapper;
     private final SystemLogService systemLogService;
+    private final RecognitionFailureAgent recognitionFailureAgent;
 
     @Operation(summary = "接收算法回调")
     @PostMapping("/events")
@@ -72,7 +75,14 @@ public class AlgorithmCallbackController {
             }
             // 调用 jobService 的 updateJobStatus 不需要传 totalFrames 时置 null 即可
             jobService.updateJobStatus(jobId, "completed", 100, null, totalFrames, resultUrl, null);
-            systemLogService.info("algorithm_callback", "job_completed", callbackDetail(jobId, eventType, data));
+            Job job = jobService.getJob(jobId);
+            Double confidence = extractConfidence(data);
+            boolean reviewQueued = recognitionFailureAgent.submitIfNeeded(
+                    job.getTaskType(), job.getInputUrl(), confidence, null, jobId
+            );
+            Map<String, Object> detail = callbackDetail(jobId, eventType, data);
+            addEvidence(detail, job, confidence, reviewQueued);
+            systemLogService.info("algorithm_callback", "job_completed", detail);
 
             // 推送完成消息给前端
             Map<String, Object> pushData = new HashMap<>();
@@ -86,8 +96,14 @@ public class AlgorithmCallbackController {
             Map<String, Object> data = (Map<String, Object>) event.get("data");
             String errorMessage = (String) data.get("errorMessage");
             jobService.updateJobStatus(jobId, "failed", null, null, null, null, errorMessage);
+            Job job = jobService.getJob(jobId);
+            Double confidence = extractConfidence(data);
+            boolean reviewQueued = recognitionFailureAgent.submitIfNeeded(
+                    job.getTaskType(), job.getInputUrl(), confidence, errorMessage, jobId
+            );
             Map<String, Object> detail = callbackDetail(jobId, eventType, data);
             detail.put("errorMessage", Objects.toString(errorMessage, ""));
+            addEvidence(detail, job, confidence, reviewQueued);
             systemLogService.error("algorithm_callback", "job_failed", detail);
 
             // 推送失败消息
@@ -121,5 +137,37 @@ public class AlgorithmCallbackController {
             detail.put("resultUrl", Objects.toString(data.get("resultUrl"), ""));
         }
         return detail;
+    }
+
+    private void addEvidence(Map<String, Object> detail, Job job, Double confidence, boolean reviewQueued) {
+        detail.put("taskType", job.getTaskType());
+        detail.put("evidenceUrl", job.getInputUrl());
+        detail.put("mediaType", "video");
+        detail.put("confidence", confidence == null ? 0 : confidence);
+        detail.put("agentReviewQueued", reviewQueued);
+    }
+
+    private Double extractConfidence(Map<String, Object> data) {
+        if (data == null) return null;
+        for (String key : new String[]{"confidence", "avgConfidence", "averageConfidence"}) {
+            Object value = data.get(key);
+            if (value instanceof Number number) return number.doubleValue();
+        }
+        Object results = data.get("results");
+        if (results instanceof java.util.List<?> list) {
+            return list.stream()
+                    .filter(Map.class::isInstance)
+                    .map(Map.class::cast)
+                    .map(item -> item.get("confidence"))
+                    .filter(Number.class::isInstance)
+                    .map(Number.class::cast)
+                    .mapToDouble(Number::doubleValue)
+                    .average()
+                    .stream()
+                    .boxed()
+                    .findFirst()
+                    .orElse(null);
+        }
+        return null;
     }
 }

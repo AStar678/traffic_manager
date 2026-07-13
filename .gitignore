@@ -43,6 +43,8 @@ venv/
 .env
 
 # --- Models (large files) ---
+models/ppvehicle/
+third_party/PaddleDetection/
 algorithm/models/**/*.pt
 algorithm/models/**/*.pth
 algorithm/models/**/*.onnx
@@ -53,6 +55,7 @@ algorithm/gesture_dinov2_tcn/checkpoints/*.pth
 algorithm/gesture_dinov2_tcn/data/gesture_prototypes.json
 
 # --- Data ---
+algorithm/vehicle/testdata/*.mp4
 data/datasets/
 data/samples/**/*.mp4
 data/samples/**/*.avi

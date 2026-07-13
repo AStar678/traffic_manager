@@ -32,10 +32,10 @@ public class LlmSummarizer {
     @Value("${llm.api-key:}")
     private String apiKey;
 
-    @Value("${llm.model:deepseek-chat}")
+    @Value("${llm.model:qwen-plus}")
     private String model;
 
-    @Value("${llm.base-url:https://api.deepseek.com/v1}")
+    @Value("${llm.base-url:https://dashscope.aliyuncs.com/compatible-mode/v1}")
     private String baseUrl;
 
     /**
@@ -43,9 +43,15 @@ public class LlmSummarizer {
      */
     public Map<String, Object> generateSummary(AnomalyEvent event) {
         Map<String, Object> summary = generateTemplateSummary(event);
+        if (event.getType() == AnomalyType.RECOGNITION_FAILURE_REVIEW) {
+            // 这类告警的 summary 已经是千问视觉模型对失败图像/视频的复核结论。
+            // 不再二次调用文字模型，避免邮件中的失败原因被泛化或改写。
+            return summary;
+        }
         String llmAnalysis = generateLlmAnalysis(event);
         if (llmAnalysis != null && !llmAnalysis.isBlank()) {
             summary.put("llmAnalysis", llmAnalysis);
+            summary.put("summary", llmAnalysis);
         }
         return summary;
     }
@@ -109,7 +115,7 @@ public class LlmSummarizer {
             requestBody.put("model", model);
             requestBody.put("temperature", 0.2);
             requestBody.put("messages", List.of(
-                    Map.of("role", "system", "content", "你是车载视觉系统的运维告警分析助手，请输出简洁、可执行的中文告警摘要。"),
+                    Map.of("role", "system", "content", "你是 VisionDrive 车载视觉系统的告警智能体。请用中文输出一段简洁、准确、可执行的告警摘要，不要使用 Markdown 标题。"),
                     Map.of("role", "user", "content", buildPrompt(event))
             ));
 
@@ -152,7 +158,7 @@ public class LlmSummarizer {
                 指标数据: %s
                 建议措施: %s
                 
-                请生成一个结构化的告警摘要。
+                请用一段自然语言概括异常类型、发生时间、影响范围、可能根因和最优先处置措施，控制在180字以内。
                 """,
                 event.getType().name(),
                 event.getSummary(),

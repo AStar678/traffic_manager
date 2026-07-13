@@ -1,5 +1,7 @@
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { getCameraData, getCameraFrameBlob, listCameraSlots } from '@/api/camera'
+
+export const FRAME_SYNC_BUFFER_MS = 450
 
 const cameraSlots = ref([])
 const sandboxPresets = ref([])
@@ -25,6 +27,7 @@ let slotsLoading = false
 let slotsLoadPromise = null
 let previewsLoading = false
 let pollingStarted = false
+let cameraWebRtcSuspended = false
 
 const activeCameraSlots = computed(() => cameraSlots.value.filter(slot => slot.sourceType !== 'OFF'))
 const selectedCameraSource = computed(() =>
@@ -213,6 +216,8 @@ export function useCameraSource(_taskType, options = {}) {
     refreshCameraSlotPreview,
     requestPreviewFrame,
     markCameraVideoReady,
+    suspendCameraWebRtcConnections,
+    resumeCameraWebRtcConnections,
     getCameraVideoElement: () => null,
     getCameraSnapshotUrl
   }
@@ -223,7 +228,7 @@ function slotFingerprint(slot) {
 }
 
 async function synchronizeWebRtcConnections() {
-  if (typeof RTCPeerConnection === 'undefined') return
+  if (cameraWebRtcSuspended || typeof RTCPeerConnection === 'undefined') return
   const activeIds = new Set(activeCameraSlots.value.map(slot => Number(slot.slotId)))
   for (const slotId of cameraPeers.keys()) {
     if (!activeIds.has(Number(slotId))) closeCameraPeer(slotId)
@@ -232,6 +237,7 @@ async function synchronizeWebRtcConnections() {
 }
 
 function connectCameraPeer(slot) {
+  if (cameraWebRtcSuspended) return Promise.resolve()
   const slotId = Number(slot.slotId)
   const fingerprint = slotFingerprint(slot)
   if (cameraPeers.has(slotId) && cameraPeerFingerprints.get(slotId) === fingerprint) return Promise.resolve()
@@ -245,6 +251,7 @@ function connectCameraPeer(slot) {
 }
 
 async function establishCameraPeer(slot, slotId, fingerprint) {
+  if (cameraWebRtcSuspended) return
   closeCameraPeer(slotId)
   cameraWebRtcStates[slotId] = 'connecting'
 
@@ -289,6 +296,7 @@ async function establishCameraPeer(slot, slotId, fingerprint) {
     if (!response.ok) throw new Error(answer.detail || `WebRTC 信令失败 (${response.status})`)
     cameraPeerSessions.set(slotId, answer.sessionId)
     await peer.setRemoteDescription({ type: answer.type, sdp: answer.sdp })
+    if (cameraWebRtcSuspended) closeCameraPeer(slotId)
   } catch (error) {
     console.error(`摄像头 ${slotId} WebRTC 连接失败`, error)
     cameraWebRtcStates[slotId] = 'error'
@@ -360,13 +368,14 @@ function waitForIceGathering(peer) {
 }
 
 function scheduleReconnect(slotId, delay = 1500, closeImmediately = true) {
+  if (cameraWebRtcSuspended) return
   if (cameraReconnectTimers.has(slotId)) return
   if (closeImmediately) closeCameraPeer(slotId)
   const timer = window.setTimeout(() => {
     cameraReconnectTimers.delete(slotId)
     if (!closeImmediately) closeCameraPeer(slotId)
     const slot = cameraSlots.value.find(item => Number(item.slotId) === Number(slotId))
-    if (slot?.sourceType !== 'OFF') void connectCameraPeer(slot)
+    if (!cameraWebRtcSuspended && slot?.sourceType !== 'OFF') void connectCameraPeer(slot)
   }, delay)
   cameraReconnectTimers.set(slotId, timer)
 }
@@ -393,6 +402,160 @@ function closeCameraPeer(slotId, closeRemote = true) {
   cameraPeerSessions.delete(slotId)
   cameraPeerFingerprints.delete(slotId)
   delete cameraWebRtcStreams[slotId]
+}
+
+export function suspendCameraWebRtcConnections() {
+  cameraWebRtcSuspended = true
+  for (const slotId of [...cameraReconnectTimers.keys()]) clearReconnectTimer(slotId)
+  for (const slotId of [...cameraPeers.keys()]) closeCameraPeer(slotId)
+}
+
+export function resumeCameraWebRtcConnections() {
+  if (!cameraWebRtcSuspended) return
+  cameraWebRtcSuspended = false
+  void synchronizeWebRtcConnections()
+}
+
+export function useDelayedCameraStreams(delayMs = 1000) {
+  const streams = reactive({})
+  const states = reactive({})
+  const peers = new Map()
+  const sessions = new Map()
+  const fingerprints = new Map()
+  const reconnectTimers = new Map()
+  const connectTasks = new Map()
+  let stopped = false
+
+  function closePeer(slotId, closeRemote = true) {
+    const timer = reconnectTimers.get(slotId)
+    if (timer) window.clearTimeout(timer)
+    reconnectTimers.delete(slotId)
+    const peer = peers.get(slotId)
+    if (peer) {
+      peer.ontrack = null
+      peer.onconnectionstatechange = null
+      peer.close()
+    }
+    const sessionId = sessions.get(slotId)
+    if (closeRemote && sessionId) {
+      void fetch(`/webrtc/api/v1/webrtc/session/${sessionId}`, { method: 'DELETE' }).catch(() => {})
+    }
+    peers.delete(slotId)
+    sessions.delete(slotId)
+    fingerprints.delete(slotId)
+    delete streams[slotId]
+  }
+
+  function scheduleDelayedReconnect(slotId) {
+    if (stopped || reconnectTimers.has(slotId)) return
+    const timer = window.setTimeout(() => {
+      reconnectTimers.delete(slotId)
+      const slot = cameraSlots.value.find(item => Number(item.slotId) === Number(slotId))
+      if (!stopped && slot?.sourceType !== 'OFF') void connectDelayedPeer(slot)
+    }, 1500)
+    reconnectTimers.set(slotId, timer)
+  }
+
+  function connectDelayedPeer(slot) {
+    if (stopped || typeof RTCPeerConnection === 'undefined') return Promise.resolve()
+    const slotId = Number(slot.slotId)
+    const fingerprint = slotFingerprint(slot)
+    if (peers.has(slotId) && fingerprints.get(slotId) === fingerprint) return Promise.resolve()
+    const currentTask = connectTasks.get(slotId)
+    if (currentTask?.fingerprint === fingerprint) return currentTask.promise
+    const promise = establishDelayedPeer(slot, slotId, fingerprint).finally(() => {
+      if (connectTasks.get(slotId)?.promise === promise) connectTasks.delete(slotId)
+    })
+    connectTasks.set(slotId, { fingerprint, promise })
+    return promise
+  }
+
+  async function establishDelayedPeer(slot, slotId, fingerprint) {
+    closePeer(slotId)
+    states[slotId] = 'connecting'
+    const peer = new RTCPeerConnection(await getIceConfiguration())
+    if (stopped) {
+      peer.close()
+      return
+    }
+    peers.set(slotId, peer)
+    fingerprints.set(slotId, fingerprint)
+    peer.addTransceiver('video', { direction: 'recvonly' })
+    peer.ontrack = event => {
+      streams[slotId] = event.streams?.[0] || new MediaStream([event.track])
+      states[slotId] = 'streaming'
+    }
+    peer.onconnectionstatechange = () => {
+      const state = peer.connectionState
+      states[slotId] = state
+      if (state === 'failed' || state === 'closed') {
+        closePeer(slotId)
+        scheduleDelayedReconnect(slotId)
+      } else if (state === 'disconnected') {
+        scheduleDelayedReconnect(slotId)
+      }
+    }
+    try {
+      const offer = await peer.createOffer()
+      await peer.setLocalDescription(offer)
+      await waitForIceGathering(peer)
+      const response = await fetch(`/webrtc/api/v1/webrtc/offer/${slotId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: peer.localDescription.type,
+          sdp: peer.localDescription.sdp,
+          clientId: `${webRtcClientId}:detail`,
+          delayMs
+        })
+      })
+      const answer = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(answer.detail || `WebRTC 信令失败 (${response.status})`)
+      sessions.set(slotId, answer.sessionId)
+      await peer.setRemoteDescription({ type: answer.type, sdp: answer.sdp })
+      if (stopped) closePeer(slotId)
+    } catch (error) {
+      console.error(`摄像头 ${slotId} 延迟 WebRTC 连接失败`, error)
+      states[slotId] = 'error'
+      closePeer(slotId)
+      scheduleDelayedReconnect(slotId)
+    }
+  }
+
+  async function synchronizeDelayedPeers() {
+    if (stopped) return
+    const activeIds = new Set(activeCameraSlots.value.map(slot => Number(slot.slotId)))
+    for (const slotId of [...peers.keys()]) {
+      if (!activeIds.has(Number(slotId))) closePeer(slotId)
+    }
+    await Promise.allSettled(activeCameraSlots.value.map(connectDelayedPeer))
+  }
+
+  const stopWatchingSlots = watch(cameraSlots, () => { void synchronizeDelayedPeers() }, { deep: true })
+  onMounted(async () => {
+    if (!cameraSlots.value.length) {
+      try {
+        const data = getCameraData(await listCameraSlots()) || {}
+        cameraSlots.value = data.slots || []
+      } catch (error) {
+        console.error('详情页摄像头列表加载失败', error)
+      }
+    }
+    await synchronizeDelayedPeers()
+  })
+  onBeforeUnmount(() => {
+    stopped = true
+    stopWatchingSlots()
+    for (const slotId of [...peers.keys()]) closePeer(slotId)
+  })
+
+  return {
+    cameraSlots,
+    activeCameraSlots,
+    cameraPreviewUrls,
+    cameraWebRtcStreams: streams,
+    cameraWebRtcStates: states
+  }
 }
 
 function attachSelectedStream() {

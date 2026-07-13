@@ -18,13 +18,23 @@ services:
       LICENSE_ALGORITHM_BASE_URL: http://license:8000
       POLICE_ALGORITHM_BASE_URL: http://police:8001
       GESTURE_ALGORITHM_BASE_URL: http://gesture:8002
+      VEHICLE_ALGORITHM_BASE_URL: http://vehicle:8004
       CAMERA_FRAME_DIR: /shared/camera-frames
+      FILE_UPLOAD_DIR: /app/uploads
+      FILE_PUBLIC_BASE_URL: ${FILE_PUBLIC_BASE_URL:-}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      QWEN_TEXT_MODEL: ${QWEN_TEXT_MODEL:-qwen-plus}
+      QWEN_VISION_MODEL: ${QWEN_VISION_MODEL:-qwen3.7-plus}
+      ALERT_SERVICE_BASE_URL: ${ALERT_SERVICE_BASE_URL:-http://8.141.96.122:8096}
+      ALERT_SERVICE_TOKEN: ${ALERT_SERVICE_TOKEN:-}
     volumes:
       - camera_frames:/shared/camera-frames
+      - backend_uploads:/app/uploads
     depends_on:
       - license
       - police
       - gesture
+      - vehicle
 
   license:
     build:
@@ -61,5 +71,26 @@ services:
     volumes:
       - ../algorithm/gesture/data:/app/gesture/data
 
+  vehicle:
+    build:
+      context: ../algorithm
+      dockerfile: ../docker/Dockerfile.vehicle
+    ports:
+      - "8004:8004"
+    environment:
+      VEHICLE_ALGORITHM_PORT: 8004
+      VEHICLE_PRELOAD_MODEL: 1
+      PPVEHICLE_DEVICE: GPU
+      PPVEHICLE_RUN_MODE: paddle
+      PPVEHICLE_MOT_MODEL_DIR: /models/ppvehicle/mot
+      PPVEHICLE_ATTR_MODEL_DIR: /models/ppvehicle/attr
+      VEHICLE_ALLOWED_MEDIA_ROOTS: /shared,/app/uploads
+    gpus: all
+    volumes:
+      - ${PPVEHICLE_MODEL_DIR:-../models/ppvehicle}:/models/ppvehicle:ro
+      - camera_frames:/shared/camera-frames:ro
+      - backend_uploads:/app/uploads:ro
+
 volumes:
   camera_frames:
+  backend_uploads:

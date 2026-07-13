@@ -36,8 +36,10 @@ request.interceptors.response.use(
         window.location.replace(`/login?redirect=${redirect}`)
       }
     }
-    ElMessage.error(error.response?.data?.message || '请求失败')
-    error.__visionDriveNotified = true
+    if (!error.config?.silent) {
+      ElMessage.error(error.response?.data?.message || '请求失败')
+      error.__visionDriveNotified = true
+    }
     return Promise.reject(error)
   }
 )

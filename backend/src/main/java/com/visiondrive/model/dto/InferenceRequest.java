@@ -9,7 +9,7 @@ import java.util.List;
 @Schema(description = "图片推理请求")
 public class InferenceRequest {
 
-    @Schema(description = "任务类型: license_plate / police_gesture；车主手势请使用 /api/v1/owner-gestures",
+    @Schema(description = "任务类型: license_plate / vehicle_type / police_gesture；车主手势请使用 /api/v1/owner-gestures",
             example = "license_plate")
     @NotBlank(message = "任务类型不能为空")
     private String taskType;

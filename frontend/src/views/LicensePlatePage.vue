@@ -4,6 +4,7 @@
     task-type="license_plate"
     :result="props.externalResult"
     :recognizing="props.externalRecognizing"
+    :preloaded-streams="props.preloadedStreams"
   />
   <div v-else class="plate-page">
     <!-- 主区域：摄像头大画面 -->
@@ -161,7 +162,8 @@ import MultiCameraRecognitionDetail from '@/components/common/MultiCameraRecogni
 const props = defineProps({
   embedded: { type: Boolean, default: false },
   externalResult: { type: Object, default: null },
-  externalRecognizing: { type: Boolean, default: false }
+  externalRecognizing: { type: Boolean, default: false },
+  preloadedStreams: { type: Object, default: null }
 })
 const emit = defineEmits(['toggle-recognition'])
 

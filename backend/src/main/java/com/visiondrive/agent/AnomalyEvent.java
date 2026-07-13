@@ -18,6 +18,9 @@ public class AnomalyEvent {
     }
 
     public String getAffectedModule() {
+        if (affectedModule != null && !affectedModule.isBlank()) {
+            return affectedModule;
+        }
         return type != null ? type.getModule() : "unknown";
     }
 }

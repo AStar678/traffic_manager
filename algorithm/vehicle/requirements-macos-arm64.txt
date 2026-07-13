@@ -1,0 +1,19 @@
+# Python 3.13 / macOS arm64 的 PP-Vehicle 2.9 兼容依赖。
+# PaddlePaddle 需按 README 从官方 CPU 索引单独安装。
+-r requirements.txt
+numpy==1.26.4
+opencv-python==4.11.0.86
+scipy==1.14.1
+scikit-learn==1.6.1
+pandas==2.2.3
+matplotlib==3.10.8
+shapely==2.1.2
+scikit-image==0.26.0
+tifffile==2024.12.12
+imgaug==0.4.0
+tqdm
+packaging
+terminaltables
+typeguard
+pyclipper
+requests

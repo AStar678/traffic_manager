@@ -1,7 +1,7 @@
 package com.visiondrive.agent;
 
 /**
- * 异常类型枚举（8种）
+ * 异常类型枚举。
  */
 public enum AnomalyType {
 
@@ -27,7 +27,10 @@ public enum AnomalyType {
     DATABASE_CONNECTION_FAILURE("数据库连接失败", "database"),
 
     // 8. CPU/内存过高
-    SYSTEM_RESOURCE_HIGH("系统资源占用过高", "system");
+    SYSTEM_RESOURCE_HIGH("系统资源占用过高", "system"),
+
+    // 9. 低置信度或失败识别由千问视觉模型完成二次复核
+    RECOGNITION_FAILURE_REVIEW("识别失败 Agent 复核", "inference");
 
     private final String description;
     private final String module;

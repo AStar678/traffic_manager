@@ -8,6 +8,10 @@ export function updateCameraSlot(slotId, payload) {
   return request.put(`/cameras/slots/${slotId}`, payload)
 }
 
+export function updateCameraWeatherSimulation(slotId, enabled) {
+  return request.patch(`/cameras/slots/${slotId}/weather-simulation`, { enabled })
+}
+
 export function uploadCameraMedia(slotId, file) {
   const formData = new FormData()
   formData.append('file', file)

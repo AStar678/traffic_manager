@@ -9,6 +9,7 @@ import java.util.List;
 public class MultiCameraInferenceResponse {
     private String taskType;
     private Long latencyMs;
+    private Long serverTimeMs;
     private Integer detectionCount;
     private List<InferenceResponse.Detection> detections = new ArrayList<>();
     private List<CameraInferenceResult> cameras = new ArrayList<>();
@@ -21,6 +22,10 @@ public class MultiCameraInferenceResponse {
         private String status;
         private String error;
         private String frameUrl;
+        private String frameId;
+        private Long framePts;
+        private String frameTimeBase;
+        private Long frameCapturedAtMs;
         private InferenceResponse.InferenceData result;
     }
 }

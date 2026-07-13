@@ -1,9 +1,11 @@
 package com.visiondrive.model.dto;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import lombok.Data;
 
 @Data
 public class JobRequest {
+    @JsonAlias("task_type")
     private String taskType;
     private JobInput input;
     private String callbackUrl;

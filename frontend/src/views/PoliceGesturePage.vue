@@ -164,6 +164,7 @@ import { POLICE_GESTURE_MAP, TASK_TYPES } from '@/utils/constants'
 import { getInferenceData, inferenceCameras } from '@/api/inference'
 import { useCameraSource } from '@/composables/useCameraSource'
 import MultiCameraRecognitionDetail from '@/components/common/MultiCameraRecognitionDetail.vue'
+import { announcePoliceGesture } from '@/utils/speechAnnouncements'
 
 const props = defineProps({
   embedded: { type: Boolean, default: false },
@@ -181,6 +182,7 @@ const recognizing = computed(() => props.externalResult ? props.externalRecogniz
 const recognitionIntervalMs = 500
 let recognitionTimer = null
 let chart
+let lastAnnouncedGestureCode = ''
 
 const {
   selectedCameraSourceId,
@@ -291,6 +293,7 @@ async function recognizeOnce({ silent = false } = {}) {
       detections: selectedResult?.detections || data?.detections || [],
       annotatedImageUrl: ''
     }
+    announceGestureChange(localResult.value)
     renderChart()
   } catch (error) {
     console.error(error)
@@ -306,6 +309,7 @@ function startRecognition() {
     return
   }
   localRecognizing.value = true
+  lastAnnouncedGestureCode = ''
   localResult.value = emptyResult()
   renderChart()
   recognizeOnce({ silent: true })
@@ -314,6 +318,16 @@ function startRecognition() {
     if (localRecognizing.value) recognizeOnce({ silent: true })
   }, recognitionIntervalMs)
   ElMessage.success('已开始持续识别')
+}
+
+function announceGestureChange(nextResult) {
+  if (props.embedded) return
+  const detection = nextResult?.detections?.[0]
+  const nextGestureCode = String(detection?.gestureCode || '').trim()
+  if (!nextGestureCode || nextGestureCode === lastAnnouncedGestureCode) return
+
+  lastAnnouncedGestureCode = nextGestureCode
+  announcePoliceGesture(detection.gestureName || POLICE_GESTURE_MAP[nextGestureCode] || nextGestureCode)
 }
 
 function stopRecognition() {

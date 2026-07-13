@@ -3,11 +3,15 @@ from __future__ import annotations
 
 import base64
 import io
+import os
 import urllib.request
 from pathlib import Path
 from typing import Iterable
 
 from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError
+
+
+VISUAL_JPEG_QUALITY = max(55, min(92, int(os.getenv("LICENSE_VISUAL_JPEG_QUALITY", "80"))))
 
 
 def download_image(url: str) -> Image.Image:
@@ -37,7 +41,7 @@ def download_image(url: str) -> Image.Image:
 
 
 def draw_detections(image: Image.Image, detections: list[dict]) -> str:
-    """绘制检测框/标签，并返回 PNG data URL。"""
+    """绘制检测框/标签，并返回适合连续刷新的 JPEG data URL。"""
     canvas = image.copy().convert("RGB")
     draw = ImageDraw.Draw(canvas)
     font = _font(size=max(14, canvas.width // 70))
@@ -66,7 +70,7 @@ def draw_detections(image: Image.Image, detections: list[dict]) -> str:
             )
             draw.text((x1 + 7, label_y + 4), label, fill=_text_color_for(color), font=font)
 
-    return image_to_data_url(canvas)
+    return image_to_data_url(canvas, image_format="JPEG", jpeg_quality=VISUAL_JPEG_QUALITY)
 
 
 def draw_keypoints(
@@ -105,11 +109,27 @@ def draw_keypoints(
     return image_to_data_url(canvas)
 
 
-def image_to_data_url(image: Image.Image) -> str:
+def image_to_data_url(
+    image: Image.Image,
+    *,
+    image_format: str = "PNG",
+    jpeg_quality: int = VISUAL_JPEG_QUALITY,
+) -> str:
     buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
+    normalized_format = image_format.upper()
+    if normalized_format == "JPEG":
+        image.convert("RGB").save(
+            buffer,
+            format="JPEG",
+            quality=max(55, min(92, int(jpeg_quality))),
+            subsampling=2,
+        )
+        media_type = "jpeg"
+    else:
+        image.save(buffer, format="PNG")
+        media_type = "png"
     encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
-    return f"data:image/png;base64,{encoded}"
+    return f"data:image/{media_type};base64,{encoded}"
 
 
 def _open_image(raw: bytes) -> Image.Image:

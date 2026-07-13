@@ -48,13 +48,22 @@ public class InferenceResponse {
     public static class Detection {
         private Integer cameraSlotId;
         private String cameraName;
+        private String frameId;
+        private Long framePts;
+        private String frameTimeBase;
+        private Long frameCapturedAtMs;
         private String objectId;
+        private Integer trackId;
         private String objectType;
+        private String detectionClass;
         private Bbox bbox;
         private Position position;
         private String plateNumber;
         private String plateColor;
         private String plateType;
+        private String vehicleType;
+        private String vehicleTypeName;
+        private String vehicleColor;
         private Double confidence;
         private Double detectionConfidence;
         private Double ocrConfidence;

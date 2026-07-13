@@ -3,6 +3,7 @@ package com.visiondrive.controller;
 import com.visiondrive.model.dto.ApiResponse;
 import com.visiondrive.model.dto.CameraSlotRequest;
 import com.visiondrive.model.dto.CameraSlotResponse;
+import com.visiondrive.model.dto.CameraWeatherSimulationRequest;
 import com.visiondrive.service.CameraManagerService;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -13,6 +14,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -49,6 +51,14 @@ public class CameraController {
             @Valid @RequestBody CameraSlotRequest request
     ) {
         return ApiResponse.success(cameraManagerService.updateSlot(slotId, request));
+    }
+
+    @PatchMapping("/slots/{slotId}/weather-simulation")
+    public ApiResponse<CameraSlotResponse> updateWeatherSimulation(
+            @PathVariable int slotId,
+            @Valid @RequestBody CameraWeatherSimulationRequest request
+    ) {
+        return ApiResponse.success(cameraManagerService.updateWeatherSimulation(slotId, request.getEnabled()));
     }
 
     @PostMapping(value = "/slots/{slotId}/media", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

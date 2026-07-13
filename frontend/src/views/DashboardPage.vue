@@ -10,7 +10,7 @@
         <span class="state-pulse"></span>
         <div>
           <strong>{{ perceptionEnabled ? '全域识别运行中' : '识别已关闭' }}</strong>
-          <small>{{ perceptionEnabled ? '车牌 · 交警 · 车主手势' : '道路视频仍保持预览' }}</small>
+          <small>{{ perceptionEnabled ? '车牌 · 车辆类型 · 交警 · 车主手势' : '道路视频仍保持预览' }}</small>
         </div>
         <button class="perception-toggle" type="button" @click="toggleUnifiedPerception">
           <el-icon><component :is="perceptionEnabled ? 'VideoPause' : 'VideoPlay'" /></el-icon>
@@ -72,6 +72,9 @@
                 <el-icon :size="36"><Camera /></el-icon>
                 <span>{{ cameraError || '等待主服务摄像头模块' }}</span>
               </div>
+              <StaticWeatherTexture
+                v-if="selectedCameraSource?.weatherSimulationEnabled && (cameraVideoReady || cameraDisplayUrl)"
+              />
               <div class="camera-overlay-info">
                 <span class="camera-label">{{ selectedCameraSource?.name || '前向道路摄像头' }}</span>
                 <span class="camera-live">● {{ cameraStatusText }}</span>
@@ -162,8 +165,38 @@
             <button class="detail-button secondary" type="button" @click="plateExpanded = !plateExpanded">
               {{ plateExpanded ? '收起' : `展开全部 (${allPlateDetections.length})` }}
             </button>
-            <button class="detail-button" type="button" @click="plateDialogOpen = true">
+            <button class="detail-button" type="button" @click="openPlateDetail">
               查看细节 <el-icon><ArrowRight /></el-icon>
+            </button>
+          </div>
+        </article>
+
+        <article class="recognition-card vehicle-type-result" :class="{ live: perceptionEnabled }">
+          <div class="recognition-head">
+            <span class="recognition-icon"><el-icon><Van /></el-icon></span>
+            <div><small>车辆类型</small><strong>{{ vehicleTypeStatusText }}</strong></div>
+            <span class="live-mark">{{ perceptionEnabled ? 'LIVE' : 'OFF' }}</span>
+          </div>
+          <div class="recognition-value">{{ latestVehicle ? vehicleTypeName(latestVehicle) : '暂未检测' }}</div>
+          <div class="recognition-meta">
+            <span>{{ latestVehicle ? `轨迹 #${latestVehicle.trackId ?? '--'} · ${vehicleColorName(latestVehicle)}` : '等待车辆进入画面' }}</span>
+            <span>{{ vehicleTypeConfidence(latestVehicle) }}</span>
+          </div>
+          <div v-if="vehicleExpanded" class="all-vehicles-list">
+            <div v-for="item in allVehicleDetections" :key="`${item.cameraSlotId}-${item.objectId || item.trackId}`" :title="item.cameraName">
+              <span>CAM {{ item.cameraSlotId }}</span>
+              <strong>#{{ item.trackId ?? '--' }} · {{ vehicleTypeName(item) }}</strong>
+              <small>{{ vehicleColorName(item) }}</small>
+              <em>{{ vehicleTypeConfidence(item) }}</em>
+            </div>
+            <p v-if="!allVehicleDetections.length">当前三路画面暂无车辆</p>
+          </div>
+          <div class="plate-actions">
+            <button class="detail-button secondary" type="button" @click="vehicleExpanded = !vehicleExpanded">
+              {{ vehicleExpanded ? '收起' : `全部车辆 (${allVehicleDetections.length})` }}
+            </button>
+            <button class="detail-button" type="button" @click="openVehicleTypeDetail">
+              三路追踪 <el-icon><ArrowRight /></el-icon>
             </button>
           </div>
         </article>
@@ -203,8 +236,11 @@
       </aside>
     </section>
 
-    <el-dialog v-model="plateDialogOpen" title="车牌识别详情" width="94vw" top="4vh" destroy-on-close class="recognition-dialog" @closed="restoreDashboardCamera">
-      <LicensePlatePage embedded :external-result="plateResult" :external-recognizing="perceptionEnabled" @toggle-recognition="toggleUnifiedPerception" />
+    <el-dialog v-model="plateDialogOpen" title="车牌识别详情" width="94vw" top="4vh" destroy-on-close class="recognition-dialog" @closed="handlePlateDetailClosed">
+      <LicensePlatePage embedded :external-result="plateResult" :external-recognizing="perceptionEnabled" :preloaded-streams="preloadedFrameSyncStreams" @toggle-recognition="toggleUnifiedPerception" />
+    </el-dialog>
+    <el-dialog v-model="vehicleTypeDialogOpen" title="车辆类型 · 三路实时追踪" width="94vw" top="4vh" destroy-on-close class="recognition-dialog" @closed="handleVehicleTypeDetailClosed">
+      <VehicleTypePage embedded :external-result="vehicleTypeResult" :external-recognizing="perceptionEnabled" :preloaded-streams="preloadedFrameSyncStreams" @toggle-recognition="toggleUnifiedPerception" />
     </el-dialog>
     <el-dialog v-model="policeDialogOpen" title="交警手势识别详情" width="94vw" top="4vh" destroy-on-close class="recognition-dialog" @closed="restoreDashboardCamera">
       <PoliceGesturePage embedded :external-result="policeResult" :external-recognizing="perceptionEnabled" @toggle-recognition="toggleUnifiedPerception" />
@@ -218,41 +254,31 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { DrawingUtils, FilesetResolver, GestureRecognizer } from '@/vendor/tasks-vision/vision_bundle.mjs'
-import { executeOwnerGestureControl, getOwnerGestureControlSettings, getOwnerGestureData } from '@/api/ownerGestures'
+import {
+  executeOwnerGestureControl,
+  getOwnerGestureConfig,
+  getOwnerGestureData,
+  recognizeOwnerGesture
+} from '@/api/ownerGestures'
 import { getInferenceData, inferenceCameras } from '@/api/inference'
 import { mockSystemHealth, mockAlerts } from '@/utils/mockData'
 import { useAlertStore } from '@/stores/alert'
-import { useCameraSource } from '@/composables/useCameraSource'
+import {
+  FRAME_SYNC_BUFFER_MS,
+  useCameraSource,
+  useDelayedCameraStreams
+} from '@/composables/useCameraSource'
 import { useVehicleStore } from '@/stores/vehicle'
 import { POLICE_GESTURE_MAP, TASK_TYPES } from '@/utils/constants'
 import LicensePlatePage from '@/views/LicensePlatePage.vue'
+import VehicleTypePage from '@/views/VehicleTypePage.vue'
 import PoliceGesturePage from '@/views/PoliceGesturePage.vue'
 import OwnerGesturePage from '@/views/OwnerGesturePage.vue'
-import {
-  OWNER_GESTURE_RECOGNITION_CONFIG,
-  extractFeatureVector,
-  sequenceMotion
-} from '@/utils/ownerGesturePrototype'
-import {
-  buildVideoPrototypePayload,
-  OWNER_GESTURE_ALGORITHMS
-} from '@/utils/ownerGestureVideoPrototype'
+import { buildVideoPrototypePayload } from '@/utils/ownerGestureVideoPrototype'
+import { announceOwnerGestureAction, announcePoliceGesture } from '@/utils/speechAnnouncements'
+import StaticWeatherTexture from '@/components/common/StaticWeatherTexture.vue'
 
 const MODEL_PATH = '/models/gesture_recognizer.task'
-const GESTURE_FRAME_INTERVAL_MS = 33
-const BUILT_IN_GESTURE_THRESHOLD = 0.7
-const BUILT_IN_GESTURE_FALLBACK_HOLD_MS = 1200
-const BUILT_IN_GESTURE_COOLDOWN_MS = 1500
-const BUILT_IN_DISPLAY_GRACE_MS = 500
-const BUILT_IN_GESTURE_LABELS = {
-  Closed_Fist: '握拳',
-  Open_Palm: '手掌张开',
-  Pointing_Up: '单指向上',
-  Thumb_Down: '拇指向下',
-  Thumb_Up: '拇指向上',
-  Victory: '胜利手势',
-  ILoveYou: 'I Love You'
-}
 
 const alertStore = useAlertStore()
 const vehicleStore = useVehicleStore()
@@ -270,18 +296,26 @@ const {
   cameraVideoReady,
   markCameraVideoReady,
   refreshCameraPreview,
-  selectCameraSlot
+  selectCameraSlot,
+  suspendCameraWebRtcConnections,
+  resumeCameraWebRtcConnections
 } = useCameraSource()
+const preloadedFrameSyncStreams = useDelayedCameraStreams(FRAME_SYNC_BUFFER_MS)
 
 const perceptionEnabled = ref(true)
 const plateResult = ref(emptyPerceptionResult(TASK_TYPES.LICENSE_PLATE))
+const vehicleTypeResult = ref(emptyPerceptionResult(TASK_TYPES.VEHICLE_TYPE))
 const policeResult = ref(emptyPerceptionResult(TASK_TYPES.POLICE_GESTURE))
 const plateRecognitionLoading = ref(false)
+const vehicleTypeRecognitionLoading = ref(false)
 const policeRecognitionLoading = ref(false)
 const plateRecognitionError = ref('')
+const vehicleTypeRecognitionError = ref('')
 const policeRecognitionError = ref('')
 const plateDialogOpen = ref(false)
 const plateExpanded = ref(false)
+const vehicleTypeDialogOpen = ref(false)
+const vehicleExpanded = ref(false)
 const policeDialogOpen = ref(false)
 const ownerDialogOpen = ref(false)
 const ownerSettingsRequested = ref(false)
@@ -298,29 +332,24 @@ const gestureCameraError = ref('')
 const gestureMatchLabel = ref('未录入')
 const gestureScoreLabel = ref('--')
 const gestureTriggerLabel = ref('等待')
-const activeGestureAlgorithm = ref(OWNER_GESTURE_ALGORITHMS.MEDIAPIPE)
 
 let gestureRecognizer
 let gestureDrawingUtils
 let gestureOverlayContext
 let gestureMediaStream
-let gestureSocket
 let gestureFrameId
 let lastGestureVideoTime = -1
 let lastGestureFrameAt = 0
 let gestureRunId = 0
-let lastBuiltInGestureCode = ''
-let lastBuiltInGestureAt = 0
-let lastBuiltInMatchAt = 0
-let builtInGestureStableCode = ''
-let builtInGestureStableSince = 0
-let builtInGestureVectors = []
 let lastGestureRecognitionDisplay
-let gestureControlBindings = new Map()
 let gestureControlConfig = {}
-let gestureSocketReconnectTimer
+let gestureRecognitionPending = false
 let plateRecognitionTimer
+let vehicleTypeRecognitionTimer
 let policeRecognitionTimer
+let lastAnnouncedPoliceGestureCode = ''
+const PLATE_OVERVIEW_INTERVAL_MS = 800
+const PLATE_DETAIL_INTERVAL_MS = 350
 
 const cameraStatusText = computed(() => {
   const labels = { idle: '待机', loading: '连接中', ready: 'LIVE', empty: '无源', offline: '离线' }
@@ -333,8 +362,7 @@ const gestureControlButtonText = computed(() => {
 })
 const gestureCameraStatusText = computed(() => {
   if (gestureControlLoading.value) return '启动中'
-  if (gestureControlActive.value && gestureSocket?.readyState === WebSocket.OPEN) return '识别中'
-  if (gestureControlActive.value) return '本机摄像头'
+  if (gestureControlActive.value) return gestureRecognitionPending ? 'DINOv2 推理中' : '识别中'
   if (gestureCameraError.value) return '离线'
   return '待机'
 })
@@ -370,6 +398,27 @@ function plateConfidenceText(item) {
   const confidence = Number(item?.ocrConfidence ?? item?.confidence ?? item?.detectionConfidence)
   return Number.isFinite(confidence) ? `${Math.round(confidence * 100)}%` : '--'
 }
+const latestVehicle = computed(() => vehicleTypeResult.value.detections?.[0] || null)
+const allVehicleDetections = computed(() => vehicleTypeResult.value.detections || [])
+
+function vehicleTypeName(item) {
+  return item?.vehicleTypeName || {
+    sedan: '轿车', suv: 'SUV', van: '面包车', hatchback: '两厢车', mpv: 'MPV',
+    pickup: '皮卡', bus: '客车', truck: '货车', estate: '旅行车', unknown: '未知车型'
+  }[String(item?.vehicleType || 'unknown').toLowerCase()] || item?.vehicleType || '未知车型'
+}
+
+function vehicleColorName(item) {
+  return {
+    black: '黑色', white: '白色', gray: '灰色', silver: '银色', red: '红色', blue: '蓝色',
+    green: '绿色', yellow: '黄色', brown: '棕色', unknown: '颜色未知'
+  }[String(item?.vehicleColor || 'unknown').toLowerCase()] || item?.vehicleColor || '颜色未知'
+}
+
+function vehicleTypeConfidence(item) {
+  const confidence = Number(item?.confidence ?? item?.detectionConfidence)
+  return Number.isFinite(confidence) ? `${Math.round(confidence * 100)}%` : '--'
+}
 const latestPoliceDetection = computed(() => policeResult.value.detections?.[0] || null)
 const latestPoliceGesture = computed(() => {
   const detection = latestPoliceDetection.value
@@ -395,6 +444,12 @@ const plateStatusText = computed(() => {
   if (plateRecognitionLoading.value) return '识别中'
   return latestPlate.value ? '已同步结果' : '持续扫描中'
 })
+const vehicleTypeStatusText = computed(() => {
+  if (!perceptionEnabled.value) return '已停止'
+  if (vehicleTypeRecognitionError.value) return '服务异常'
+  if (vehicleTypeRecognitionLoading.value) return '追踪中'
+  return latestVehicle.value ? `已追踪 ${allVehicleDetections.value.length} 辆` : '持续扫描中'
+})
 const policeStatusText = computed(() => {
   if (!perceptionEnabled.value) return '已停止'
   if (policeRecognitionError.value) return '服务异常'
@@ -404,9 +459,11 @@ const policeStatusText = computed(() => {
 const roadPerceptionCaption = computed(() => {
   if (!perceptionEnabled.value) return '仅视频预览'
   const plateCount = plateResult.value.detections?.length || 0
+  const vehicleCount = vehicleTypeResult.value.detections?.length || 0
   if (latestPoliceDetection.value) return `交警指令：${latestPoliceGesture.value}`
+  if (vehicleCount) return `正在追踪 ${vehicleCount} 辆车`
   if (plateCount) return `已检测 ${plateCount} 个车牌`
-  return '车牌与交警手势同步检测'
+  return '车牌、车型与交警手势同步检测'
 })
 
 onMounted(() => {
@@ -419,6 +476,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   stopRoadRecognition()
   stopGestureControl()
+  resumeCameraWebRtcConnections()
 })
 
 const recentAlerts = computed(() => mockAlerts.slice(0, 2))
@@ -450,29 +508,49 @@ function restoreDashboardCamera() {
 }
 
 function startRoadRecognition() {
-  clearInterval(plateRecognitionTimer)
+  clearInterval(vehicleTypeRecognitionTimer)
   clearInterval(policeRecognitionTimer)
-  void recognizeRoadTask(TASK_TYPES.LICENSE_PLATE)
+  restartPlateRecognition({ immediate: true })
+  void recognizeRoadTask(TASK_TYPES.VEHICLE_TYPE)
   void recognizeRoadTask(TASK_TYPES.POLICE_GESTURE)
-  plateRecognitionTimer = window.setInterval(() => {
-    void recognizeRoadTask(TASK_TYPES.LICENSE_PLATE)
-  }, 800)
+  vehicleTypeRecognitionTimer = window.setInterval(() => {
+    void recognizeRoadTask(TASK_TYPES.VEHICLE_TYPE)
+  }, 900)
   policeRecognitionTimer = window.setInterval(() => {
     void recognizeRoadTask(TASK_TYPES.POLICE_GESTURE)
   }, 1000)
 }
 
+function restartPlateRecognition({ immediate = false } = {}) {
+  clearInterval(plateRecognitionTimer)
+  plateRecognitionTimer = undefined
+  if (!perceptionEnabled.value) return
+
+  if (immediate) void recognizeRoadTask(TASK_TYPES.LICENSE_PLATE)
+  const interval = plateDialogOpen.value ? PLATE_DETAIL_INTERVAL_MS : PLATE_OVERVIEW_INTERVAL_MS
+  plateRecognitionTimer = window.setInterval(() => {
+    void recognizeRoadTask(TASK_TYPES.LICENSE_PLATE)
+  }, interval)
+}
+
 function stopRoadRecognition() {
   clearInterval(plateRecognitionTimer)
+  clearInterval(vehicleTypeRecognitionTimer)
   clearInterval(policeRecognitionTimer)
   plateRecognitionTimer = undefined
+  vehicleTypeRecognitionTimer = undefined
   policeRecognitionTimer = undefined
+  lastAnnouncedPoliceGestureCode = ''
 }
 
 async function recognizeRoadTask(taskType) {
   if (!perceptionEnabled.value || !activeCameraSlots.value.length) return
-  const loading = taskType === TASK_TYPES.LICENSE_PLATE ? plateRecognitionLoading : policeRecognitionLoading
-  const errorState = taskType === TASK_TYPES.LICENSE_PLATE ? plateRecognitionError : policeRecognitionError
+  const states = {
+    [TASK_TYPES.LICENSE_PLATE]: [plateRecognitionLoading, plateRecognitionError],
+    [TASK_TYPES.VEHICLE_TYPE]: [vehicleTypeRecognitionLoading, vehicleTypeRecognitionError],
+    [TASK_TYPES.POLICE_GESTURE]: [policeRecognitionLoading, policeRecognitionError]
+  }
+  const [loading, errorState] = states[taskType] || [policeRecognitionLoading, policeRecognitionError]
   if (loading.value) return
   loading.value = true
   try {
@@ -485,8 +563,14 @@ async function recognizeRoadTask(taskType) {
       ...data,
       detections: data.detections || []
     }
-    if (taskType === TASK_TYPES.LICENSE_PLATE) plateResult.value = nextResult
-    else policeResult.value = nextResult
+    if (taskType === TASK_TYPES.LICENSE_PLATE) {
+      plateResult.value = nextResult
+    } else if (taskType === TASK_TYPES.VEHICLE_TYPE) {
+      vehicleTypeResult.value = nextResult
+    } else {
+      policeResult.value = nextResult
+      announcePoliceGestureChange(nextResult)
+    }
     errorState.value = ''
   } catch (error) {
     console.error(`${taskType} recognition failed`, error)
@@ -494,6 +578,38 @@ async function recognizeRoadTask(taskType) {
   } finally {
     loading.value = false
   }
+}
+
+function announcePoliceGestureChange(nextResult) {
+  const detection = nextResult?.detections?.[0]
+  const gestureCode = String(detection?.gestureCode || '').trim()
+  if (!gestureCode || gestureCode === lastAnnouncedPoliceGestureCode) return
+
+  lastAnnouncedPoliceGestureCode = gestureCode
+  announcePoliceGesture(detection.gestureName || POLICE_GESTURE_MAP[gestureCode] || gestureCode)
+}
+
+function openPlateDetail() {
+  suspendCameraWebRtcConnections()
+  plateDialogOpen.value = true
+  restartPlateRecognition({ immediate: true })
+}
+
+function handlePlateDetailClosed() {
+  resumeCameraWebRtcConnections()
+  restoreDashboardCamera()
+  restartPlateRecognition()
+}
+
+function openVehicleTypeDetail() {
+  suspendCameraWebRtcConnections()
+  vehicleTypeDialogOpen.value = true
+  void recognizeRoadTask(TASK_TYPES.VEHICLE_TYPE)
+}
+
+function handleVehicleTypeDetailClosed() {
+  resumeCameraWebRtcConnections()
+  restoreDashboardCamera()
 }
 
 function openPoliceDetail() {
@@ -513,6 +629,7 @@ async function toggleUnifiedPerception() {
 
   perceptionEnabled.value = true
   plateRecognitionError.value = ''
+  vehicleTypeRecognitionError.value = ''
   policeRecognitionError.value = ''
   startRoadRecognition()
   await startGestureControl()
@@ -544,16 +661,15 @@ async function startGestureControl() {
   gestureCameraError.value = ''
 
   try {
-    await refreshGestureControlBindings()
+    await refreshGestureControlConfig()
     await ensureGestureRecognizer()
     await startGestureCamera()
     await waitForGestureVideo()
     if (runId !== gestureRunId) return
     gestureControlActive.value = true
     gestureControlLoading.value = false
-    gestureControlStatus.value = '识别服务连接中'
-    gestureTriggerLabel.value = '识别服务连接中'
-    connectGestureSocket()
+    gestureControlStatus.value = 'DINOv2-TCN 识别中'
+    gestureTriggerLabel.value = '视频原型匹配中'
     recognizeGestureLoop()
   } catch (error) {
     console.error(error)
@@ -574,22 +690,7 @@ function stopGestureControl(options = {}) {
   gestureFrameId = undefined
   lastGestureVideoTime = -1
   lastGestureFrameAt = 0
-  lastBuiltInGestureCode = ''
-  lastBuiltInGestureAt = 0
-  lastBuiltInMatchAt = 0
-  builtInGestureStableCode = ''
-  builtInGestureStableSince = 0
-  builtInGestureVectors = []
-  if (gestureSocket) {
-    gestureSocket.onopen = null
-    gestureSocket.onmessage = null
-    gestureSocket.onclose = null
-    gestureSocket.onerror = null
-    gestureSocket.close()
-  }
-  gestureSocket = undefined
-  window.clearTimeout(gestureSocketReconnectTimer)
-  gestureSocketReconnectTimer = undefined
+  gestureRecognitionPending = false
   stopGestureCamera()
   if (!options.keepStatus) {
     gestureControlStatus.value = '等待手势控制'
@@ -597,17 +698,13 @@ function stopGestureControl(options = {}) {
   }
 }
 
-async function refreshGestureControlBindings() {
+async function refreshGestureControlConfig() {
   try {
-    const data = getOwnerGestureData(await getOwnerGestureControlSettings())
+    const data = getOwnerGestureData(await getOwnerGestureConfig())
     gestureControlConfig = data?.config || {}
-    gestureControlBindings = new Map(
-      (data?.settings || []).map(item => [String(item.gestureCode), item])
-    )
   } catch (error) {
     console.error(error)
     gestureControlConfig = {}
-    gestureControlBindings = new Map()
   }
 }
 
@@ -711,63 +808,6 @@ function waitForGestureVideo() {
   })
 }
 
-function connectGestureSocket() {
-  if (!gestureControlActive.value) return
-  if (gestureSocket && [WebSocket.CONNECTING, WebSocket.OPEN].includes(gestureSocket.readyState)) return
-  window.clearTimeout(gestureSocketReconnectTimer)
-  gestureSocketReconnectTimer = undefined
-
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const socket = new WebSocket(`${protocol}//${location.host}/api/recognition/stream`)
-  gestureSocket = socket
-
-  socket.onopen = () => {
-    if (socket !== gestureSocket) return
-    gestureControlLoading.value = false
-    gestureControlStatus.value = '识别中'
-    gestureTriggerLabel.value = '识别中'
-  }
-
-  socket.onmessage = event => {
-    if (socket !== gestureSocket) return
-    try {
-      applyGestureRecognitionState(JSON.parse(event.data))
-    } catch (error) {
-      console.error(error)
-    }
-  }
-
-  socket.onerror = () => {
-    if (socket !== gestureSocket) return
-    gestureControlStatus.value = '识别服务连接失败'
-    gestureTriggerLabel.value = '识别服务连接失败'
-    gestureControlLoading.value = false
-    try {
-      socket.close()
-    } catch (error) {
-      console.error(error)
-    }
-  }
-
-  socket.onclose = () => {
-    if (socket !== gestureSocket) return
-    gestureSocket = undefined
-    if (!gestureControlActive.value) return
-    gestureControlLoading.value = false
-    gestureControlStatus.value = '识别服务重连中'
-    gestureTriggerLabel.value = '识别服务重连中'
-    scheduleGestureSocketReconnect()
-  }
-}
-
-function scheduleGestureSocketReconnect() {
-  if (!gestureControlActive.value || gestureSocketReconnectTimer) return
-  gestureSocketReconnectTimer = window.setTimeout(() => {
-    gestureSocketReconnectTimer = undefined
-    connectGestureSocket()
-  }, 1000)
-}
-
 function recognizeGestureLoop() {
   if (!gestureControlActive.value || !gestureRecognizer) {
     return
@@ -788,24 +828,9 @@ function recognizeGestureLoop() {
       drawGestureResult(result)
       const landmarks = result.landmarks?.[0]
       if (landmarks) {
-        const vector = extractFeatureVector(landmarks, result.worldLandmarks?.[0])
-        if (activeGestureAlgorithm.value === OWNER_GESTURE_ALGORITHMS.MEDIAPIPE) {
-          applyBuiltInGestureRecognition(result.gestures?.[0]?.[0], vector)
-        } else {
-          resetBuiltInGestureState()
-        }
-        if (gestureSocket?.readyState === WebSocket.OPEN) {
-          const payload = { type: 'frame', vector }
-          if (activeGestureAlgorithm.value === OWNER_GESTURE_ALGORITHMS.DINO_TCN) {
-            Object.assign(payload, buildVideoPrototypePayload(video, result) || {})
-          }
-          gestureSocket.send(JSON.stringify(payload))
-        } else if (!lastGestureControl.value) {
-          gestureControlStatus.value = '识别服务连接中'
-          gestureTriggerLabel.value = '识别服务连接中'
-        }
+        const payload = buildVideoPrototypePayload(video, result)
+        if (payload) void recognizeDashboardGesture(payload)
       } else {
-        resetBuiltInGestureState()
         restoreLastGestureRecognitionDisplay()
         gestureTriggerLabel.value = '未检测到手'
         if (!lastGestureControl.value) {
@@ -825,131 +850,23 @@ function recognizeGestureLoop() {
 }
 
 function dashboardGestureFrameInterval() {
-  if (activeGestureAlgorithm.value !== OWNER_GESTURE_ALGORITHMS.DINO_TCN) return GESTURE_FRAME_INTERVAL_MS
   const configured = Number(gestureControlConfig?.dinov2FrameIntervalMs)
   return Number.isFinite(configured) && configured >= 80 ? configured : 150
 }
 
-function applyBuiltInGestureRecognition(category, vector) {
-  const gestureCode = category?.categoryName
-  const score = Number(category?.score || 0)
-  const now = performance.now()
-  if (!gestureCode || gestureCode === 'None' || score < BUILT_IN_GESTURE_THRESHOLD) {
-    resetBuiltInGestureState()
-    return
+async function recognizeDashboardGesture(payload) {
+  if (gestureRecognitionPending || !gestureControlActive.value) return
+  gestureRecognitionPending = true
+  try {
+    const state = getOwnerGestureData(await recognizeOwnerGesture({ type: 'frame', ...payload }))
+    applyGestureRecognitionState(state)
+  } catch (error) {
+    console.error(error)
+    gestureControlStatus.value = 'DINOv2 识别服务连接失败'
+    gestureTriggerLabel.value = '识别服务连接失败'
+  } finally {
+    gestureRecognitionPending = false
   }
-
-  const config = builtInGestureConfig()
-  const gestureName = BUILT_IN_GESTURE_LABELS[gestureCode] || gestureCode
-  const recognitionHoldMs = builtInStaticRecognitionHoldMs(config)
-  const triggerHoldMs = builtInGestureHoldMs(gestureCode)
-  const motion = trackBuiltInGestureMotion(gestureCode, vector, config)
-  lastBuiltInMatchAt = now
-
-  if (motion > builtInStaticMotionLimit(config)) {
-    builtInGestureStableSince = 0
-    gestureMatchLabel.value = '静态确认中'
-    gestureScoreLabel.value = '--'
-    gestureTriggerLabel.value = '请保持静止'
-    gestureControlStatus.value = '请保持静止'
-    return
-  }
-
-  if (!builtInGestureStableSince) {
-    builtInGestureStableSince = now
-  }
-  const stableElapsed = now - builtInGestureStableSince
-  if (stableElapsed < recognitionHoldMs) {
-    const holdLabel = builtInGestureHoldLabel(recognitionHoldMs - stableElapsed)
-    gestureMatchLabel.value = '静态确认中'
-    gestureScoreLabel.value = '--'
-    gestureTriggerLabel.value = holdLabel
-    gestureControlStatus.value = holdLabel
-    return
-  }
-
-  lastBuiltInMatchAt = now
-  rememberGestureRecognitionDisplay(gestureName, formatGestureScore(score))
-
-  if (gestureCode === lastBuiltInGestureCode && now - lastBuiltInGestureAt < BUILT_IN_GESTURE_COOLDOWN_MS) {
-    return
-  }
-
-  const binding = gestureControlBindings.get(String(gestureCode))
-  if (!binding?.enabled || binding.actionType === 'NONE') {
-    gestureTriggerLabel.value = '已识别，未关联功能'
-    gestureControlStatus.value = '已识别，未关联功能'
-    return
-  }
-
-  if (stableElapsed < triggerHoldMs) {
-    const stableLabel = `稳定中 ${formatHoldSeconds(triggerHoldMs - stableElapsed)}s`
-    gestureTriggerLabel.value = stableLabel
-    gestureControlStatus.value = stableLabel
-    return
-  }
-
-  lastBuiltInGestureCode = gestureCode
-  lastBuiltInGestureAt = now
-  void executeDashboardGestureControl({
-    gestureCode,
-    name: gestureName,
-    score
-  })
-}
-
-function trackBuiltInGestureMotion(gestureCode, vector, config) {
-  if (gestureCode !== builtInGestureStableCode) {
-    builtInGestureStableCode = gestureCode
-    builtInGestureStableSince = 0
-    builtInGestureVectors = []
-  }
-  builtInGestureVectors.push(vector)
-  const sampleTarget = positiveMs(config.sampleTarget, OWNER_GESTURE_RECOGNITION_CONFIG.sampleTarget)
-  if (builtInGestureVectors.length > sampleTarget) {
-    builtInGestureVectors = builtInGestureVectors.slice(-sampleTarget)
-  }
-  return sequenceMotion(builtInGestureVectors, config)
-}
-
-function resetBuiltInGestureState() {
-  lastBuiltInMatchAt = 0
-  builtInGestureStableCode = ''
-  builtInGestureStableSince = 0
-  builtInGestureVectors = []
-}
-
-function builtInGestureHoldMs(gestureCode) {
-  const setting = gestureControlBindings.get(String(gestureCode))
-  return positiveMs(
-    setting?.holdMs,
-    positiveMs(gestureControlConfig?.defaultHoldMs, BUILT_IN_GESTURE_FALLBACK_HOLD_MS)
-  )
-}
-
-function builtInStaticRecognitionHoldMs(config) {
-  return positiveMs(config.staticRecognitionHoldMs, OWNER_GESTURE_RECOGNITION_CONFIG.staticRecognitionHoldMs)
-}
-
-function builtInStaticMotionLimit(config) {
-  return positiveMs(config.staticMotionHardLimit, positiveMs(config.staticStillMotionLimit, OWNER_GESTURE_RECOGNITION_CONFIG.staticStillMotionLimit))
-}
-
-function builtInGestureConfig() {
-  return { ...OWNER_GESTURE_RECOGNITION_CONFIG, ...(gestureControlConfig || {}) }
-}
-
-function builtInGestureHoldLabel(remainingMs) {
-  return `静态保持 ${formatHoldSeconds(remainingMs)}s`
-}
-
-function formatHoldSeconds(ms) {
-  return (Math.ceil(Math.max(ms, 0) / 100) / 10).toFixed(1).replace(/\.0$/, '')
-}
-
-function positiveMs(value, fallback) {
-  const numeric = Number(value)
-  return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback
 }
 
 function drawGestureResult(result) {
@@ -995,20 +912,11 @@ function clearGestureOverlay() {
 }
 
 function applyGestureRecognitionState(state) {
-  if (state?.algorithm?.active) {
-    const changed = activeGestureAlgorithm.value !== state.algorithm.active
-    activeGestureAlgorithm.value = state.algorithm.active
-    if (changed) resetBuiltInGestureState()
-  }
   if (state?.config) {
     gestureControlConfig = { ...gestureControlConfig, ...state.config }
   }
   const recognition = state?.recognition
   if (!recognition) return
-  const shouldKeepBuiltInDisplay =
-    !recognition.accepted &&
-    lastBuiltInMatchAt &&
-    performance.now() - lastBuiltInMatchAt < BUILT_IN_DISPLAY_GRACE_MS
 
   const scoreText =
     recognition.score === null || recognition.score === undefined
@@ -1016,16 +924,14 @@ function applyGestureRecognitionState(state) {
       : formatGestureScore(recognition.score)
   const recognized = recognition.accepted && rememberGestureRecognitionDisplay(recognition.name, scoreText)
 
-  if (!shouldKeepBuiltInDisplay) {
-    if (!recognized) {
-      restoreLastGestureRecognitionDisplay()
-    }
-    gestureTriggerLabel.value = recognition.triggerState || '识别中'
+  if (!recognized) {
+    restoreLastGestureRecognitionDisplay()
   }
+  gestureTriggerLabel.value = recognition.triggerState || '视频原型匹配中'
 
   if (!recognition.accepted) {
-    if (!lastGestureControl.value && !shouldKeepBuiltInDisplay) {
-      gestureControlStatus.value = recognition.triggerState || '识别中'
+    if (!lastGestureControl.value) {
+      gestureControlStatus.value = recognition.triggerState || 'DINOv2-TCN 识别中'
     }
     return
   }
@@ -1050,6 +956,7 @@ async function executeDashboardGestureControl(recognition) {
       return
     }
 
+    announceOwnerGestureAction(control.actionLabel)
     vehicleStore.applyGestureControl(control)
     gestureControlStatus.value = control.actionLabel || '车辆状态已更新'
     gestureTriggerLabel.value = `已触发：${control.actionLabel || '车辆状态已更新'}`
@@ -2060,7 +1967,7 @@ function restoreLastGestureRecognitionDisplay() {
 
 .recognition-rail {
   display: grid;
-  grid-template-rows: repeat(3, auto);
+  grid-template-rows: repeat(4, auto);
   gap: 10px;
 }
 
@@ -2077,6 +1984,7 @@ function restoreLastGestureRecognitionDisplay() {
 }
 
 .recognition-card.live { border-color: rgba(0, 180, 216, 0.2); }
+.vehicle-type-result.live { border-color: rgba(0, 229, 255, 0.28); }
 .police-result.live { border-color: rgba(255, 171, 0, 0.2); }
 .owner-result.live { border-color: rgba(0, 230, 118, 0.2); }
 
@@ -2098,6 +2006,7 @@ function restoreLastGestureRecognitionDisplay() {
 }
 
 .police-result .recognition-icon { background: rgba(255, 171, 0, 0.1); color: var(--warning-color); }
+.vehicle-type-result .recognition-icon { background: rgba(0, 229, 255, 0.1); color: #00e5ff; }
 .owner-result .recognition-icon { background: rgba(0, 230, 118, 0.1); color: var(--success-color); }
 
 .recognition-head small,
@@ -2238,6 +2147,13 @@ function restoreLastGestureRecognitionDisplay() {
 .all-plates-list small, .all-plates-list em { font-size: 11px; font-style: normal; }
 .all-plates-list em { color: var(--warning-color); text-align: right; }
 .all-plates-list p { padding: 10px; color: var(--text-muted); font-size: 11px; text-align: center; }
+.all-vehicles-list { max-height: 146px; display: flex; flex-direction: column; gap: 5px; margin: 0 0 10px; overflow-y: auto; }
+.all-vehicles-list div { display: grid; grid-template-columns: 40px minmax(0, 1fr) 42px 38px; align-items: center; gap: 7px; padding: 6px 7px; border: 1px solid var(--border-subtle); border-radius: 7px; background: rgba(255,255,255,.025); }
+.all-vehicles-list span { color: #00e5ff; font: 800 11px/1 "SF Mono", monospace; }
+.all-vehicles-list strong, .all-vehicles-list small, .all-vehicles-list em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.all-vehicles-list small { color: var(--text-secondary); }
+.all-vehicles-list em { color: var(--warning-color); font-style: normal; text-align: right; }
+.all-vehicles-list p { padding: 10px; color: var(--text-muted); font-size: 11px; text-align: center; }
 
 .owner-actions .detail-button { margin-top: 0; }
 .detail-button.secondary { border-color: var(--border-card); background: rgba(255, 255, 255, 0.03); color: var(--text-secondary); }
@@ -2266,7 +2182,7 @@ function restoreLastGestureRecognitionDisplay() {
   .cockpit-grid { grid-template-columns: 150px minmax(0, 1fr); }
   .recognition-rail {
     grid-column: 1 / -1;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-template-rows: none;
   }
   .compact-speedo .speed-ring { width: 124px; height: 124px; }

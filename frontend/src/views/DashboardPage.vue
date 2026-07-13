@@ -125,8 +125,13 @@
           <div class="vehicle-metric">
             <el-icon><Sunny /></el-icon><span>空调</span><strong>{{ vehicle.climate.temperature }}°C</strong><small>{{ vehicle.climate.mode }}</small>
           </div>
-          <div class="vehicle-metric">
-            <el-icon><Headset /></el-icon><span>多媒体</span><strong>{{ vehicle.audio.track }}</strong><small>音量 {{ vehicle.audio.volume }}%</small>
+          <div class="vehicle-metric music-metric" @click="handleMusicClick">
+            <el-icon><Headset /></el-icon><span>多媒体</span>
+            <strong>{{ musicStore.currentTrack?.title || vehicle.audio.track || '未播放' }}</strong>
+            <small>
+              <span v-if="musicStore.isPlaying" class="playing-text">▶ 播放中</span>
+              <span v-else>音量 {{ vehicle.audio.volume }}%</span>
+            </small>
           </div>
           <div class="vehicle-metric">
             <el-icon><Phone /></el-icon><span>电话</span><strong>{{ vehicle.phone.status }}</strong><small>{{ vehicle.phone.caller }}</small>
@@ -224,6 +229,7 @@ import { mockSystemHealth, mockAlerts } from '@/utils/mockData'
 import { useAlertStore } from '@/stores/alert'
 import { useCameraSource } from '@/composables/useCameraSource'
 import { useVehicleStore } from '@/stores/vehicle'
+import { useMusicStore } from '@/stores/music'
 import { POLICE_GESTURE_MAP, TASK_TYPES } from '@/utils/constants'
 import LicensePlatePage from '@/views/LicensePlatePage.vue'
 import PoliceGesturePage from '@/views/PoliceGesturePage.vue'
@@ -252,6 +258,7 @@ const BUILT_IN_GESTURE_LABELS = {
 
 const alertStore = useAlertStore()
 const vehicleStore = useVehicleStore()
+const musicStore = useMusicStore()
 const vehicle = vehicleStore.vehicle
 const health = mockSystemHealth
 const {
@@ -1018,6 +1025,14 @@ async function executeDashboardGestureControl(recognition) {
     }
 
     vehicleStore.applyGestureControl(control)
+    // 音乐播放器联动
+    if (control.actionType === 'NEXT_MEDIA' && musicStore.trackCount > 0) {
+      musicStore.next()
+      vehicleStore.vehicle.audio.track = musicStore.currentTrack?.title || vehicleStore.vehicle.audio.track
+    }
+    if (control.actionType === 'VOLUME_UP' || control.actionType === 'VOLUME_DOWN') {
+      musicStore.setVolume(vehicleStore.vehicle.audio.volume)
+    }
     gestureControlStatus.value = control.actionLabel || '车辆状态已更新'
     gestureTriggerLabel.value = `已触发：${control.actionLabel || '车辆状态已更新'}`
   } catch (error) {
@@ -1057,6 +1072,12 @@ function restoreLastGestureRecognitionDisplay() {
 
   gestureMatchLabel.value = '等待识别'
   gestureScoreLabel.value = '--'
+}
+
+function handleMusicClick() {
+  if (musicStore.currentTrack) {
+    musicStore.togglePlay()
+  }
 }
 </script>
 
@@ -1502,6 +1523,17 @@ function restoreLastGestureRecognitionDisplay() {
   color: var(--primary-color);
 }
 
+.music-metric {
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.music-metric:hover {
+  background: rgba(64, 158, 255, 0.12);
+}
+.playing-text {
+  color: #409eff;
+  font-weight: 600;
+}
 .media-track {
   font-size: 15px;
   color: var(--text-primary);

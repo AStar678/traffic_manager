@@ -41,12 +41,17 @@ public class FileStorageService {
             }
 
             String ext = getFileExtension(originalFilename);
-            if (!isValidImageType(ext) && !isValidVideoType(ext)) {
-                throw new IllegalArgumentException("不支持的文件格式：" + ext + "，请上传图片(jpg/png/bmp)或视频(mp4/avi/mov)");
+            if (!isValidImageType(ext) && !isValidVideoType(ext) && !isValidAudioType(ext)) {
+                throw new IllegalArgumentException("不支持的文件格式：" + ext + "，请上传图片(jpg/png/bmp)、视频(mp4/avi/mov)或音频(mp3/wav/flac/ogg/m4a)");
             }
 
-            // 校验文件大小（图片10MB，视频200MB）
-            long maxSize = isValidImageType(ext) ? 10 * 1024 * 1024 : 200 * 1024 * 1024;
+            // 校验文件大小（图片10MB，视频200MB，音频50MB）
+            long maxSize = 200 * 1024 * 1024;
+            if (isValidImageType(ext)) {
+                maxSize = 10 * 1024 * 1024;
+            } else if (isValidAudioType(ext)) {
+                maxSize = 50 * 1024 * 1024;
+            }
             if (file.getSize() > maxSize) {
                 throw new IllegalArgumentException("文件大小超出限制: " + (maxSize / 1024 / 1024) + "MB");
             }
@@ -102,5 +107,12 @@ public class FileStorageService {
      */
     private boolean isValidVideoType(String ext) {
         return "mp4".equals(ext) || "avi".equals(ext) || "mov".equals(ext);
+    }
+
+    /**
+     * 是否是支持的音频格式
+     */
+    private boolean isValidAudioType(String ext) {
+        return "mp3".equals(ext) || "wav".equals(ext) || "flac".equals(ext) || "ogg".equals(ext) || "m4a".equals(ext);
     }
 }

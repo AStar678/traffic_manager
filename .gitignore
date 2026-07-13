@@ -194,3 +194,10 @@ output/
 
 *.cache
 *.bak
+
+
+# Music resources
+music/
+*.mp3
+*.flac
+*.wav

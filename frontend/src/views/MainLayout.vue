@@ -87,6 +87,7 @@ const dockItems = [
   { path: '/alert-dashboard', label: '告警', icon: 'Bell' },
   { path: '/history', label: '记录', icon: 'Document' },
   { path: '/cameras', label: '摄像头', icon: 'VideoCamera' },
+  { path: '/music', label: '音乐', icon: 'Headset' },
   { path: '/settings', label: '设置', icon: 'Setting' },
 ]
 

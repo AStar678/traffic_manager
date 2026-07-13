@@ -7,7 +7,7 @@ spring:
 
   # 默认使用 H2；通过 DB_* 环境变量切换到云端 MySQL。
   datasource:
-    url: ${DB_URL:jdbc:h2:file:./data/visiondrive;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE}
+    url: ${DB_URL:jdbc:h2:file:./data/visiondrive;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;NON_KEYWORDS=USER}
     driver-class-name: ${DB_DRIVER:org.h2.Driver}
     username: ${DB_USERNAME:sa}
     password: ${DB_PASSWORD:}

@@ -246,6 +246,10 @@ public class CameraManagerService {
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         if (os.contains("mac")) {
             captureWithFfmpeg(List.of("-f", "avfoundation", "-framerate", "15", "-i", index + ":none"), output);
+        } else if (os.contains("win")) {
+            String cam = (slot.getPath() != null && !slot.getPath().isBlank() && !slot.getPath().matches("\\d+"))
+                    ? slot.getPath() : "Integrated Camera";
+            captureWithFfmpeg(List.of("-f", "dshow", "-i", "video=" + cam), output);
         } else {
             captureWithFfmpeg(List.of("-f", "v4l2", "-i", "/dev/video" + index), output);
         }

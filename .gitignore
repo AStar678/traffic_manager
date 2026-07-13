@@ -2,7 +2,62 @@
 # VisionDrive 智视驾
 # ============================
 
-# --- IDE ---
+# --- 敏感信息与本地配置 ---
+# 真实配置只保留在本机；仓库中仅提交脱敏后的示例文件。
+.env
+.env.*
+*.env
+*.env.*
+!.env.example
+!.env.*.example
+!*.env.example
+!*.env.*.example
+.envrc
+.direnv/
+docker-compose.override.yml
+
+# 私钥、证书容器、账号凭据
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.kdbx
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+.npmrc
+.pypirc
+.netrc
+credentials.json
+credentials.*.json
+client_secret*.json
+service-account*.json
+service_account*.json
+secrets*.json
+secrets*.yml
+secrets*.yaml
+kubeconfig*
+
+# IaC 状态和变量通常含有口令或云端资源信息
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+
+# 项目运行时生成的私密配置
+backend/data/camera-slots.json
+deployment/server/coturn.runtime.conf
+
+# 已脱敏的部署模板允许提交；敏感值必须继续使用空值或环境变量。
+!deployment/server/runtime.env
+!deployment/server/server.env
+
+# --- IDE / 编辑器 ---
 .idea/
 .vscode/
 *.iml
@@ -10,65 +65,115 @@
 *.swo
 *~
 
-# --- Frontend (Vue 3) ---
-frontend/node_modules/
-frontend/dist/
-frontend/.env.local
+# --- 前端 / Node.js ---
+node_modules/
+dist/
+coverage/
+.nyc_output/
+.vite/
+.parcel-cache/
+*.tsbuildinfo
+.eslintcache
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# --- Backend (Java) ---
-backend/target/
-backend/.classpath
-backend/.project
-backend/.settings/
-backend/.env
-backend/.env.local
-backend/data/camera-slots.json
-deployment/server/backend.env
-deployment/server/turn.env
-deployment/server/coturn.runtime.conf
+# --- Java / Maven / Gradle ---
+target/
+.gradle/
+build/
+out/
+*.class
+*.hprof
+hs_err_pid*
 
 # --- Python ---
 __pycache__/
 *.py[cod]
+*$py.class
 .Python
 .venv/
 venv/
+env/
+ENV/
+*.egg-info/
+.eggs/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-.env
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+.ipynb_checkpoints/
 
-# --- Models (large files) ---
+# --- 模型、权重与大体积二进制 ---
 models/ppvehicle/
 third_party/PaddleDetection/
-algorithm/models/**/*.pt
-algorithm/models/**/*.pth
-algorithm/models/**/*.onnx
-algorithm/models/**/*.h5
-algorithm/models/**/*.pb
-algorithm/gesture_dinov2_tcn/checkpoints/*.pt
-algorithm/gesture_dinov2_tcn/checkpoints/*.pth
+*.pt
+*.pth
+*.onnx
+*.h5
+*.hdf5
+*.pb
+*.tflite
+*.ckpt
+*.ckpt.*
+*.safetensors
+*.weights
+*.engine
+*.plan
+*.task
+*.pkl
+*.pickle
+*.joblib
+*.npy
+*.npz
 algorithm/gesture_dinov2_tcn/data/gesture_prototypes.json
 
-# --- Data ---
-algorithm/vehicle/testdata/*.mp4
+# 应用离线运行所需、已审核的固定模型资源
+!frontend/public/models/gesture_recognizer.task
+!algorithm/gesture/app/public/models/gesture_recognizer.task
+
+# --- 数据库、数据集与媒体文件 ---
 data/datasets/
-data/samples/**/*.mp4
-data/samples/**/*.avi
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
 *.mv.db
 *.trace.db
 *.lock.db
+*.dump
+*.bak
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
 
-# --- Uploads ---
+# --- 压缩包、磁盘镜像与本地归档 ---
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.bz2
+*.xz
+*.dmg
+*.iso
+
+# --- 上传、缓存、测试与运行产物 ---
 uploads/
 temp/
+tmp/
+cache/
 *.tmp
-
-# --- Logs and runtime output ---
+*.temp
 logs/
 *.log
 screenlog.*
@@ -77,6 +182,8 @@ output/
 test-results/
 playwright-report/
 
-# --- OS ---
+# --- 操作系统 ---
 .DS_Store
+._*
 Thumbs.db
+Desktop.ini

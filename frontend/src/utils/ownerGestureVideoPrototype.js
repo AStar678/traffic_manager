@@ -26,12 +26,19 @@ export function buildVideoPrototypePayload(video, result) {
 
   const worldLandmarks = result.worldLandmarks?.[0]
   const handedness = result.handedness?.[0]?.[0]
+  const mediapipeGesture = result.gestures?.[0]?.[0]
   return {
     frame: captureHandCrop(video, landmarks),
     landmarks: landmarks.map(point => [number(point.x), number(point.y), number(point.z)]),
     worldLandmarks: worldLandmarks?.map(point => [number(point.x), number(point.y), number(point.z)]) || null,
     detectionScore: number(handedness?.score, 1),
-    handedness: handedness?.categoryName || handedness?.displayName || ''
+    handedness: handedness?.categoryName || handedness?.displayName || '',
+    mediapipeGesture: mediapipeGesture
+      ? {
+          categoryName: mediapipeGesture.categoryName || mediapipeGesture.displayName || '',
+          score: number(mediapipeGesture.score)
+        }
+      : null
   }
 }
 

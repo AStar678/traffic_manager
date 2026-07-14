@@ -14,7 +14,7 @@ HOST = os.getenv("GESTURE_ALGORITHM_HOST", os.getenv("ALGORITHM_HOST", "0.0.0.0"
 PORT = int(os.getenv("GESTURE_ALGORITHM_PORT", "8002"))
 # 该服务维护录入会话与车辆状态，必须保持单进程；并发请求由线程池处理。
 WORKERS = 1
-THREADS = max(1, int(os.getenv("GESTURE_ALGORITHM_THREADS", "40")))
+THREADS = max(1, min(8, int(os.getenv("GESTURE_ALGORITHM_THREADS", "4"))))
 RELOAD = os.getenv("GESTURE_ALGORITHM_RELOAD", os.getenv("ALGORITHM_RELOAD", "0")) == "1"
 
 GESTURE_CONFIG_PATH = Path(

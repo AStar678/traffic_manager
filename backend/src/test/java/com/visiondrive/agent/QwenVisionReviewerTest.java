@@ -13,6 +13,8 @@ import org.springframework.web.client.RestTemplate;
 import java.lang.reflect.Proxy;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
@@ -20,6 +22,20 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 class QwenVisionReviewerTest {
+
+    @Test
+    void reportsWhetherDashscopeIsConfigured() {
+        QwenVisionReviewer reviewer = new QwenVisionReviewer(
+                new RestTemplate(),
+                null
+        );
+
+        ReflectionTestUtils.setField(reviewer, "apiKey", "  ");
+        assertFalse(reviewer.isConfigured());
+
+        ReflectionTestUtils.setField(reviewer, "apiKey", "test-key");
+        assertTrue(reviewer.isConfigured());
+    }
 
     @Test
     void sendsFailedVideoToQwenVisionModel() {

@@ -11,6 +11,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.util.Map;
@@ -65,6 +66,15 @@ public class GlobalExceptionHandler {
                 .map(error -> error.getDefaultMessage())
                 .orElse("请求参数校验失败");
         return ResponseEntity.badRequest().body(ApiResponse.error(400, message));
+    }
+
+    /**
+     * 浏览器在 WebRTC 接管备用 JPEG、切换页面或刷新时会主动取消旧响应。
+     * 此时响应通常已经提交，不能再尝试写入统一 JSON 错误体。
+     */
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    public void handleDisconnectedClient(AsyncRequestNotUsableException e) {
+        log.debug("客户端已取消响应: {}", e.getMessage());
     }
 
     /**

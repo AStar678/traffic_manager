@@ -7,12 +7,12 @@
 
     <template v-if="mode === 'password'">
       <el-form-item>
-        <el-input v-model="form.username" size="large" placeholder="用户名：admin">
+        <el-input v-model="form.username" size="large" placeholder="请输入用户名">
           <template #prefix><el-icon><User /></el-icon></template>
         </el-input>
       </el-form-item>
       <el-form-item>
-        <el-input v-model="form.password" size="large" type="password" placeholder="密码：任意输入" show-password>
+        <el-input v-model="form.password" size="large" type="password" placeholder="请输入密码" show-password>
           <template #prefix><el-icon><Lock /></el-icon></template>
         </el-input>
       </el-form-item>
@@ -52,8 +52,8 @@ const countdown = ref(0)
 let timer
 
 const form = reactive({
-  username: 'admin',
-  password: 'visiondrive',
+  username: '',
+  password: '',
   target: '',
   code: ''
 })

@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -105,6 +106,18 @@ public class AlertService {
                 .filter(log -> level == null || level.equalsIgnoreCase(log.getLevel()))
                 .limit(safeLimit)
                 .toList();
+    }
+
+    @Transactional
+    public int clearErrorLogs(String module, String event) {
+        return systemLogRepository.deleteErrorLogs(normalizeFilter(module), normalizeFilter(event));
+    }
+
+    private String normalizeFilter(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
     }
 
     private long countSeverity(List<AlertEvent> alerts, String severity) {

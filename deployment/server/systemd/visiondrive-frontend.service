@@ -1,0 +1,16 @@
+[Unit]
+Description=VisionDrive Frontend Gateway
+After=network-online.target visiondrive-backend.service visiondrive-jpeg.service
+Wants=network-online.target visiondrive-backend.service visiondrive-jpeg.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/visiondrive/app/frontend
+Environment=FRONTEND_ROOT=%h/visiondrive/app/frontend
+Environment=FRONTEND_JPEG_PROXY_WORKERS=16
+ExecStart=%h/miniconda3/envs/visiondrive/bin/python -m uvicorn frontend_gateway:app --app-dir %h/visiondrive/deployment/server --host 0.0.0.0 --port 5173 --no-access-log
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=visiondrive.target

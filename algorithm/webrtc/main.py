@@ -1,17 +1,20 @@
-"""WebRTC gateway for the three camera slots managed by the Java main service."""
+"""JPEG/WebRTC gateway for the three camera slots managed by the Java service."""
 from __future__ import annotations
 
 import asyncio
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import time
 import uuid
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from fractions import Fraction
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -25,9 +28,12 @@ from aiortc.mediastreams import MediaStreamError
 from av import VideoFrame
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from PIL import Image
 
 from . import config
+from .jpeg_frames import JpegFrameRenderer, encode_display_pixels
+from .processed_video import ProcessedResultStore, ProcessedVideoTrack, SUPPORTED_TASKS
 
 log = logging.getLogger("visiondrive.webrtc")
 
@@ -61,10 +67,32 @@ class StaticImageTrack(VideoStreamTrack):
     def __init__(self, path: str):
         super().__init__()
         rgb = np.asarray(Image.open(path).convert("RGB"), dtype=np.uint8)
+        self.pixels = rgb
         self.frame = VideoFrame.from_ndarray(rgb, format="rgb24")
+        self._started_at: float | None = None
+        self._frame_index = 0
+        self._pts_step = max(1, round(90_000 / config.OUTPUT_FPS))
+        self._time_base = Fraction(1, 90_000)
+
+    async def _next_frame_timing(self) -> tuple[int, Fraction]:
+        loop = asyncio.get_running_loop()
+        if self._started_at is None:
+            self._started_at = loop.time()
+        target = self._started_at + self._frame_index / config.OUTPUT_FPS
+        remaining = target - loop.time()
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+        pts = self._frame_index * self._pts_step
+        self._frame_index += 1
+        return pts, self._time_base
+
+    async def recv_pixels(self) -> tuple[np.ndarray, int, Fraction]:
+        """Return immutable source pixels directly when WebRTC is disabled."""
+        pts, time_base = await self._next_frame_timing()
+        return self.pixels, pts, time_base
 
     async def recv(self) -> VideoFrame:
-        pts, time_base = await self.next_timestamp()
+        pts, time_base = await self._next_frame_timing()
         frame = self.frame.reformat(format="yuv420p")
         frame.pts = pts
         frame.time_base = time_base
@@ -72,7 +100,7 @@ class StaticImageTrack(VideoStreamTrack):
 
 
 class BoundedVideoTrack(VideoStreamTrack):
-    """Deep-copy relayed frames without changing the source resolution."""
+    """Create an independent 480p display frame from a full-quality source frame."""
 
     def __init__(self, source: VideoStreamTrack):
         super().__init__()
@@ -84,8 +112,25 @@ class BoundedVideoTrack(VideoStreamTrack):
         # on a worker thread while the snapshot path converts that same object, so
         # handing the shared native frame to the encoder can corrupt its refcount.
         # Materializing a new ndarray/VideoFrame gives each encoder sole ownership.
-        pixels = frame.to_ndarray(format="rgb24")
-        copied = VideoFrame.from_ndarray(pixels.copy(), format="rgb24")
+        # Scaling only happens in this display subscription: snapshot publication
+        # and every inference service still consume the full-resolution source.
+        scale = min(
+            1.0,
+            config.DISPLAY_WIDTH / max(frame.width, 1),
+            config.DISPLAY_HEIGHT / max(frame.height, 1),
+        )
+        width = max(2, int(frame.width * scale) // 2 * 2)
+        height = max(2, int(frame.height * scale) // 2 * 2)
+        resized = frame.reformat(width=width, height=height, format="rgb24")
+        resized_pixels = resized.to_ndarray(format="rgb24")
+        display_pixels = np.zeros(
+            (config.DISPLAY_HEIGHT, config.DISPLAY_WIDTH, 3),
+            dtype=np.uint8,
+        )
+        offset_x = (config.DISPLAY_WIDTH - width) // 2
+        offset_y = (config.DISPLAY_HEIGHT - height) // 2
+        display_pixels[offset_y:offset_y + height, offset_x:offset_x + width] = resized_pixels
+        copied = VideoFrame.from_ndarray(display_pixels, format="rgb24")
         copied.pts = frame.pts
         if frame.time_base is not None:
             copied.time_base = frame.time_base
@@ -170,7 +215,7 @@ class FfmpegProcessTrack(VideoStreamTrack):
             return None
         return width, height
 
-    async def _start(self) -> None:
+    async def _start_process(self) -> None:
         dimensions = await self._probe_source_dimensions()
         if config.PRESERVE_SOURCE_RESOLUTION and self.probe_args and dimensions is None:
             raise RuntimeError("无法确认视频源原始分辨率，已拒绝降采样")
@@ -207,10 +252,11 @@ class FfmpegProcessTrack(VideoStreamTrack):
             stderr=asyncio.subprocess.DEVNULL,
         )
 
-    async def recv(self) -> VideoFrame:
+    async def recv_pixels(self) -> tuple[np.ndarray, int, Fraction]:
+        """Read an owned FFmpeg RGB payload without a PyAV round trip."""
         while self.readyState == "live":
             if self.process is None or self.process.returncode is not None:
-                await self._start()
+                await self._start_process()
             try:
                 payload = await asyncio.wait_for(
                     self.process.stdout.readexactly(self.frame_size),
@@ -224,6 +270,12 @@ class FfmpegProcessTrack(VideoStreamTrack):
                 continue
             pts, time_base = await self.next_timestamp()
             array = np.frombuffer(payload, dtype=np.uint8).reshape(self.output_height, self.output_width, 3)
+            return array, pts, time_base
+        raise MediaStreamError
+
+    async def recv(self) -> VideoFrame:
+        array, pts, time_base = await self.recv_pixels()
+        while self.readyState == "live":
             frame = VideoFrame.from_ndarray(array, format="rgb24")
             frame.pts = pts
             frame.time_base = time_base
@@ -254,6 +306,10 @@ class CameraSource:
     relay: MediaRelay | None
     track: VideoStreamTrack
     snapshot_task: asyncio.Task | None = None
+    source_type: str = "UNKNOWN"
+    processed_history: deque[VideoFrame] = field(default_factory=lambda: deque(
+        maxlen=max(2, round(config.PROCESSED_STREAM_DELAY_MS * config.OUTPUT_FPS / 1000) + 2)
+    ))
 
     def stop(self) -> None:
         if self.snapshot_task is not None:
@@ -275,33 +331,131 @@ class CameraRegistry:
 
     async def subscribe(self, slot_id: int, delay_ms: int = 0) -> VideoStreamTrack:
         async with self._lock:
-            slot = self._load_slot(slot_id)
-            fingerprint = json.dumps(slot, ensure_ascii=False, sort_keys=True)
-            source = self._sources.get(slot_id)
-            if source is None or source.fingerprint != fingerprint or (source.snapshot_task and source.snapshot_task.done()):
-                if source is not None:
-                    source.stop()
-                source = self._open_source(slot, fingerprint)
-                self._sources[slot_id] = source
-                source.snapshot_task = asyncio.create_task(self._publish_latest_frame(slot_id, source))
+            source = self._ensure_source_locked(slot_id)
             track = source.relay.subscribe(source.track, buffered=False) if source.relay else source.track
             if delay_ms > 0:
                 track = DelayedVideoTrack(track, delay_ms)
             return BoundedVideoTrack(track)
 
+    async def ensure_started(self, slot_id: int) -> CameraSource:
+        """Start one shared decoder and snapshot publisher for JPEG consumers."""
+        async with self._lock:
+            return self._ensure_source_locked(slot_id)
+
+    async def subscribe_processed(
+        self,
+        slot_id: int,
+        task_type: str,
+        result_store: ProcessedResultStore,
+        delay_ms: int,
+    ) -> VideoStreamTrack:
+        # Subscribe to the shared decoder directly. ProcessedVideoTrack detaches the
+        # shared native frame on the event-loop before any worker-thread processing.
+        async with self._lock:
+            source = self._ensure_source_locked(slot_id)
+            track = source.relay.subscribe(source.track, buffered=False) if source.relay else source.track
+            initial_frames = list(source.processed_history)
+        return ProcessedVideoTrack(
+            track,
+            slot_id,
+            task_type,
+            result_store,
+            delay_ms,
+            source_type=source.source_type,
+            initial_frames=initial_frames,
+        )
+
+    def _ensure_source_locked(self, slot_id: int) -> CameraSource:
+        slot = self._load_slot(slot_id)
+        fingerprint = json.dumps(slot, ensure_ascii=False, sort_keys=True)
+        source = self._sources.get(slot_id)
+        if source is None or source.fingerprint != fingerprint or (source.snapshot_task and source.snapshot_task.done()):
+            if source is not None:
+                source.stop()
+            source = self._open_source(slot, fingerprint)
+            self._sources[slot_id] = source
+            source.snapshot_task = asyncio.create_task(self._publish_latest_frame(slot_id, source))
+        return source
+
     async def _publish_latest_frame(self, slot_id: int, source: CameraSource) -> None:
-        track = source.relay.subscribe(source.track, buffered=False) if source.relay else source.track
-        output = config.CAMERA_FRAME_DIR / f"camera-{slot_id}.jpg"
-        interval = 1.0 / config.FRAME_PUBLISH_FPS
-        last_saved = 0.0
+        direct_pixels = not config.ENABLE_WEBRTC and hasattr(source.track, "recv_pixels")
+        track = (
+            source.track
+            if direct_pixels
+            else (source.relay.subscribe(source.track, buffered=False) if source.relay else source.track)
+        )
+        inference_output = config.CAMERA_FRAME_DIR / f"camera-{slot_id}.jpg"
+        display_output = config.CAMERA_FRAME_DIR / f"camera-{slot_id}.display.jpg"
+        display_interval = 1.0 / config.FRAME_PUBLISH_FPS
+        inference_interval = 1.0 / config.INFERENCE_SNAPSHOT_FPS
+        last_display_saved = 0.0
+        last_inference_saved = 0.0
+        display_write_task: asyncio.Task | None = None
+        inference_write_task: asyncio.Task | None = None
         try:
             while True:
-                frame = await track.recv()
+                if direct_pixels:
+                    pixels, frame_pts, frame_time_base = await track.recv_pixels()
+                else:
+                    frame = await track.recv()
                 now = asyncio.get_running_loop().time()
-                if now - last_saved < interval:
+                should_save_display = now - last_display_saved >= display_interval
+                should_save_inference = now - last_inference_saved >= inference_interval
+                if source.source_type == "IMAGE" and not (should_save_display or should_save_inference):
                     continue
-                last_saved = now
-                await asyncio.to_thread(self._save_frame, slot_id, frame, output)
+
+                # MediaRelay gives every subscriber the same native AVFrame.  Never
+                # hand that shared object to a worker thread: RTP encoding or another
+                # subscriber may access it concurrently and libav can segfault.  The
+                # RGB ndarray is detached synchronously on the event-loop first; all
+                # expensive resize/JPEG work below then operates on owned memory.
+                if not direct_pixels:
+                    pixels, frame_pts, frame_time_base = ProcessedVideoTrack.detach_frame(frame)
+                if config.ENABLE_WEBRTC and source.source_type != "IMAGE":
+                    compact = await asyncio.to_thread(
+                        ProcessedVideoTrack.compact_pixels,
+                        pixels,
+                        frame_pts,
+                        frame_time_base,
+                    )
+                    source.processed_history.append(compact)
+
+                if should_save_display and (
+                    display_write_task is None or display_write_task.done()
+                ):
+                    if display_write_task is not None:
+                        try:
+                            display_write_task.result()
+                        except Exception as exc:  # noqa: BLE001
+                            log.warning("摄像头 %s 展示帧写入失败: %s", slot_id, exc)
+                    last_display_saved = now
+                    display_write_task = asyncio.create_task(
+                        _run_jpeg_job(
+                            self._save_display_frame,
+                            pixels,
+                            display_output,
+                        )
+                    )
+
+                if should_save_inference and (
+                    inference_write_task is None or inference_write_task.done()
+                ):
+                    if inference_write_task is not None:
+                        try:
+                            inference_write_task.result()
+                        except Exception as exc:  # noqa: BLE001
+                            log.warning("摄像头 %s 推理帧写入失败: %s", slot_id, exc)
+                    last_inference_saved = now
+                    inference_write_task = asyncio.create_task(
+                        _run_jpeg_job(
+                            self._save_frame,
+                            slot_id,
+                            pixels,
+                            frame_pts,
+                            frame_time_base,
+                            inference_output,
+                        )
+                    )
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -309,7 +463,21 @@ class CameraRegistry:
             await close_slot_peers(slot_id)
 
     @staticmethod
-    def _save_frame(slot_id: int, frame: VideoFrame, output: Path) -> None:
+    def _save_display_frame(pixels: np.ndarray, output: Path) -> None:
+        """Atomically publish one pre-sized JPEG used only by browser previews."""
+        output.parent.mkdir(parents=True, exist_ok=True)
+        temporary = output.with_name(f".{output.name}.display.tmp")
+        temporary.write_bytes(encode_display_pixels(pixels))
+        temporary.replace(output)
+
+    @staticmethod
+    def _save_frame(
+        slot_id: int,
+        pixels: np.ndarray,
+        frame_pts: int | None,
+        frame_time_base: Fraction | None,
+        output: Path,
+    ) -> None:
         """Publish a JPEG and a verifiable frame manifest for inference consumers.
 
         The Java service reads the manifest before and after copying the JPEG and
@@ -319,7 +487,7 @@ class CameraRegistry:
         output.parent.mkdir(parents=True, exist_ok=True)
         temporary = output.with_name(f".{output.name}.webrtc.tmp")
         buffer = BytesIO()
-        frame.to_image().save(
+        Image.fromarray(pixels, mode="RGB").save(
             buffer,
             format="JPEG",
             quality=config.SNAPSHOT_JPEG_QUALITY,
@@ -327,12 +495,11 @@ class CameraRegistry:
         )
         payload = buffer.getvalue()
         captured_at_ms = time.time_ns() // 1_000_000
-        frame_pts = int(frame.pts) if frame.pts is not None else None
         frame_id = f"{slot_id}-{frame_pts if frame_pts is not None else 'na'}-{captured_at_ms}"
         metadata = {
             "frameId": frame_id,
             "framePts": frame_pts,
-            "frameTimeBase": str(frame.time_base) if frame.time_base is not None else None,
+            "frameTimeBase": str(frame_time_base) if frame_time_base is not None else None,
             "frameCapturedAtMs": captured_at_ms,
             "sha256": hashlib.sha256(payload).hexdigest(),
         }
@@ -369,7 +536,13 @@ class CameraRegistry:
         if source_type == "IMAGE":
             if not Path(path).is_file():
                 raise HTTPException(status_code=404, detail=f"图片不存在: {path}")
-            return CameraSource(fingerprint, None, MediaRelay(), StaticImageTrack(path))
+            return CameraSource(
+                fingerprint,
+                None,
+                MediaRelay(),
+                StaticImageTrack(path),
+                source_type=source_type,
+            )
 
         if source_type == "SANDBOX":
             path = path if path.startswith(("rtsp://", "rtsps://")) else f"{config.SANDBOX_BASE_URL}/{path.lstrip('/')}"
@@ -397,7 +570,7 @@ class CameraRegistry:
             raise HTTPException(status_code=400, detail=f"WebRTC 不支持输入类型: {source_type}")
 
         track = FfmpegProcessTrack(input_args, probe_args)
-        return CameraSource(fingerprint, None, MediaRelay(), track)
+        return CameraSource(fingerprint, None, MediaRelay(), track, source_type=source_type)
 
     async def close(self) -> None:
         async with self._lock:
@@ -407,10 +580,33 @@ class CameraRegistry:
 
 
 registry = CameraRegistry()
+processed_result_store = ProcessedResultStore(config.CAMERA_FRAME_DIR)
+jpeg_renderer = JpegFrameRenderer(config.CAMERA_FRAME_DIR)
+_jpeg_executor: ThreadPoolExecutor | None = None
+
+
+def _get_jpeg_executor() -> ThreadPoolExecutor:
+    global _jpeg_executor
+    if _jpeg_executor is None:
+        _jpeg_executor = ThreadPoolExecutor(
+            max_workers=config.JPEG_ENCODER_WORKERS,
+            thread_name_prefix="visiondrive-jpeg",
+        )
+    return _jpeg_executor
+
+
+async def _run_jpeg_job(function, *args):
+    return await asyncio.get_running_loop().run_in_executor(
+        _get_jpeg_executor(),
+        function,
+        *args,
+    )
 peer_connections: dict[str, RTCPeerConnection] = {}
 peer_slots: dict[str, int] = {}
 peer_clients: dict[str, str] = {}
 peer_delays: dict[str, int] = {}
+peer_tasks: dict[str, str | None] = {}
+peer_tracks: dict[str, VideoStreamTrack] = {}
 
 
 def prefer_vp8(pc: RTCPeerConnection) -> None:
@@ -438,11 +634,52 @@ def expose_mdns_candidates(sdp: str, client_ip: str | None) -> str:
     return "".join(rewritten)
 
 
+def prefer_ipv4_candidates(sdp: str) -> str:
+    """Omit IPv6 ICE candidates on the current Tailscale media path.
+
+    The IPv6 route can complete ICE while dropping most fragmented VP8 RTP
+    packets.  Keeping IPv4 host and TURN candidates makes Chromium select the
+    stable Tailscale IPv4 path without removing fallback connectivity.
+    """
+    rewritten = []
+    for line in sdp.splitlines(keepends=True):
+        if line.startswith("a=candidate:"):
+            fields = line.rstrip("\r\n").split(" ")
+            if len(fields) >= 6:
+                try:
+                    if ipaddress.ip_address(fields[4]).version == 6:
+                        continue
+                except ValueError:
+                    pass
+        rewritten.append(line)
+    return "".join(rewritten)
+
+
+def signaling_client_ip(request: Request) -> str | None:
+    """Resolve the browser address forwarded by the trusted frontend gateway."""
+    headers = getattr(request, "headers", {}) or {}
+    candidates = [
+        headers.get("x-real-ip"),
+        str(headers.get("x-forwarded-for") or "").split(",", 1)[0].strip(),
+        getattr(getattr(request, "client", None), "host", None),
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            return str(ipaddress.ip_address(candidate))
+        except ValueError:
+            continue
+    return None
+
+
 async def close_peer(session_id: str) -> None:
     pc = peer_connections.pop(session_id, None)
     peer_slots.pop(session_id, None)
     peer_clients.pop(session_id, None)
     peer_delays.pop(session_id, None)
+    peer_tasks.pop(session_id, None)
+    peer_tracks.pop(session_id, None)
     if pc is not None:
         for sender in pc.getSenders():
             if sender.track is not None:
@@ -464,8 +701,9 @@ async def expire_unconnected_peer(session_id: str, timeout_seconds: float = 20) 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    global _jpeg_executor
     stun_transport = None
-    if config.STUN_PORT > 0:
+    if config.ENABLE_WEBRTC and config.STUN_PORT > 0:
         loop = asyncio.get_running_loop()
         stun_transport, _ = await loop.create_datagram_endpoint(
             StunBindingProtocol,
@@ -473,7 +711,7 @@ async def lifespan(_app: FastAPI):
         )
     for slot_id in (1, 2, 3):
         try:
-            await registry.subscribe(slot_id)
+            await registry.ensure_started(slot_id)
         except HTTPException as exc:
             if exc.status_code != 409:
                 log.warning("摄像头 %s 自动帧发布启动失败: %s", slot_id, exc.detail)
@@ -487,10 +725,15 @@ async def lifespan(_app: FastAPI):
         peer_slots.clear()
         peer_clients.clear()
         peer_delays.clear()
+        peer_tasks.clear()
+        peer_tracks.clear()
         await registry.close()
+        if _jpeg_executor is not None:
+            _jpeg_executor.shutdown(wait=True, cancel_futures=True)
+            _jpeg_executor = None
 
 
-app = FastAPI(title="VisionDrive WebRTC Camera Gateway", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="VisionDrive JPEG Camera Gateway", version="1.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -503,39 +746,133 @@ app.add_middleware(
 async def health() -> dict[str, Any]:
     session_details = []
     for session_id, pc in tuple(peer_connections.items()):
-        stats = await pc.getStats()
+        try:
+            stats = await asyncio.wait_for(pc.getStats(), timeout=0.75)
+        except TimeoutError:
+            stats = {}
         outbound = next((item for item in stats.values() if item.type == "outbound-rtp" and item.kind == "video"), None)
+        track = peer_tracks.get(session_id)
+        diagnostics = track.diagnostics() if isinstance(track, ProcessedVideoTrack) else None
         session_details.append({
             "sessionId": session_id,
             "slotId": peer_slots.get(session_id),
             "delayMs": peer_delays.get(session_id, 0),
+            "taskType": peer_tasks.get(session_id),
+            "processed": bool(peer_tasks.get(session_id)),
             "connectionState": pc.connectionState,
             "iceConnectionState": pc.iceConnectionState,
             "packetsSent": getattr(outbound, "packetsSent", 0),
             "bytesSent": getattr(outbound, "bytesSent", 0),
+            "track": diagnostics,
         })
     return {
         "status": "ok",
-        "service": "VisionDrive WebRTC Camera Gateway",
+        "service": "VisionDrive JPEG Camera Gateway",
         "cameraStateFile": str(config.CAMERA_STATE_FILE),
         "sessions": len(peer_connections),
         "sessionDetails": session_details,
-        "transport": "WebRTC/ICE (TURN TCP/UDP)",
+        "transport": "JPEG polling",
+        "webRtcEnabled": config.ENABLE_WEBRTC,
+        "legacyWebRtcSessions": len(peer_connections),
         "stunPort": config.STUN_PORT,
+        "turnTcpOnly": config.TURN_TCP_ONLY,
         "framePublishFps": config.FRAME_PUBLISH_FPS,
+        "inferenceSnapshotFps": config.INFERENCE_SNAPSHOT_FPS,
         "outputFps": config.OUTPUT_FPS,
+        "jpegTargetFps": config.JPEG_TARGET_FPS,
+        "jpegEncoderWorkers": config.JPEG_ENCODER_WORKERS,
         "preserveSourceResolution": config.PRESERVE_SOURCE_RESOLUTION,
+        "displayResolution": {
+            "width": config.DISPLAY_WIDTH,
+            "height": config.DISPLAY_HEIGHT,
+        },
         "fallbackResolution": {
             "width": config.FALLBACK_WIDTH,
             "height": config.FALLBACK_HEIGHT,
         },
         "snapshotJpegQuality": config.SNAPSHOT_JPEG_QUALITY,
+        "displayJpegQuality": config.JPEG_DISPLAY_QUALITY,
+        "processedStream": {
+            "delayMs": config.PROCESSED_STREAM_DELAY_MS,
+            "resultMaxAgeMs": config.PROCESSED_RESULT_MAX_AGE_MS,
+            "maxWidth": config.PROCESSED_MAX_WIDTH,
+            "maxHeight": config.PROCESSED_MAX_HEIGHT,
+        },
     }
+
+
+async def _published_frame(slot_id: int) -> Path:
+    await registry.ensure_started(slot_id)
+    output = config.CAMERA_FRAME_DIR / f"camera-{slot_id}.jpg"
+    deadline = asyncio.get_running_loop().time() + config.JPEG_FRAME_WAIT_SECONDS
+    while not output.is_file():
+        if asyncio.get_running_loop().time() >= deadline:
+            raise HTTPException(status_code=503, detail=f"摄像头 {slot_id} JPEG 帧尚未就绪")
+        await asyncio.sleep(0.04)
+    return output
+
+
+async def _published_display_frame(slot_id: int) -> Path:
+    await registry.ensure_started(slot_id)
+    output = config.CAMERA_FRAME_DIR / f"camera-{slot_id}.display.jpg"
+    deadline = asyncio.get_running_loop().time() + config.JPEG_FRAME_WAIT_SECONDS
+    while not output.is_file():
+        if asyncio.get_running_loop().time() >= deadline:
+            raise HTTPException(status_code=503, detail=f"摄像头 {slot_id} 展示 JPEG 帧尚未就绪")
+        await asyncio.sleep(0.04)
+    return output
+
+
+def _jpeg_response(rendered) -> Response:
+    return Response(
+        content=rendered.payload,
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "X-VisionDrive-Transport": "jpeg",
+            "X-VisionDrive-Frame-Id": rendered.frame_id,
+            "X-VisionDrive-Frame-Source": rendered.source,
+        },
+    )
+
+
+@app.get("/api/v1/jpeg/frame/{slot_id}.jpg")
+async def jpeg_frame(slot_id: int) -> Response:
+    """Return a bandwidth-bounded display JPEG; inference keeps the source file."""
+    output = await _published_display_frame(slot_id)
+    try:
+        rendered = await _run_jpeg_job(jpeg_renderer.preencoded, output)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=f"JPEG 帧编码失败: {exc}") from exc
+    return _jpeg_response(rendered)
+
+
+@app.get("/api/v1/jpeg/processed/{task_type}/{slot_id}.jpg")
+async def processed_jpeg_frame(task_type: str, slot_id: int) -> Response:
+    """Return the exact inference snapshot with backend annotations as JPEG."""
+    if task_type not in SUPPORTED_TASKS:
+        raise HTTPException(status_code=400, detail=f"不支持的 JPEG 处理任务: {task_type}")
+    output = await _published_frame(slot_id)
+    snapshot = await _run_jpeg_job(processed_result_store.latest, slot_id, task_type)
+    try:
+        rendered = await _run_jpeg_job(
+            jpeg_renderer.processed,
+            slot_id,
+            task_type,
+            snapshot,
+            output,
+        )
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=f"处理 JPEG 帧编码失败: {exc}") from exc
+    return _jpeg_response(rendered)
 
 
 @app.get("/api/v1/webrtc/ice-config")
 async def ice_config() -> dict[str, Any]:
     """Issue a short-lived coturn REST credential without exposing the shared secret."""
+    if not config.ENABLE_WEBRTC:
+        raise HTTPException(status_code=410, detail="WebRTC 已停用，请使用 JPEG 帧接口")
     if not config.TURN_SECRET:
         raise HTTPException(status_code=503, detail="TURN 中继凭证尚未配置")
     expires_at = int(time.time()) + config.TURN_TTL_SECONDS
@@ -548,14 +885,14 @@ async def ice_config() -> dict[str, Any]:
     credential = base64.b64encode(digest).decode("ascii")
     host = config.PUBLIC_HOST
     port = config.TURN_PORT
+    turn_urls = [f"turn:{host}:{port}?transport=tcp"]
+    if not config.TURN_TCP_ONLY:
+        turn_urls.append(f"turn:{host}:{port}?transport=udp")
     return {
         "iceTransportPolicy": "relay" if config.TURN_FORCE_RELAY else "all",
         "expiresAt": expires_at,
         "iceServers": [{
-            "urls": [
-                f"turn:{host}:{port}?transport=tcp",
-                f"turn:{host}:{port}?transport=udp",
-            ],
+            "urls": turn_urls,
             "username": username,
             "credential": credential,
         }],
@@ -564,21 +901,35 @@ async def ice_config() -> dict[str, Any]:
 
 @app.post("/api/v1/webrtc/offer/{slot_id}")
 async def offer(slot_id: int, request: dict[str, Any], http_request: Request) -> dict[str, Any]:
+    if not config.ENABLE_WEBRTC:
+        raise HTTPException(status_code=410, detail="WebRTC 已停用，请使用 JPEG 帧接口")
     if request.get("type") != "offer" or not request.get("sdp"):
         raise HTTPException(status_code=400, detail="需要有效的 WebRTC offer")
 
-    client_ip = http_request.client.host if http_request.client else "unknown"
+    client_ip = signaling_client_ip(http_request) or "unknown"
     try:
         delay_ms = max(0, min(2000, int(request.get("delayMs") or 0)))
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail="delayMs 必须是 0-2000 之间的整数") from exc
-    client_key = f"{str(request.get('clientId') or client_ip)[:120]}:{delay_ms}"
+    task_type = str(request.get("taskType") or "").strip() or None
+    if task_type is not None and task_type not in SUPPORTED_TASKS:
+        raise HTTPException(status_code=400, detail=f"不支持的后端处理视频任务: {task_type}")
+    try:
+        processed_delay_ms = max(
+            500,
+            min(8000, int(request.get("processedDelayMs") or config.PROCESSED_STREAM_DELAY_MS)),
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="processedDelayMs 必须是 500-8000 之间的整数") from exc
+    effective_delay_ms = processed_delay_ms if task_type else delay_ms
+    client_key = f"{str(request.get('clientId') or client_ip)[:120]}:{task_type or 'raw'}:{effective_delay_ms}"
     session_id = uuid.uuid4().hex
     pc = RTCPeerConnection()
     peer_connections[session_id] = pc
     peer_slots[session_id] = slot_id
     peer_clients[session_id] = client_key
-    peer_delays[session_id] = delay_ms
+    peer_delays[session_id] = effective_delay_ms
+    peer_tasks[session_id] = task_type
 
     @pc.on("connectionstatechange")
     async def on_connectionstatechange() -> None:
@@ -599,7 +950,17 @@ async def offer(slot_id: int, request: dict[str, Any], http_request: Request) ->
     try:
         remote_sdp = expose_mdns_candidates(request["sdp"], client_ip)
         await pc.setRemoteDescription(RTCSessionDescription(sdp=remote_sdp, type=request["type"]))
-        pc.addTrack(await registry.subscribe(slot_id, delay_ms=delay_ms))
+        if task_type:
+            track = await registry.subscribe_processed(
+                slot_id,
+                task_type,
+                processed_result_store,
+                processed_delay_ms,
+            )
+        else:
+            track = await registry.subscribe(slot_id, delay_ms=delay_ms)
+        peer_tracks[session_id] = track
+        pc.addTrack(track)
         prefer_vp8(pc)
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
@@ -614,9 +975,11 @@ async def offer(slot_id: int, request: dict[str, Any], http_request: Request) ->
 
     return {
         "sessionId": session_id,
-        "sdp": pc.localDescription.sdp,
+        "sdp": prefer_ipv4_candidates(pc.localDescription.sdp),
         "type": pc.localDescription.type,
-        "delayMs": delay_ms,
+        "delayMs": effective_delay_ms,
+        "taskType": task_type,
+        "processed": bool(task_type),
     }
 
 

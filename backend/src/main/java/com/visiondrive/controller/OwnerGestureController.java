@@ -40,7 +40,7 @@ public class OwnerGestureController {
     private final SystemLogService systemLogService;
 
     @GetMapping
-    @Operation(summary = "查询手势库", description = "仅返回 DINOv2-TCN 用户录入的视频原型，不包含预设系统手势")
+    @Operation(summary = "查询手势库", description = "返回 MediaPipe 固定系统手势与 DINOv2-TCN 用户视频原型")
     public ApiResponse<Map<String, Object>> listGestures() {
         return ApiResponse.success(ownerGestureControlService.getPrototypeLibrary());
     }
@@ -81,7 +81,7 @@ public class OwnerGestureController {
     }
 
     @GetMapping("/state")
-    @Operation(summary = "查询识别状态", description = "仅返回 DINOv2-TCN 原型库、录入状态和相关参数")
+    @Operation(summary = "查询识别状态", description = "返回固定系统手势、DINOv2-TCN 用户原型、录入状态和相关参数")
     public ApiResponse<Map<String, Object>> state() {
         return ApiResponse.success(ownerGestureControlService.getRecognitionState());
     }
@@ -137,7 +137,7 @@ public class OwnerGestureController {
     }
 
     @PostMapping("/recognize")
-    @Operation(summary = "单次识别", description = "输入 RGB 视频帧与手部几何特征，返回 DINOv2-TCN 原型匹配结果")
+    @Operation(summary = "单次识别", description = "系统手势置信度达到 97% 时优先返回，否则回退 DINOv2-TCN 用户原型")
     public ApiResponse<Map<String, Object>> recognize(
             @AuthenticationPrincipal AuthenticatedUser principal,
             @RequestBody Map<String, Object> request

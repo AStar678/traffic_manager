@@ -2,6 +2,7 @@ package com.visiondrive.service;
 
 import com.visiondrive.common.exception.BusinessException;
 import com.visiondrive.model.dto.LoginResponse;
+import com.visiondrive.model.dto.LoginRequest;
 import com.visiondrive.model.dto.RegisterRequest;
 import com.visiondrive.model.dto.VerificationCodePurpose;
 import com.visiondrive.model.entity.SystemLog;
@@ -22,6 +23,24 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AuthServiceTest {
+
+    @Test
+    void plaintextDatabasePasswordIsNeverAcceptedByLogin() {
+        TestFixture fixture = new TestFixture();
+        User user = fixture.user("13800138000");
+        user.setPassword("password123");
+        fixture.storedUser.set(user);
+        LoginRequest request = new LoginRequest();
+        request.setUsername(user.getUsername());
+        request.setPassword("password123");
+
+        BusinessException exception = assertThrows(
+                BusinessException.class,
+                () -> fixture.authService.login(request)
+        );
+
+        assertEquals(401, exception.getCode());
+    }
 
     @Test
     void unregisteredPhoneCannotBypassRegistrationWithCodeLogin() {
@@ -87,7 +106,13 @@ class AuthServiceTest {
             UserRepository userRepository = proxy(UserRepository.class, (proxy, method, args) -> {
                 return switch (method.getName()) {
                     case "findByPhone" -> Optional.ofNullable(storedUser.get());
-                    case "findByUsername" -> Optional.empty();
+                    case "findByUsername" -> {
+                        User user = storedUser.get();
+                        String username = (String) args[0];
+                        yield user != null && username.equals(user.getUsername())
+                                ? Optional.of(user)
+                                : Optional.empty();
+                    }
                     case "findByEmail" -> Optional.empty();
                     case "save", "saveAndFlush" -> {
                         User user = (User) args[0];

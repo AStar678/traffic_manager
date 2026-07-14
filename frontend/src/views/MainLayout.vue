@@ -87,6 +87,7 @@ const dockItems = [
   { path: '/alert-dashboard', label: '告警', icon: 'Bell' },
   { path: '/history', label: '记录', icon: 'Document' },
   { path: '/cameras', label: '摄像头', icon: 'VideoCamera' },
+  { path: '/music', label: '音乐', icon: 'Headset' },
   { path: '/settings', label: '设置', icon: 'Setting' },
 ]
 
@@ -282,6 +283,7 @@ onBeforeUnmount(() => {
 
 .dock-item {
   display: flex;
+  flex: 0 1 88px;
   flex-direction: column;
   align-items: center;
   justify-content: center;
@@ -310,5 +312,43 @@ onBeforeUnmount(() => {
 
 .dock-item.active .el-icon {
   filter: drop-shadow(0 0 6px var(--primary-glow));
+}
+
+@media (max-width: 640px) {
+  .top-bar {
+    padding: 0 12px;
+  }
+
+  .top-left,
+  .top-right {
+    flex: 1 1 0;
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .top-center {
+    flex: 0 0 auto;
+  }
+
+  .brand-wordmark {
+    font-size: 16px;
+  }
+
+  .temp-outside,
+  .divider-dot {
+    display: none;
+  }
+
+  .bottom-dock {
+    gap: 0;
+    padding: 0 4px;
+  }
+
+  .dock-item {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 6px 2px;
+    border-radius: 12px;
+  }
 }
 </style>

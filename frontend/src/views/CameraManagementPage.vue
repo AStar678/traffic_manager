@@ -8,7 +8,7 @@
       </div>
       <div class="stream-transport-badge">
         <el-icon><VideoPlay /></el-icon>
-        <div><strong>WebRTC 实时预览</strong><span>三路自动连接 · JPEG 降级保障</span></div>
+        <div><strong>JPEG 25FPS 连续预览</strong><span>三路独立线程 · 断线自动恢复</span></div>
       </div>
     </header>
 
@@ -24,33 +24,19 @@
         <div
           class="slot-preview"
           :data-stream-source="cameraStreamSource(form.slotId)"
-          :data-webrtc-state="cameraWebRtcStates[form.slotId] || 'idle'"
+          :data-jpeg-state="cameraJpegStates[form.slotId] || 'idle'"
         >
-          <video
-            v-if="cameraWebRtcStreams[form.slotId]"
-            v-show="isCameraPlaybackReady(form.slotId)"
-            :key="`${form.slotId}-${cameraWebRtcStreams[form.slotId]?.id || 'stream'}`"
-            :srcObject="cameraWebRtcStreams[form.slotId]"
-            :aria-label="`摄像头 ${form.slotId} WebRTC 实时预览`"
-            autoplay
-            muted
-            playsinline
-            @loadeddata="markCameraPlaybackReady(form.slotId)"
-            @playing="markCameraPlaybackReady(form.slotId)"
-            @emptied="markCameraPlaybackPending(form.slotId)"
-            @error="markCameraPlaybackPending(form.slotId)"
-          ></video>
           <img
-            v-if="!isCameraPlaybackReady(form.slotId) && cameraPreviewUrls[form.slotId]"
+            v-if="cameraPreviewUrls[form.slotId]"
             :src="cameraPreviewUrls[form.slotId]"
-            :alt="`摄像头 ${form.slotId} 备用预览`"
+            :alt="`摄像头 ${form.slotId} JPEG 实时预览`"
           >
-          <div v-if="!isCameraPlaybackReady(form.slotId) && !cameraPreviewUrls[form.slotId]" class="slot-preview-empty">
+          <div v-else class="slot-preview-empty">
             <el-icon :size="36"><VideoCamera /></el-icon>
             <span>{{ cameraPreviewPlaceholder(form) }}</span>
           </div>
           <StaticWeatherTexture
-            v-if="form.weatherSimulationEnabled && (isCameraPlaybackReady(form.slotId) || cameraPreviewUrls[form.slotId])"
+            v-if="form.weatherSimulationEnabled && cameraPreviewUrls[form.slotId]"
           />
           <span class="slot-source-label">{{ typeLabel(form.sourceType) }}</span>
           <span class="slot-transport-label" :class="cameraStreamSource(form.slotId)">
@@ -159,13 +145,11 @@ const forms = reactive([1, 2, 3].map(slotId => ({
 })))
 const saving = reactive({ 1: false, 2: false, 3: false })
 const weatherSaving = reactive({ 1: false, 2: false, 3: false })
-const cameraPlaybackReady = reactive({})
 const {
   cameraSlots,
   sandboxPresets,
   cameraPreviewUrls,
-  cameraWebRtcStreams,
-  cameraWebRtcStates,
+  cameraJpegStates,
   loadCameraSlots,
   refreshCameraSlotPreview
 } = useCameraSource()
@@ -178,16 +162,6 @@ watch(cameraSlots, slots => {
     initialStateHydrated = true
   }
 }, { immediate: true })
-
-watch(
-  () => cameraSlots.value.map(slot => [slot.slotId, cameraWebRtcStreams[slot.slotId]?.id || '']),
-  (currentStreams, previousStreams = []) => {
-    currentStreams.forEach(([slotId, streamId], index) => {
-      if (streamId !== previousStreams[index]?.[1]) cameraPlaybackReady[slotId] = false
-    })
-  },
-  { immediate: true }
-)
 
 onMounted(async () => {
   await loadCameraSlots()
@@ -284,20 +258,7 @@ function statusLabel(slotId) {
   return { ready: '已就绪', error: '异常', off: '已关闭' }[status] || '连接中'
 }
 
-function markCameraPlaybackReady(slotId) {
-  cameraPlaybackReady[slotId] = true
-}
-
-function markCameraPlaybackPending(slotId) {
-  cameraPlaybackReady[slotId] = false
-}
-
-function isCameraPlaybackReady(slotId) {
-  return Boolean(cameraWebRtcStreams[slotId] && cameraPlaybackReady[slotId])
-}
-
 function cameraStreamSource(slotId) {
-  if (isCameraPlaybackReady(slotId)) return 'webrtc'
   if (cameraPreviewUrls[slotId]) return 'jpeg'
   return 'pending'
 }
@@ -305,17 +266,15 @@ function cameraStreamSource(slotId) {
 function cameraTransportLabel(slotId) {
   const sourceType = persistedSourceType(slotId)
   if (sourceType === 'OFF') return 'OFF'
-  if (isCameraPlaybackReady(slotId)) return 'WebRTC 实时'
-  if (cameraWebRtcStreams[slotId]) return 'WebRTC 缓冲中'
-  if (cameraPreviewUrls[slotId]) return 'JPEG 备用'
-  if (['error', 'failed', 'closed', 'disconnected'].includes(cameraWebRtcStates[slotId])) return 'WebRTC 重连中'
-  return 'WebRTC 连接中'
+  if (['error', 'retrying'].includes(cameraJpegStates[slotId])) return 'JPEG 重试中'
+  if (cameraPreviewUrls[slotId]) return 'JPEG 实时'
+  return 'JPEG 取帧中'
 }
 
 function cameraPreviewPlaceholder(form) {
   if (form.sourceType === 'OFF') return '该路已关闭'
-  if (['error', 'failed', 'closed', 'disconnected'].includes(cameraWebRtcStates[form.slotId])) return 'WebRTC 正在重连'
-  return '正在建立 WebRTC 实时视频'
+  if (['error', 'retrying'].includes(cameraJpegStates[form.slotId])) return 'JPEG 取帧失败，正在自动重试'
+  return '正在获取 JPEG 实时帧'
 }
 
 function typeLabel(value) {
@@ -347,12 +306,11 @@ function fileName(path = '') {
 .slot-status.ready { color: var(--success-color); } .slot-status.ready i { background: var(--success-color); box-shadow: 0 0 8px rgba(0,230,118,.5); }
 .slot-status.error { color: var(--danger-color); } .slot-status.error i { background: var(--danger-color); }
 .slot-preview { position: relative; aspect-ratio: 16/9; overflow: hidden; border-radius: 11px; background: #070b12; }
-.slot-preview video, .slot-preview img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.slot-preview img { width: 100%; height: 100%; display: block; object-fit: contain; }
 .slot-preview-empty { height: 100%; display: grid; place-content: center; justify-items: center; gap: 8px; color: var(--text-muted); font-size: 11px; }
 .slot-source-label { position: absolute; z-index: 2; left: 9px; bottom: 9px; padding: 4px 8px; border-radius: 6px; background: rgba(8,12,20,.86); color: var(--text-primary); font-size: 11px; font-weight: 800; }
 .slot-transport-label { position: absolute; z-index: 2; right: 9px; bottom: 9px; padding: 4px 8px; border: 1px solid transparent; border-radius: 6px; background: rgba(8,12,20,.86); color: var(--text-muted); font-size: 10px; font-weight: 800; }
-.slot-transport-label.webrtc { border-color: rgba(0,230,118,.25); color: var(--success-color); }
-.slot-transport-label.jpeg { border-color: rgba(255,193,7,.25); color: #f6c453; }
+.slot-transport-label.jpeg { border-color: rgba(0,230,118,.25); color: var(--success-color); }
 .weather-preview-badge { position: absolute; z-index: 2; top: 9px; right: 9px; display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border: 1px solid rgba(116, 201, 255, .32); border-radius: 7px; background: rgba(11, 36, 57, .86); color: #a8ddff; font-size: 10px; font-weight: 800; backdrop-filter: blur(5px); }
 .slot-form { display: flex; flex-direction: column; gap: 10px; }
 .slot-form label { display: flex; flex-direction: column; gap: 5px; }

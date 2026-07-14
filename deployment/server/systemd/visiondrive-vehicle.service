@@ -9,6 +9,9 @@ WorkingDirectory=%h/visiondrive/app/algorithm
 EnvironmentFile=%h/visiondrive/config/runtime.env
 Environment=PYTHONUNBUFFERED=1
 Environment=MPLCONFIGDIR=/tmp/visiondrive-matplotlib
+Environment=OMP_NUM_THREADS=4
+Environment=MKL_NUM_THREADS=4
+Environment=OPENBLAS_NUM_THREADS=4
 ExecStart=%h/miniconda3/envs/visiondrive-vehicle/bin/python -m vehicle.main
 Restart=on-failure
 RestartSec=3

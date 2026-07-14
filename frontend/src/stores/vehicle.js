@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { mockVehicleState } from '@/utils/mockData'
 import { getCurrentCar, updateCurrentCar } from '@/api/car'
+import { useMusicStore } from '@/stores/music'
 
 function initialVehicleState() {
   return {
@@ -26,6 +27,8 @@ export const useVehicleStore = defineStore('vehicle', {
     applyGestureControl(control) {
       if (!control?.enabled || !control.actionType || control.actionType === 'NONE') return
 
+      const musicStore = useMusicStore()
+
       const action = {
         gestureCode: control.gestureCode,
         gestureName: control.gestureName || '未知手势',
@@ -44,15 +47,18 @@ export const useVehicleStore = defineStore('vehicle', {
           this.vehicle.activeModule = '确认'
           break
         case 'VOLUME_UP':
-          this.vehicle.audio.volume = Math.min(100, this.vehicle.audio.volume + 8)
+          musicStore.setVolume(musicStore.volume + 8)
+          this.vehicle.audio.volume = musicStore.volume
           this.vehicle.activeModule = '音乐'
           break
         case 'VOLUME_DOWN':
-          this.vehicle.audio.volume = Math.max(0, this.vehicle.audio.volume - 8)
+          musicStore.setVolume(musicStore.volume - 8)
+          this.vehicle.audio.volume = musicStore.volume
           this.vehicle.activeModule = '音乐'
           break
         case 'NEXT_MEDIA':
-          this.vehicle.audio.track = nextTrack(this.vehicle.audio.track)
+          musicStore.next()
+          this.vehicle.audio.track = musicStore.currentTrack?.title || this.vehicle.audio.track
           this.vehicle.activeModule = '音乐'
           break
         case 'CLIMATE_UP':
@@ -153,10 +159,4 @@ export const useVehicleStore = defineStore('vehicle', {
 
 function tireStatus(value) {
   return value < 2.2 || value > 2.8 ? 'warning' : 'normal'
-}
-
-function nextTrack(currentTrack) {
-  const tracks = ['City Drive', 'Night Run', 'Signal Blue', 'Highway FM']
-  const index = tracks.indexOf(currentTrack)
-  return tracks[(index + 1) % tracks.length]
 }

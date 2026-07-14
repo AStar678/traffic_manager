@@ -26,13 +26,14 @@ wait_for_url() {
 }
 
 wait_for_url "手势算法服务" "${base}:8002/health"
-wait_for_url "WebRTC 视频网关" "${base}:8003/health"
+wait_for_url "JPEG 视频网关" "${base}:8003/health"
 wait_for_url "主服务" "${base}:8080/api/v1/cameras/slots"
+wait_for_url "前端页面" "${base}:5173/"
 nc -z -w 5 "${VISIONDRIVE_SERVER_HOST}" 3478 || { echo "TURN TCP 3478 不可达" >&2; exit 1; }
 echo "TURN TCP 中继已就绪"
 
 ssh -i "${VISIONDRIVE_SSH_KEY}" -o BatchMode=yes \
   "${VISIONDRIVE_SERVER_USER}@${VISIONDRIVE_SERVER_HOST}" \
-  "curl --noproxy '*' --fail --silent http://127.0.0.1:8000/health >/dev/null; curl --noproxy '*' --fail --silent http://127.0.0.1:8001/health >/dev/null; curl --noproxy '*' --fail --silent http://127.0.0.1:8004/health >/dev/null; systemctl is-active coturn.service; systemctl --user --no-pager --full status visiondrive-license.service visiondrive-vehicle.service visiondrive-police.service visiondrive-gesture.service visiondrive-webrtc.service visiondrive-backend.service | sed -n '1,120p'; nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader"
+  "curl --noproxy '*' --fail --silent http://127.0.0.1:8000/health >/dev/null; curl --noproxy '*' --fail --silent http://127.0.0.1:8001/health >/dev/null; curl --noproxy '*' --fail --silent http://127.0.0.1:8004/health >/dev/null; systemctl is-active coturn.service; systemctl --user --no-pager --full status visiondrive-license.service visiondrive-vehicle.service visiondrive-police.service visiondrive-gesture.service visiondrive-jpeg.service visiondrive-backend.service visiondrive-frontend.service | sed -n '1,140p'; nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader"
 
 echo "VisionDrive 服务器检查通过：${VISIONDRIVE_SERVER_HOST}"

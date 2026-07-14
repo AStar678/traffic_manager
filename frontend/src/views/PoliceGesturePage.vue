@@ -9,17 +9,8 @@
     <!-- 主画面 -->
     <div class="viewport-area">
       <div class="viewport">
-        <video
-          v-show="cameraVideoReady"
-          ref="cameraVideoRef"
-          autoplay
-          muted
-          playsinline
-          @loadeddata="markCameraVideoReady"
-          @playing="markCameraVideoReady"
-        ></video>
-        <img v-if="!cameraVideoReady && cameraDisplayUrl" :src="cameraDisplayUrl" alt="camera fallback" />
-        <div v-if="!cameraVideoReady && !cameraDisplayUrl" class="viewport-placeholder">
+        <img v-if="cameraDisplayUrl" :src="cameraDisplayUrl" alt="交警姿态后端叠框 JPEG" />
+        <div v-else class="viewport-placeholder">
           <el-icon :size="48"><Aim /></el-icon>
           <span>{{ cameraError || '路口摄像头待机' }}</span>
         </div>
@@ -29,38 +20,10 @@
           <span class="chip">{{ cameraLabel }}</span>
         </div>
 
-        <!-- 骨架叠加 -->
-        <svg
-          class="skeleton-overlay"
-          :viewBox="detectionViewBox"
-          preserveAspectRatio="xMidYMid meet"
-          v-if="hasSkeleton"
-        >
-          <g v-for="person in skeletonDetections" :key="person.objectId">
-            <!-- 人体框 -->
-            <rect
-              :x="person.bbox.x1" :y="person.bbox.y1"
-              :width="person.bbox.x2 - person.bbox.x1"
-              :height="person.bbox.y2 - person.bbox.y1"
-              fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="2" stroke-dasharray="6 4"
-            />
-            <!-- 骨架连线 -->
-            <line v-for="(pair, i) in bonePairs" :key="i"
-              :x1="getKp(person, pair[0]).x" :y1="getKp(person, pair[0]).y"
-              :x2="getKp(person, pair[1]).x" :y2="getKp(person, pair[1]).y"
-              stroke="rgba(0,230,118,0.7)" stroke-width="3" stroke-linecap="round"
-            />
-            <!-- 关键点 -->
-            <circle v-for="kp in person.keypoints" :key="kp.name"
-              :cx="kp.x" :cy="kp.y" r="6"
-              fill="#00e676" stroke="#080c14" stroke-width="2"
-            />
-          </g>
-        </svg>
       </div>
 
       <!-- 底部指令条 -->
-      <div class="command-bar" v-if="hasSkeleton">
+      <div class="command-bar" v-if="hasVisualSkeleton">
         <div class="command-main">
           <span class="command-badge">{{ hasGesture ? currentGesture : '目标跟踪中' }}</span>
           <span class="command-action">{{ hasGesture ? `输出交通指令：${currentAction}` : '等待交通指令' }}</span>
@@ -69,7 +32,7 @@
           <span v-if="hasGesture">置信度 {{ Math.round(currentDetection.confidence * 100) }}%</span>
           <span v-else>人体姿态已同步</span>
           <span>识别间隔 {{ recognitionIntervalMs / 1000 }}s</span>
-          <span>帧号同步</span>
+          <span>JPEG · 精确帧后端 Pose 叠框</span>
         </div>
       </div>
     </div>
@@ -119,8 +82,8 @@
 
       <!-- 当前识别手势 -->
       <div class="card gesture-hero" :class="{ detected: hasGesture }">
-        <div class="gesture-state">{{ hasGesture ? '已识别交通指令' : (hasSkeleton ? '人体姿态识别中' : '等待识别') }}</div>
-        <strong>{{ hasGesture ? currentGesture : (hasSkeleton ? '暂无交通动作' : '等待识别') }}</strong>
+        <div class="gesture-state">{{ hasGesture ? '已识别交通指令' : (hasVisualSkeleton ? '人体姿态识别中' : '等待识别') }}</div>
+        <strong>{{ hasGesture ? currentGesture : (hasVisualSkeleton ? '暂无交通动作' : '等待识别') }}</strong>
         <p>{{ currentActionText }}</p>
       </div>
 
@@ -190,16 +153,14 @@ const {
   cameraStatus,
   cameraError,
   cameraDisplayUrl,
-  cameraVideoRef,
-  cameraVideoReady,
   loadCameraSources,
-  markCameraVideoReady,
   refreshCameraPreview
-} = useCameraSource(TASK_TYPES.POLICE_GESTURE)
+} = useCameraSource(TASK_TYPES.POLICE_GESTURE, { processed: true, enabled: !props.embedded })
 
 const currentDetection = computed(() => result.value.detections[0] || null)
 const skeletonDetections = computed(() => result.value.detections.filter(item => item.keypoints?.length))
 const hasSkeleton = computed(() => skeletonDetections.value.length > 0)
+const hasVisualSkeleton = computed(() => hasSkeleton.value)
 const hasGesture = computed(() => Boolean(currentDetection.value?.gestureCode))
 const gestureCode = computed(() => currentDetection.value?.gestureCode || '--')
 const currentGesture = computed(() => currentDetection.value?.gestureName || POLICE_GESTURE_MAP[gestureCode.value] || '等待识别')
@@ -214,15 +175,9 @@ const currentAction = computed(() => {
 })
 const currentActionText = computed(() => {
   if (hasGesture.value) return `输出交通指令：${currentAction.value}`
-  if (hasSkeleton.value) return '人体姿态持续识别中'
+  if (hasVisualSkeleton.value) return '人体姿态持续识别中'
   return '输出交通指令：—'
 })
-const detectionViewBox = computed(() => {
-  const width = result.value.image?.width || 1280
-  const height = result.value.image?.height || 720
-  return `0 0 ${width} ${height}`
-})
-
 const standardGestures = Object.entries(POLICE_GESTURE_MAP).map(([code, label]) => ({ code, label }))
 const confidenceData = computed(() => {
   const top3 = result.value.detections[0]?.top3
@@ -241,19 +196,6 @@ const cameraStatusText = computed(() => {
   const labels = { idle: '未连接', loading: '连接中', ready: '已连接', empty: '无可用源', offline: '服务离线' }
   return labels[cameraStatus.value] || cameraStatus.value
 })
-
-const bonePairs = [
-  ['nose','left_shoulder'],['nose','right_shoulder'],['left_shoulder','right_shoulder'],
-  ['left_shoulder','left_elbow'],['left_elbow','left_wrist'],
-  ['right_shoulder','right_elbow'],['right_elbow','right_wrist'],
-  ['left_shoulder','left_hip'],['right_shoulder','right_hip'],['left_hip','right_hip'],
-  ['left_hip','left_knee'],['left_knee','left_ankle'],
-  ['right_hip','right_knee'],['right_knee','right_ankle']
-]
-
-function getKp(person, name) {
-  return person.keypoints?.find(k => k.name === name) || { x: 0, y: 0 }
-}
 
 function renderChart() {
   if (!confidenceRef.value) return
@@ -423,10 +365,6 @@ watch(confidenceData, renderChart, { deep: true })
     linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px),
     linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px);
   background-size: 40px 40px;
-}
-
-.skeleton-overlay {
-  display: none;
 }
 
 .viewport-top {

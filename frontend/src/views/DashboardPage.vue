@@ -4,13 +4,47 @@
       <div>
         <span class="section-kicker">DRIVE ASSIST</span>
         <strong>行车感知中心</strong>
-        <small>三路道路感知与车内手势同步运行</small>
+        <small>三路 25FPS JPEG 与四类识别独立运行</small>
+      </div>
+      <div class="recognition-switches" role="group" aria-label="识别功能开关">
+        <button
+          type="button"
+          :class="{ active: recognitionEnabled[TASK_TYPES.LICENSE_PLATE] }"
+          :aria-pressed="recognitionEnabled[TASK_TYPES.LICENSE_PLATE]"
+          @click="toggleRecognition(TASK_TYPES.LICENSE_PLATE)"
+        >
+          <el-icon><Postcard /></el-icon><span>车牌</span><small>{{ recognitionEnabled[TASK_TYPES.LICENSE_PLATE] ? '开' : '关' }}</small>
+        </button>
+        <button
+          type="button"
+          :class="{ active: recognitionEnabled[TASK_TYPES.VEHICLE_TYPE] }"
+          :aria-pressed="recognitionEnabled[TASK_TYPES.VEHICLE_TYPE]"
+          @click="toggleRecognition(TASK_TYPES.VEHICLE_TYPE)"
+        >
+          <el-icon><Van /></el-icon><span>车辆类型</span><small>{{ recognitionEnabled[TASK_TYPES.VEHICLE_TYPE] ? '开' : '关' }}</small>
+        </button>
+        <button
+          type="button"
+          :class="{ active: recognitionEnabled[TASK_TYPES.POLICE_GESTURE] }"
+          :aria-pressed="recognitionEnabled[TASK_TYPES.POLICE_GESTURE]"
+          @click="toggleRecognition(TASK_TYPES.POLICE_GESTURE)"
+        >
+          <el-icon><Aim /></el-icon><span>交警手势</span><small>{{ recognitionEnabled[TASK_TYPES.POLICE_GESTURE] ? '开' : '关' }}</small>
+        </button>
+        <button
+          type="button"
+          :class="{ active: recognitionEnabled[OWNER_GESTURE_TASK] }"
+          :aria-pressed="recognitionEnabled[OWNER_GESTURE_TASK]"
+          @click="toggleRecognition(OWNER_GESTURE_TASK)"
+        >
+          <el-icon><Pointer /></el-icon><span>用户手势</span><small>{{ recognitionEnabled[OWNER_GESTURE_TASK] ? '开' : '关' }}</small>
+        </button>
       </div>
       <div class="perception-state" :class="{ stopped: !perceptionEnabled }">
         <span class="state-pulse"></span>
         <div>
-          <strong>{{ perceptionEnabled ? '全域识别运行中' : '识别已关闭' }}</strong>
-          <small>{{ perceptionEnabled ? '车牌 · 车辆类型 · 交警 · 车主手势' : '道路视频仍保持预览' }}</small>
+          <strong>{{ perceptionEnabled ? '识别服务运行中' : '识别已关闭' }}</strong>
+          <small>{{ perceptionEnabled ? activeRecognitionText : '道路视频仍保持预览' }}</small>
         </div>
         <button class="perception-toggle" type="button" @click="toggleUnifiedPerception">
           <el-icon><component :is="perceptionEnabled ? 'VideoPause' : 'VideoPlay'" /></el-icon>
@@ -59,21 +93,13 @@
         <div class="camera-duo compact-camera-duo">
           <article class="camera-feed card">
             <div class="camera-inner">
-              <video
-                v-show="cameraVideoReady"
-                :ref="setDashboardCameraVideoRef"
-                class="camera-stream"
-                autoplay muted playsinline
-                @loadeddata="markCameraVideoReady"
-                @playing="markCameraVideoReady"
-              ></video>
-              <img v-if="!cameraVideoReady && cameraDisplayUrl" class="camera-stream" :src="cameraDisplayUrl" alt="前向道路摄像头预览">
-              <div v-if="!cameraVideoReady && !cameraDisplayUrl" class="camera-placeholder">
+              <img v-if="cameraDisplayUrl" class="camera-stream" :src="cameraDisplayUrl" alt="前向道路摄像头 JPEG 预览">
+              <div v-else class="camera-placeholder">
                 <el-icon :size="36"><Camera /></el-icon>
                 <span>{{ cameraError || '等待主服务摄像头模块' }}</span>
               </div>
               <StaticWeatherTexture
-                v-if="selectedCameraSource?.weatherSimulationEnabled && (cameraVideoReady || cameraDisplayUrl)"
+                v-if="selectedCameraSource?.weatherSimulationEnabled && cameraDisplayUrl"
               />
               <div class="camera-overlay-info">
                 <span class="camera-label">{{ selectedCameraSource?.name || '前向道路摄像头' }}</span>
@@ -89,7 +115,7 @@
                   @click="selectCameraSlot(slot.slotId)"
                 >CAM {{ slot.slotId }}</button>
               </div>
-              <div v-if="perceptionEnabled" class="scan-line-animated"></div>
+              <div v-if="roadPerceptionEnabled" class="scan-line-animated"></div>
               <div class="vision-caption">
                 <span>道路感知</span>
                 <strong>{{ roadPerceptionCaption }}</strong>
@@ -109,7 +135,7 @@
               ></video>
               <div v-if="!gestureCameraReady" class="camera-placeholder gesture-placeholder">
                 <el-icon :size="36"><Pointer /></el-icon>
-                <span>{{ gestureCameraError || (perceptionEnabled ? '正在启动车内摄像头' : '识别已关闭') }}</span>
+                <span>{{ gestureCameraError || (recognitionEnabled[OWNER_GESTURE_TASK] ? '正在启动车内摄像头' : '用户手势识别已关闭') }}</span>
               </div>
               <div class="camera-overlay-info">
                 <span class="camera-label">车内手势摄像头</span>
@@ -141,11 +167,11 @@
       </section>
 
       <aside class="recognition-rail">
-        <article class="recognition-card plate-result" :class="{ live: perceptionEnabled }">
+        <article class="recognition-card plate-result" :class="{ live: recognitionEnabled[TASK_TYPES.LICENSE_PLATE] }">
           <div class="recognition-head">
             <span class="recognition-icon"><el-icon><Postcard /></el-icon></span>
             <div><small>车牌识别</small><strong>{{ plateStatusText }}</strong></div>
-            <span class="live-mark">{{ perceptionEnabled ? 'LIVE' : 'OFF' }}</span>
+            <span class="live-mark">{{ recognitionEnabled[TASK_TYPES.LICENSE_PLATE] ? 'LIVE' : 'OFF' }}</span>
           </div>
           <div class="recognition-value plate-number">{{ latestPlate?.plateNumber || '暂未检测' }}</div>
           <div class="recognition-meta">
@@ -171,11 +197,11 @@
           </div>
         </article>
 
-        <article class="recognition-card vehicle-type-result" :class="{ live: perceptionEnabled }">
+        <article class="recognition-card vehicle-type-result" :class="{ live: recognitionEnabled[TASK_TYPES.VEHICLE_TYPE] }">
           <div class="recognition-head">
             <span class="recognition-icon"><el-icon><Van /></el-icon></span>
             <div><small>车辆类型</small><strong>{{ vehicleTypeStatusText }}</strong></div>
-            <span class="live-mark">{{ perceptionEnabled ? 'LIVE' : 'OFF' }}</span>
+            <span class="live-mark">{{ recognitionEnabled[TASK_TYPES.VEHICLE_TYPE] ? 'LIVE' : 'OFF' }}</span>
           </div>
           <div class="recognition-value">{{ latestVehicle ? vehicleTypeName(latestVehicle) : '暂未检测' }}</div>
           <div class="recognition-meta">
@@ -201,11 +227,11 @@
           </div>
         </article>
 
-        <article class="recognition-card police-result" :class="{ live: perceptionEnabled }">
+        <article class="recognition-card police-result" :class="{ live: recognitionEnabled[TASK_TYPES.POLICE_GESTURE] }">
           <div class="recognition-head">
             <span class="recognition-icon"><el-icon><Aim /></el-icon></span>
             <div><small>交警手势</small><strong>{{ policeStatusText }}</strong></div>
-            <span class="live-mark">{{ perceptionEnabled ? 'LIVE' : 'OFF' }}</span>
+            <span class="live-mark">{{ recognitionEnabled[TASK_TYPES.POLICE_GESTURE] ? 'LIVE' : 'OFF' }}</span>
           </div>
           <div class="recognition-value">{{ latestPoliceGesture }}</div>
           <div class="recognition-meta">
@@ -223,7 +249,7 @@
             <div><small>车主手势</small><strong>{{ gestureControlStatus }}</strong></div>
             <span class="live-mark">{{ gestureControlActive ? 'LIVE' : 'OFF' }}</span>
           </div>
-          <div class="recognition-value">{{ lastGestureControl?.gestureName || gestureMatchLabel }}</div>
+          <div class="recognition-value">{{ gestureMatchLabel || lastGestureControl?.gestureName }}</div>
           <div class="recognition-meta">
             <span>{{ lastGestureControl?.actionLabel || '等待操作手势' }}</span>
             <span>{{ lastGestureControl ? lastControlTime : gestureScoreLabel }}</span>
@@ -237,13 +263,13 @@
     </section>
 
     <el-dialog v-model="plateDialogOpen" title="车牌识别详情" width="94vw" top="4vh" destroy-on-close class="recognition-dialog" @closed="handlePlateDetailClosed">
-      <LicensePlatePage embedded :external-result="plateResult" :external-recognizing="perceptionEnabled" :preloaded-streams="preloadedFrameSyncStreams" @toggle-recognition="toggleUnifiedPerception" />
+      <LicensePlatePage embedded :external-result="plateResult" :external-recognizing="recognitionEnabled[TASK_TYPES.LICENSE_PLATE]" @toggle-recognition="toggleRecognition(TASK_TYPES.LICENSE_PLATE)" />
     </el-dialog>
     <el-dialog v-model="vehicleTypeDialogOpen" title="车辆类型 · 三路实时追踪" width="94vw" top="4vh" destroy-on-close class="recognition-dialog" @closed="handleVehicleTypeDetailClosed">
-      <VehicleTypePage embedded :external-result="vehicleTypeResult" :external-recognizing="perceptionEnabled" :preloaded-streams="preloadedFrameSyncStreams" @toggle-recognition="toggleUnifiedPerception" />
+      <VehicleTypePage embedded :external-result="vehicleTypeResult" :external-recognizing="recognitionEnabled[TASK_TYPES.VEHICLE_TYPE]" @toggle-recognition="toggleRecognition(TASK_TYPES.VEHICLE_TYPE)" />
     </el-dialog>
-    <el-dialog v-model="policeDialogOpen" title="交警手势识别详情" width="94vw" top="4vh" destroy-on-close class="recognition-dialog" @closed="restoreDashboardCamera">
-      <PoliceGesturePage embedded :external-result="policeResult" :external-recognizing="perceptionEnabled" @toggle-recognition="toggleUnifiedPerception" />
+    <el-dialog v-model="policeDialogOpen" title="交警手势识别详情" width="94vw" top="4vh" destroy-on-close class="recognition-dialog" @closed="handlePoliceDetailClosed">
+      <PoliceGesturePage embedded :external-result="policeResult" :external-recognizing="recognitionEnabled[TASK_TYPES.POLICE_GESTURE]" @toggle-recognition="toggleRecognition(TASK_TYPES.POLICE_GESTURE)" />
     </el-dialog>
     <el-dialog v-model="ownerDialogOpen" title="车主手势识别详情" width="94vw" top="3vh" destroy-on-close class="recognition-dialog owner-dialog" @closed="ownerSettingsRequested = false">
       <OwnerGesturePage ref="ownerDetailRef" embedded :open-management-on-mount="ownerSettingsRequested" />
@@ -252,7 +278,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { DrawingUtils, FilesetResolver, GestureRecognizer } from '@/vendor/tasks-vision/vision_bundle.mjs'
 import {
   executeOwnerGestureControl,
@@ -263,11 +289,7 @@ import {
 import { getInferenceData, inferenceCameras } from '@/api/inference'
 import { mockSystemHealth, mockAlerts } from '@/utils/mockData'
 import { useAlertStore } from '@/stores/alert'
-import {
-  FRAME_SYNC_BUFFER_MS,
-  useCameraSource,
-  useDelayedCameraStreams
-} from '@/composables/useCameraSource'
+import { useCameraSource } from '@/composables/useCameraSource'
 import { useVehicleStore } from '@/stores/vehicle'
 import { POLICE_GESTURE_MAP, TASK_TYPES } from '@/utils/constants'
 import LicensePlatePage from '@/views/LicensePlatePage.vue'
@@ -279,6 +301,7 @@ import { announceOwnerGestureAction, announcePoliceGesture } from '@/utils/speec
 import StaticWeatherTexture from '@/components/common/StaticWeatherTexture.vue'
 
 const MODEL_PATH = '/models/gesture_recognizer.task'
+const OWNER_GESTURE_TASK = 'owner_gesture'
 
 const alertStore = useAlertStore()
 const vehicleStore = useVehicleStore()
@@ -292,17 +315,37 @@ const {
   cameraStatus,
   cameraError,
   cameraDisplayUrl,
-  cameraVideoRef,
-  cameraVideoReady,
-  markCameraVideoReady,
   refreshCameraPreview,
   selectCameraSlot,
-  suspendCameraWebRtcConnections,
-  resumeCameraWebRtcConnections
+  suspendCameraJpegPolling,
+  resumeCameraJpegPolling
 } = useCameraSource()
-const preloadedFrameSyncStreams = useDelayedCameraStreams(FRAME_SYNC_BUFFER_MS)
 
-const perceptionEnabled = ref(true)
+const recognitionEnabled = reactive({
+  [TASK_TYPES.LICENSE_PLATE]: true,
+  [TASK_TYPES.VEHICLE_TYPE]: true,
+  [TASK_TYPES.POLICE_GESTURE]: true,
+  // The cabin camera is privacy-sensitive: enable it only after a user click.
+  [OWNER_GESTURE_TASK]: false
+})
+const perceptionEnabled = computed(() => Object.values(recognitionEnabled).some(Boolean))
+const roadPerceptionEnabled = computed(() => [
+  TASK_TYPES.LICENSE_PLATE,
+  TASK_TYPES.VEHICLE_TYPE,
+  TASK_TYPES.POLICE_GESTURE
+].some(taskType => recognitionEnabled[taskType]))
+const activeRecognitionText = computed(() => {
+  const labels = {
+    [TASK_TYPES.LICENSE_PLATE]: '车牌',
+    [TASK_TYPES.VEHICLE_TYPE]: '车辆类型',
+    [TASK_TYPES.POLICE_GESTURE]: '交警手势',
+    [OWNER_GESTURE_TASK]: '用户手势'
+  }
+  return Object.entries(recognitionEnabled)
+    .filter(([, enabled]) => enabled)
+    .map(([taskType]) => labels[taskType])
+    .join(' · ')
+})
 const plateResult = ref(emptyPerceptionResult(TASK_TYPES.LICENSE_PLATE))
 const vehicleTypeResult = ref(emptyPerceptionResult(TASK_TYPES.VEHICLE_TYPE))
 const policeResult = ref(emptyPerceptionResult(TASK_TYPES.POLICE_GESTURE))
@@ -320,7 +363,6 @@ const policeDialogOpen = ref(false)
 const ownerDialogOpen = ref(false)
 const ownerSettingsRequested = ref(false)
 const ownerDetailRef = ref(null)
-const dashboardCameraElement = ref(null)
 
 const gestureControlActive = ref(false)
 const gestureControlLoading = ref(false)
@@ -439,44 +481,44 @@ const policeConfidenceText = computed(() => {
   return Number.isFinite(confidence) ? `${Math.round(confidence * 100)}%` : '--'
 })
 const plateStatusText = computed(() => {
-  if (!perceptionEnabled.value) return '已停止'
+  if (!recognitionEnabled[TASK_TYPES.LICENSE_PLATE]) return '已停止'
   if (plateRecognitionError.value) return '服务异常'
   if (plateRecognitionLoading.value) return '识别中'
   return latestPlate.value ? '已同步结果' : '持续扫描中'
 })
 const vehicleTypeStatusText = computed(() => {
-  if (!perceptionEnabled.value) return '已停止'
+  if (!recognitionEnabled[TASK_TYPES.VEHICLE_TYPE]) return '已停止'
   if (vehicleTypeRecognitionError.value) return '服务异常'
   if (vehicleTypeRecognitionLoading.value) return '追踪中'
   return latestVehicle.value ? `已追踪 ${allVehicleDetections.value.length} 辆` : '持续扫描中'
 })
 const policeStatusText = computed(() => {
-  if (!perceptionEnabled.value) return '已停止'
+  if (!recognitionEnabled[TASK_TYPES.POLICE_GESTURE]) return '已停止'
   if (policeRecognitionError.value) return '服务异常'
   if (policeRecognitionLoading.value) return '识别中'
   return latestPoliceDetection.value ? '已同步结果' : '持续扫描中'
 })
 const roadPerceptionCaption = computed(() => {
-  if (!perceptionEnabled.value) return '仅视频预览'
+  if (!roadPerceptionEnabled.value) return '仅视频预览'
   const plateCount = plateResult.value.detections?.length || 0
   const vehicleCount = vehicleTypeResult.value.detections?.length || 0
-  if (latestPoliceDetection.value) return `交警指令：${latestPoliceGesture.value}`
-  if (vehicleCount) return `正在追踪 ${vehicleCount} 辆车`
-  if (plateCount) return `已检测 ${plateCount} 个车牌`
-  return '车牌、车型与交警手势同步检测'
+  if (recognitionEnabled[TASK_TYPES.POLICE_GESTURE] && latestPoliceDetection.value) return `交警指令：${latestPoliceGesture.value}`
+  if (recognitionEnabled[TASK_TYPES.VEHICLE_TYPE] && vehicleCount) return `正在追踪 ${vehicleCount} 辆车`
+  if (recognitionEnabled[TASK_TYPES.LICENSE_PLATE] && plateCount) return `已检测 ${plateCount} 个车牌`
+  return '已开启的道路识别任务持续检测中'
 })
 
 onMounted(() => {
   alertStore.fetchAlerts()
   refreshCameraPreview()
   startRoadRecognition()
-  void startGestureControl()
+  if (recognitionEnabled[OWNER_GESTURE_TASK]) void startGestureControl()
 })
 
 onBeforeUnmount(() => {
   stopRoadRecognition()
   stopGestureControl()
-  resumeCameraWebRtcConnections()
+  resumeCameraJpegPolling()
 })
 
 const recentAlerts = computed(() => mockAlerts.slice(0, 2))
@@ -492,30 +534,31 @@ function emptyPerceptionResult(taskType) {
   }
 }
 
-function setDashboardCameraVideoRef(element) {
-  if (!element) return
-  dashboardCameraElement.value = element
-  cameraVideoRef.value = element
-}
-
 function restoreDashboardCamera() {
-  void nextTick(() => {
-    if (dashboardCameraElement.value) {
-      cameraVideoRef.value = dashboardCameraElement.value
-    }
-    refreshCameraPreview()
-  })
+  refreshCameraPreview()
 }
 
 function startRoadRecognition() {
-  clearInterval(vehicleTypeRecognitionTimer)
-  clearInterval(policeRecognitionTimer)
   restartPlateRecognition({ immediate: true })
-  void recognizeRoadTask(TASK_TYPES.VEHICLE_TYPE)
-  void recognizeRoadTask(TASK_TYPES.POLICE_GESTURE)
+  restartVehicleTypeRecognition({ immediate: true })
+  restartPoliceRecognition({ immediate: true })
+}
+
+function restartVehicleTypeRecognition({ immediate = false } = {}) {
+  clearInterval(vehicleTypeRecognitionTimer)
+  vehicleTypeRecognitionTimer = undefined
+  if (!recognitionEnabled[TASK_TYPES.VEHICLE_TYPE]) return
+  if (immediate) void recognizeRoadTask(TASK_TYPES.VEHICLE_TYPE)
   vehicleTypeRecognitionTimer = window.setInterval(() => {
     void recognizeRoadTask(TASK_TYPES.VEHICLE_TYPE)
   }, 900)
+}
+
+function restartPoliceRecognition({ immediate = false } = {}) {
+  clearInterval(policeRecognitionTimer)
+  policeRecognitionTimer = undefined
+  if (!recognitionEnabled[TASK_TYPES.POLICE_GESTURE]) return
+  if (immediate) void recognizeRoadTask(TASK_TYPES.POLICE_GESTURE)
   policeRecognitionTimer = window.setInterval(() => {
     void recognizeRoadTask(TASK_TYPES.POLICE_GESTURE)
   }, 1000)
@@ -524,7 +567,7 @@ function startRoadRecognition() {
 function restartPlateRecognition({ immediate = false } = {}) {
   clearInterval(plateRecognitionTimer)
   plateRecognitionTimer = undefined
-  if (!perceptionEnabled.value) return
+  if (!recognitionEnabled[TASK_TYPES.LICENSE_PLATE]) return
 
   if (immediate) void recognizeRoadTask(TASK_TYPES.LICENSE_PLATE)
   const interval = plateDialogOpen.value ? PLATE_DETAIL_INTERVAL_MS : PLATE_OVERVIEW_INTERVAL_MS
@@ -543,8 +586,28 @@ function stopRoadRecognition() {
   lastAnnouncedPoliceGestureCode = ''
 }
 
+function stopRoadTask(taskType) {
+  if (taskType === TASK_TYPES.LICENSE_PLATE) {
+    clearInterval(plateRecognitionTimer)
+    plateRecognitionTimer = undefined
+  } else if (taskType === TASK_TYPES.VEHICLE_TYPE) {
+    clearInterval(vehicleTypeRecognitionTimer)
+    vehicleTypeRecognitionTimer = undefined
+  } else if (taskType === TASK_TYPES.POLICE_GESTURE) {
+    clearInterval(policeRecognitionTimer)
+    policeRecognitionTimer = undefined
+    lastAnnouncedPoliceGestureCode = ''
+  }
+}
+
+function startRoadTask(taskType) {
+  if (taskType === TASK_TYPES.LICENSE_PLATE) restartPlateRecognition({ immediate: true })
+  else if (taskType === TASK_TYPES.VEHICLE_TYPE) restartVehicleTypeRecognition({ immediate: true })
+  else if (taskType === TASK_TYPES.POLICE_GESTURE) restartPoliceRecognition({ immediate: true })
+}
+
 async function recognizeRoadTask(taskType) {
-  if (!perceptionEnabled.value || !activeCameraSlots.value.length) return
+  if (!recognitionEnabled[taskType] || !activeCameraSlots.value.length) return
   const states = {
     [TASK_TYPES.LICENSE_PLATE]: [plateRecognitionLoading, plateRecognitionError],
     [TASK_TYPES.VEHICLE_TYPE]: [vehicleTypeRecognitionLoading, vehicleTypeRecognitionError],
@@ -554,9 +617,8 @@ async function recognizeRoadTask(taskType) {
   if (loading.value) return
   loading.value = true
   try {
-    const includeVisuals = taskType === TASK_TYPES.POLICE_GESTURE && policeDialogOpen.value
-    const response = await inferenceCameras(taskType, includeVisuals)
-    if (!perceptionEnabled.value) return
+    const response = await inferenceCameras(taskType, false)
+    if (!recognitionEnabled[taskType]) return
     const data = getInferenceData(response) || {}
     const nextResult = {
       ...emptyPerceptionResult(taskType),
@@ -590,36 +652,42 @@ function announcePoliceGestureChange(nextResult) {
 }
 
 function openPlateDetail() {
-  suspendCameraWebRtcConnections()
+  suspendCameraJpegPolling()
   plateDialogOpen.value = true
   restartPlateRecognition({ immediate: true })
 }
 
 function handlePlateDetailClosed() {
-  resumeCameraWebRtcConnections()
+  resumeCameraJpegPolling()
   restoreDashboardCamera()
   restartPlateRecognition()
 }
 
 function openVehicleTypeDetail() {
-  suspendCameraWebRtcConnections()
+  suspendCameraJpegPolling()
   vehicleTypeDialogOpen.value = true
   void recognizeRoadTask(TASK_TYPES.VEHICLE_TYPE)
 }
 
 function handleVehicleTypeDetailClosed() {
-  resumeCameraWebRtcConnections()
+  resumeCameraJpegPolling()
   restoreDashboardCamera()
 }
 
 function openPoliceDetail() {
+  suspendCameraJpegPolling()
   policeDialogOpen.value = true
   void recognizeRoadTask(TASK_TYPES.POLICE_GESTURE)
 }
 
+function handlePoliceDetailClosed() {
+  resumeCameraJpegPolling()
+  restoreDashboardCamera()
+}
+
 async function toggleUnifiedPerception() {
   if (perceptionEnabled.value) {
-    perceptionEnabled.value = false
+    Object.keys(recognitionEnabled).forEach(taskType => { recognitionEnabled[taskType] = false })
     stopRoadRecognition()
     stopGestureControl()
     gestureControlStatus.value = '识别已关闭'
@@ -627,12 +695,30 @@ async function toggleUnifiedPerception() {
     return
   }
 
-  perceptionEnabled.value = true
+  Object.keys(recognitionEnabled).forEach(taskType => { recognitionEnabled[taskType] = true })
   plateRecognitionError.value = ''
   vehicleTypeRecognitionError.value = ''
   policeRecognitionError.value = ''
   startRoadRecognition()
   await startGestureControl()
+}
+
+async function toggleRecognition(taskType) {
+  const enabled = !recognitionEnabled[taskType]
+  recognitionEnabled[taskType] = enabled
+  if (taskType === OWNER_GESTURE_TASK) {
+    if (enabled) await startGestureControl()
+    else stopGestureControl()
+    return
+  }
+  if (enabled) {
+    if (taskType === TASK_TYPES.LICENSE_PLATE) plateRecognitionError.value = ''
+    if (taskType === TASK_TYPES.VEHICLE_TYPE) vehicleTypeRecognitionError.value = ''
+    if (taskType === TASK_TYPES.POLICE_GESTURE) policeRecognitionError.value = ''
+    startRoadTask(taskType)
+  } else {
+    stopRoadTask(taskType)
+  }
 }
 
 function openOwnerDetail() {
@@ -646,14 +732,11 @@ function openOwnerSettings() {
 }
 
 async function toggleGestureControl() {
-  if (gestureControlActive.value || gestureControlLoading.value) {
-    stopGestureControl()
-    return
-  }
-  await startGestureControl()
+  await toggleRecognition(OWNER_GESTURE_TASK)
 }
 
 async function startGestureControl() {
+  if (!recognitionEnabled[OWNER_GESTURE_TASK]) return
   const runId = ++gestureRunId
   gestureControlLoading.value = true
   gestureControlStatus.value = '正在启动识别'
@@ -676,6 +759,7 @@ async function startGestureControl() {
     gestureControlStatus.value = '手势控车启动失败'
     gestureTriggerLabel.value = '启动失败'
     gestureControlLoading.value = false
+    recognitionEnabled[OWNER_GESTURE_TASK] = false
     stopGestureControl({ keepStatus: true })
   }
 }
@@ -922,7 +1006,8 @@ function applyGestureRecognitionState(state) {
     recognition.score === null || recognition.score === undefined
       ? recognition.motionLabel || '--'
       : formatGestureScore(recognition.score)
-  const recognized = recognition.accepted && rememberGestureRecognitionDisplay(recognition.name, scoreText)
+  const displayable = recognition.accepted || recognition.pending
+  const recognized = displayable && rememberGestureRecognitionDisplay(recognition.name, scoreText)
 
   if (!recognized) {
     restoreLastGestureRecognitionDisplay()
@@ -1639,6 +1724,7 @@ function restoreLastGestureRecognitionDisplay() {
 .perception-bar {
   min-height: 64px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 18px;
@@ -1646,6 +1732,65 @@ function restoreLastGestureRecognitionDisplay() {
   border: 1px solid var(--border-card);
   border-radius: var(--radius-md);
   background: linear-gradient(90deg, rgba(0, 180, 216, 0.09), rgba(22, 29, 43, 0.78) 38%, rgba(22, 29, 43, 0.96));
+}
+
+.perception-bar > div:first-child {
+  flex: 1 1 180px;
+}
+
+.recognition-switches {
+  flex: 1 1 390px;
+  max-width: 470px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(82px, 1fr));
+  gap: 6px;
+}
+
+.recognition-switches button {
+  min-width: 0;
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 1px solid var(--border-card);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color var(--duration-fast), background var(--duration-fast), color var(--duration-fast);
+}
+
+.recognition-switches button span {
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 800;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recognition-switches button small {
+  min-width: 19px;
+  padding: 2px 4px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.05);
+  color: currentColor;
+  font-size: 9px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.recognition-switches button.active {
+  border-color: rgba(0, 230, 118, 0.3);
+  background: rgba(0, 230, 118, 0.075);
+  color: var(--success-color);
+}
+
+.recognition-switches button:hover {
+  border-color: var(--border-active);
+  color: var(--primary-color);
 }
 
 .perception-bar > div:first-child {
@@ -2194,7 +2339,9 @@ function restoreLastGestureRecognitionDisplay() {
   .perception-bar,
   .perception-state { align-items: flex-start; }
   .perception-bar { flex-direction: column; }
+  .perception-bar > div:first-child { width: 100%; flex: 0 0 auto; }
   .perception-state { width: 100%; }
+  .recognition-switches { width: 100%; max-width: none; flex: 0 0 auto; }
   .perception-state > div { flex: 1; }
   .cockpit-grid { grid-template-columns: 1fr; }
   .drive-rail { flex-direction: row; align-items: center; }
@@ -2209,6 +2356,7 @@ function restoreLastGestureRecognitionDisplay() {
 @media (max-width: 520px) {
   .perception-state { flex-wrap: wrap; }
   .perception-toggle { width: 100%; }
+  .recognition-switches { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .drive-rail { flex-direction: column; }
   .compact-speedo { width: 100%; flex-basis: auto; flex-direction: row; }
   .drive-health { width: 100%; }

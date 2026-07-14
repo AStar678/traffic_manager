@@ -52,7 +52,8 @@ public class RecognitionFailureAgent {
             String failureReason,
             String traceId
     ) {
-        if (!enabled || !isReviewRequired(taskType, confidence, failureReason)) return false;
+        if (!enabled || !visionReviewer.isConfigured()
+                || !isReviewRequired(taskType, confidence, failureReason)) return false;
         if (evidenceUrl == null || evidenceUrl.isBlank()) {
             log.warn("识别失败样本缺少证据地址，无法提交 Agent: taskType={}, traceId={}", taskType, traceId);
             return false;

@@ -9,7 +9,10 @@ export function inferenceImage(taskType, imageUrl) {
 }
 
 export function inferenceCameras(taskType, includeVisuals = false) {
-  return request.post('/inference/cameras', { taskType, includeVisuals }, { timeout: 45000 })
+  return request.post('/inference/cameras', { taskType, includeVisuals }, {
+    timeout: 45000,
+    silent: true
+  })
 }
 
 export function getInferenceData(response) {

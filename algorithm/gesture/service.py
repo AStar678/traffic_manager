@@ -11,6 +11,12 @@ from gesture_dinov2_tcn import DINO_ALGORITHM_ID, Dinov2TcnPrototypeRuntime
 from gesture_dinov2_tcn.runtime import LEGACY_ALGORITHM_ID
 
 from . import config
+from .system_gestures import (
+    SYSTEM_GESTURE_HOLD_MS,
+    SYSTEM_GESTURES,
+    MediaPipeSystemGestureRecognizer,
+    system_gesture_prototypes,
+)
 
 from .engine import (
     ACTION_LABELS,
@@ -34,54 +40,12 @@ from .engine import (
 
 BUILT_IN_GESTURES = [
     {
-        "gestureCode": "Closed_Fist",
-        "gestureName": "握拳",
-        "gestureKind": "static",
+        **item,
         "gestureSource": "built_in",
         "actionType": "NONE",
-    },
-    {
-        "gestureCode": "Open_Palm",
-        "gestureName": "手掌张开",
-        "gestureKind": "static",
-        "gestureSource": "built_in",
-        "actionType": "NONE",
-    },
-    {
-        "gestureCode": "Pointing_Up",
-        "gestureName": "单指向上",
-        "gestureKind": "static",
-        "gestureSource": "built_in",
-        "actionType": "NONE",
-    },
-    {
-        "gestureCode": "Thumb_Down",
-        "gestureName": "拇指向下",
-        "gestureKind": "static",
-        "gestureSource": "built_in",
-        "actionType": "NONE",
-    },
-    {
-        "gestureCode": "Thumb_Up",
-        "gestureName": "拇指向上",
-        "gestureKind": "static",
-        "gestureSource": "built_in",
-        "actionType": "NONE",
-    },
-    {
-        "gestureCode": "Victory",
-        "gestureName": "胜利手势",
-        "gestureKind": "static",
-        "gestureSource": "built_in",
-        "actionType": "NONE",
-    },
-    {
-        "gestureCode": "ILoveYou",
-        "gestureName": "I Love You",
-        "gestureKind": "static",
-        "gestureSource": "built_in",
-        "actionType": "NONE",
-    },
+        "holdMs": int(item.get("holdMs") or SYSTEM_GESTURE_HOLD_MS),
+    }
+    for item in SYSTEM_GESTURES
 ]
 
 
@@ -105,6 +69,7 @@ class GestureRecognitionService:
             deep_checkpoint_path or Path("gesture_dinov2_tcn/checkpoints/best_model.pt"),
             deep_store,
         )
+        self.system_recognizer = MediaPipeSystemGestureRecognizer()
 
     def health(self) -> dict[str, Any]:
         with self._lock:
@@ -129,8 +94,8 @@ class GestureRecognitionService:
                 },
                 {
                     "id": DINO_ALGORITHM_ID,
-                    "name": "DINOv2 + TCN 视频原型",
-                    "description": "RGB 视频与 175 维手部几何特征融合",
+                    "name": "MediaPipe 系统手势 + DINOv2-TCN 用户原型",
+                    "description": "固定系统手势优先，未命中时回退 RGB 视频原型",
                     **self.deep_runtime.status(),
                 },
             ],
@@ -146,6 +111,7 @@ class GestureRecognitionService:
             cancel_recording(self.engine)
             self.deep_runtime.cancel_recording()
             self.deep_runtime.reset_live()
+            self.system_recognizer.reset()
             self.active_algorithm = target
             self.engine["config"]["activeAlgorithm"] = target
             self._persist_config()
@@ -215,7 +181,7 @@ class GestureRecognitionService:
     def process_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
             if self._using_deep_algorithm():
-                result = self.deep_runtime.process(payload, self.engine["config"])
+                result = self._process_deep_payload_unlocked(payload)
                 result["vehicle"] = get_vehicle_state(self.engine)
                 return result
             vector = self._vector_from_payload(payload)
@@ -228,8 +194,11 @@ class GestureRecognitionService:
     def recognize(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self._using_deep_algorithm():
             with self._lock:
-                result = self.deep_runtime.process(payload, self.engine["config"])
-                return {"recognition": result["recognition"], "algorithm": result["algorithm"]}
+                result = self._process_deep_payload_unlocked(payload)
+                response = {"recognition": result["recognition"], "algorithm": result["algorithm"]}
+                if result.get("systemRecognition"):
+                    response["systemRecognition"] = result["systemRecognition"]
+                return response
         vector = self._vector_from_payload(payload)
         sequence = payload.get("sequence") or []
         # 只在复制共享配置/原型时持锁；实际匹配使用请求私有快照，多个
@@ -336,8 +305,42 @@ class GestureRecognitionService:
 
     def _active_prototypes(self) -> list[dict[str, Any]]:
         if self._using_deep_algorithm():
-            return self.deep_runtime.list_prototypes()
+            return [
+                *system_gesture_prototypes(DINO_ALGORITHM_ID),
+                *self.deep_runtime.list_prototypes(),
+            ]
         return summarize_prototypes(self.engine["prototypes"])
+
+    def _process_deep_payload_unlocked(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.deep_runtime.recording:
+            self.system_recognizer.reset()
+            result = self.deep_runtime.process(payload, self.engine["config"])
+            result["prototypes"] = self._active_prototypes()
+            return result
+
+        system_recognition = self.system_recognizer.process(
+            payload,
+            cooldown_ms=float(self.engine["config"].get("triggerCooldownMs") or 1500),
+        )
+        if system_recognition["accepted"] or system_recognition.get("pending"):
+            # 系统手势达到各自阈值后（包括张掌连续确认阶段）只维护 DINO
+            # 时序缓存，不执行用户原型匹配，避免确认期间误命中用户手势。
+            self.deep_runtime.observe(payload)
+            return {
+                "algorithm": self.deep_runtime.algorithm_state(),
+                "recognition": system_recognition,
+                "systemRecognition": system_recognition,
+                "recording": self.deep_runtime.recording_status(),
+                "recordingComplete": None,
+                "prototypes": self._active_prototypes(),
+                "config": self._effective_config(),
+            }
+
+        # 固定系统手势未命中时，完整保留原有 DINOv2 用户原型规则。
+        result = self.deep_runtime.process(payload, self.engine["config"])
+        result["systemRecognition"] = system_recognition
+        result["prototypes"] = self._active_prototypes()
+        return result
 
     def _active_recording_status(self) -> dict[str, Any]:
         if self._using_deep_algorithm():
@@ -403,7 +406,12 @@ class GestureRecognitionService:
             for item in BUILT_IN_GESTURES
         ]
         if include_prototypes:
-            ordered.extend(self._prototype_control_setting(prototype) for prototype in self.engine["prototypes"])
+            raw_prototypes = (
+                self.deep_runtime.raw_prototypes()
+                if self._using_deep_algorithm()
+                else self.engine["prototypes"]
+            )
+            ordered.extend(self._prototype_control_setting(prototype) for prototype in raw_prototypes)
 
         merged = {item["gestureCode"]: item for item in ordered}
         for item in self.engine["config"].get("controlSettings") or []:

@@ -21,6 +21,10 @@
       <div class="login-card">
         <h2>{{ modeTitle }}</h2>
         <p class="hint">{{ modeHint }}</p>
+        <p class="security-note">
+          <el-icon><Lock /></el-icon>
+          认证信息使用 RSA-OAEP + AES-256-GCM 加密传输
+        </p>
 
         <div class="mode-tabs" role="tablist" aria-label="认证方式">
           <button
@@ -342,6 +346,9 @@ async function handleSubmit() {
       ElMessage.error(error.response?.data?.message || error.message || (authMode.value === 'register' ? '注册失败' : '登录失败'))
     }
   } finally {
+    loginForm.password = ''
+    registerForm.password = ''
+    registerForm.confirmPassword = ''
     loading.value = false
   }
 }
@@ -510,6 +517,16 @@ onBeforeUnmount(() => {
   font-weight: 800;
   color: var(--text-primary);
   letter-spacing: -0.5px;
+}
+
+.security-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 18px;
+  color: var(--status-success);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .hint {

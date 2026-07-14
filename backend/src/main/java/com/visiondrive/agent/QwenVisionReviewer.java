@@ -55,8 +55,12 @@ public class QwenVisionReviewer {
     @Value("${file.public-base-url:}")
     private String publicBaseUrl;
 
+    public boolean isConfigured() {
+        return apiKey != null && !apiKey.isBlank();
+    }
+
     public ReviewResult review(String taskType, String evidenceUrl, Double confidence, String failureReason) {
-        if (apiKey == null || apiKey.isBlank()) {
+        if (!isConfigured()) {
             throw new IllegalStateException("未配置 DASHSCOPE_API_KEY");
         }
 

@@ -29,7 +29,7 @@ public class SecurityConfig {
 
     @Bean
     public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
+        return new BCryptPasswordEncoder(12);
     }
 
     @Bean
@@ -40,12 +40,14 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/auth/encryption-key").permitAll()
                         .requestMatchers(HttpMethod.POST,
                                 "/api/v1/auth/login",
                                 "/api/v1/auth/login/code",
                                 "/api/v1/auth/register",
                                 "/api/v1/auth/send-code"
                         ).permitAll()
+                        .requestMatchers(HttpMethod.DELETE, "/api/v1/alerts/system-logs/errors").authenticated()
                         .requestMatchers(
                                 "/api/v1/jobs/**",
                                 "/api/v1/alerts/**",

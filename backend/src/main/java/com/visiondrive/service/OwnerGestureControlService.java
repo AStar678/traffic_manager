@@ -107,7 +107,7 @@ public class OwnerGestureControlService {
         List<Map<String, Object>> prototypes = availableGestures();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("algorithm", OWNER_GESTURE_ALGORITHM);
-        result.put("presetGestures", false);
+        result.put("presetGestures", true);
         result.put("gestures", prototypes);
         result.put("prototypes", prototypes);
         return result;
@@ -118,7 +118,7 @@ public class OwnerGestureControlService {
         Map<String, Object> state = new LinkedHashMap<>(rawState);
         state.put("algorithm", Map.of(
                 "active", OWNER_GESTURE_ALGORITHM,
-                "presetGestures", false
+                "presetGestures", true
         ));
         state.put("prototypes", normalizePrototypes(rawState.get("prototypes")));
         state.put("config", sanitizeConfig(rawState.get("config")));
@@ -177,7 +177,7 @@ public class OwnerGestureControlService {
             binding.setGestureCode(gestureCode);
             binding.setGestureName(stringValue(prototype.get("gestureName")));
             binding.setGestureKind(stringValue(prototype.get("gestureKind")));
-            binding.setGestureSource("custom");
+            binding.setGestureSource(defaultIfBlank(stringValue(prototype.get("gestureSource")), "custom"));
             binding.setActionType(actionType);
             binding.setEnabled(enabled);
             bindingRepository.save(binding);
@@ -312,18 +312,12 @@ public class OwnerGestureControlService {
 
     private int deleteObsoleteBindings(Set<String> activeGestureCodes) {
         List<OwnerGestureControlBinding> obsolete = bindingRepository.findAll().stream()
-                .filter(binding -> isLegacySource(binding.getGestureSource())
-                        || !activeGestureCodes.contains(binding.getGestureCode()))
+                .filter(binding -> !activeGestureCodes.contains(binding.getGestureCode()))
                 .toList();
         if (!obsolete.isEmpty()) {
             bindingRepository.deleteAll(obsolete);
         }
         return obsolete.size();
-    }
-
-    private boolean isLegacySource(String source) {
-        String normalized = stringValue(source).trim().toLowerCase(Locale.ROOT);
-        return "built_in".equals(normalized) || "system".equals(normalized);
     }
 
     private Map<String, Object> disabledControl(String gestureCode, String gestureName) {

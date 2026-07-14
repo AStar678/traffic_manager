@@ -1,7 +1,7 @@
 import request from './request'
 
 export function listCameraSlots() {
-  return request.get('/cameras/slots')
+  return request.get('/cameras/slots', { silent: true })
 }
 
 export function updateCameraSlot(slotId, payload) {
@@ -21,12 +21,20 @@ export function uploadCameraMedia(slotId, file) {
   })
 }
 
-export function getCameraFrameBlob(slotId) {
-  return request.get(`/cameras/slots/${slotId}/frame.jpg`, {
-    params: { t: Date.now() },
-    responseType: 'blob',
-    timeout: 12000
+export async function getCameraFrameBlob(slotId, { taskType = null, signal } = {}) {
+  const framePath = taskType
+    ? `/jpeg/api/v1/jpeg/processed/${encodeURIComponent(taskType)}/${slotId}.jpg`
+    : `/jpeg/api/v1/jpeg/frame/${slotId}.jpg`
+  const response = await fetch(`${framePath}?t=${Date.now()}`, {
+    cache: 'no-store',
+    credentials: 'same-origin',
+    signal
   })
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}))
+    throw new Error(body.detail || `JPEG 取帧失败 (${response.status})`)
+  }
+  return response.blob()
 }
 
 export function getCameraData(response) {

@@ -48,7 +48,7 @@ public class AuthService {
             throw new BusinessException(401, "用户名或密码错误");
         }
 
-        if (!user.getPassword().startsWith("$2")) {
+        if (passwordEncoder.upgradeEncoding(user.getPassword())) {
             user.setPassword(passwordEncoder.encode(request.getPassword()));
         }
 
@@ -160,10 +160,10 @@ public class AuthService {
     }
 
     private boolean passwordMatches(String rawPassword, String storedPassword) {
-        if (storedPassword == null) return false;
-        return storedPassword.startsWith("$2")
-                ? passwordEncoder.matches(rawPassword, storedPassword)
-                : storedPassword.equals(rawPassword);
+        if (storedPassword == null || !storedPassword.matches("^\\$2[aby]\\$\\d{2}\\$[./A-Za-z0-9]{53}$")) {
+            return false;
+        }
+        return passwordEncoder.matches(rawPassword, storedPassword);
     }
 
     private String maskPhone(String phone) {

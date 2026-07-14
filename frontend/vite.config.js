@@ -5,7 +5,9 @@ import { fileURLToPath, URL } from 'node:url'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const backendTarget = process.env.VITE_BACKEND_URL || env.VITE_BACKEND_URL || 'http://localhost:8080'
-  const webRtcSignalTarget = process.env.VITE_WEBRTC_SIGNAL_URL
+  const jpegGatewayTarget = process.env.VITE_JPEG_GATEWAY_URL
+    || env.VITE_JPEG_GATEWAY_URL
+    || process.env.VITE_WEBRTC_SIGNAL_URL
     || env.VITE_WEBRTC_SIGNAL_URL
     || 'http://localhost:8003'
 
@@ -19,9 +21,9 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       proxy: {
-        '/webrtc': {
-          target: webRtcSignalTarget,
-          rewrite: path => path.replace(/^\/webrtc/, '')
+        '/jpeg': {
+          target: jpegGatewayTarget,
+          rewrite: path => path.replace(/^\/jpeg/, '')
         },
         '/api': backendTarget,
         '/ws': {

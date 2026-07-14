@@ -135,6 +135,7 @@ algorithm/gesture_dinov2_tcn/data/gesture_prototypes.json
 
 # 应用离线运行所需、已审核的固定模型资源
 !frontend/public/models/gesture_recognizer.task
+!frontend/public/models/pose_landmarker_lite.task
 !algorithm/gesture/app/public/models/gesture_recognizer.task
 
 # --- 数据库、数据集与媒体文件 ---

@@ -11,6 +11,7 @@ VEHICLE_ENV_DIR="${HOME}/miniconda3/envs/${VEHICLE_ENV_NAME}"
 command -v java >/dev/null || { echo "缺少 Java 17，请先安装 openjdk-17-jre-headless" >&2; exit 1; }
 command -v ffmpeg >/dev/null || { echo "缺少 FFmpeg，请先安装 ffmpeg" >&2; exit 1; }
 command -v turnserver >/dev/null || { echo "缺少 coturn，请先执行 sudo apt install coturn" >&2; exit 1; }
+command -v openssl >/dev/null || { echo "缺少 OpenSSL，无法生成认证加密私钥" >&2; exit 1; }
 [[ -x "${CONDA_BIN}" ]] || { echo "未找到 Conda：${CONDA_BIN}" >&2; exit 1; }
 
 mkdir -p \
@@ -25,6 +26,16 @@ mkdir -p \
   "${DEPLOY_ROOT}/vendor" \
   "${DEPLOY_ROOT}/shared/camera-sources" \
   "${DEPLOY_ROOT}/shared/camera-frames"
+
+AUTH_PRIVATE_KEY_PATH="${AUTH_ENCRYPTION_PRIVATE_KEY_PATH:-${DEPLOY_ROOT}/config/auth-private-key.pem}"
+if [[ ! -f "${AUTH_PRIVATE_KEY_PATH}" ]]; then
+  umask 077
+  temporary_key="${AUTH_PRIVATE_KEY_PATH}.tmp.$$"
+  openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "${temporary_key}" >/dev/null 2>&1
+  mv "${temporary_key}" "${AUTH_PRIVATE_KEY_PATH}"
+  echo "已生成认证请求加密私钥：${AUTH_PRIVATE_KEY_PATH}"
+fi
+chmod 600 "${AUTH_PRIVATE_KEY_PATH}"
 
 if [[ ! -x "${ENV_DIR}/bin/python" ]]; then
   "${CONDA_BIN}" create --name "${ENV_NAME}" --clone pytorch_base --yes

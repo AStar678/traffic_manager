@@ -31,7 +31,10 @@ public class InferenceService {
     private final SystemLogService systemLogService;
     private final CameraManagerService cameraManagerService;
     private final RecognitionFailureAgent recognitionFailureAgent;
-    private final ExecutorService multiCameraExecutor = Executors.newFixedThreadPool(6);
+    private final ProcessedFrameResultService processedFrameResultService;
+    private final ExecutorService multiCameraExecutor = Executors.newFixedThreadPool(
+            Math.max(6, Math.min(9, Runtime.getRuntime().availableProcessors()))
+    );
     private final ExecutorService persistenceExecutor = Executors.newFixedThreadPool(2);
     private final Map<String, Long> lastCameraPersistenceAt = new ConcurrentHashMap<>();
     private static final long CAMERA_PERSISTENCE_INTERVAL_MS = 5_000;
@@ -172,6 +175,7 @@ public class InferenceService {
                     detection.setFrameCapturedAtMs(frame.frameCapturedAtMs());
                 });
             }
+            processedFrameResultService.publish(taskType, frame, data);
             result.setResult(data);
             result.setStatus("ready");
             persistCameraInferenceAsync(

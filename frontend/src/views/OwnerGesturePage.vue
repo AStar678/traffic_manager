@@ -7,8 +7,8 @@
       </div>
       <div class="top-actions">
         <div class="algorithm-badge" aria-label="当前手势识别算法">
-          <span>DINOv2-S</span>
-          <strong>TCN 视频原型</strong>
+          <span>MediaPipe 优先</span>
+          <strong>DINOv2 用户原型兜底</strong>
         </div>
         <button class="primary" type="button" @click="openManagementDialog">管理手势</button>
         <div class="status-pill" id="modelStatus">模型加载中</div>
@@ -63,7 +63,7 @@
       <aside class="side-panel">
         <section class="panel">
           <div class="panel-head">
-            <h2>用户手势库</h2>
+            <h2>手势库</h2>
             <span id="prototypeCount">0 个</span>
           </div>
           <div class="prototype-list" id="prototypeList"></div>
@@ -100,7 +100,7 @@
         <header class="manager-header">
           <div>
             <p class="eyebrow">Gesture Manager</p>
-            <h2 id="gestureManagerTitle">自定义手势管理</h2>
+            <h2 id="gestureManagerTitle">手势管理</h2>
           </div>
           <button type="button" @click="closeManagementDialog">关闭</button>
         </header>
@@ -135,7 +135,7 @@
               <button class="primary" id="recordBtn" type="button" disabled @click="startCountdownRecording">录入新手势</button>
               <button id="cancelRecordBtn" type="button" disabled @click="stopRecording">取消录入</button>
             </div>
-            <p class="hint" id="recordHint">录制一段短视频，由 DINOv2-S 与手部几何特征共同生成视频原型。</p>
+            <p class="hint" id="recordHint">系统固定手势不参与录入；自定义手势仍由 DINOv2-S 与手部几何特征生成视频原型。</p>
           </section>
 
           <section class="manager-section gesture-management-panel">
@@ -583,7 +583,7 @@ async function stopRecording(options = {}) {
 }
 
 function recordingHint() {
-  return `录入将采集 ${sampleTarget()} 帧 RGB 视频与手部几何特征，不使用系统预设手势。`
+  return `用户录入仍采集 ${sampleTarget()} 帧 RGB 视频与手部几何特征，系统固定手势不参与录入。`
 }
 
 async function sendRecognitionFrame(result) {
@@ -655,7 +655,8 @@ function applyServiceState(state) {
       recognition.score === null || recognition.score === undefined
         ? recognition.motionLabel || '--'
         : formatGestureScore(recognition.score)
-    const recognized = recognition.accepted && rememberRecognizedGestureDisplay(recognition.name, scoreText)
+    const displayable = recognition.accepted || recognition.pending
+    const recognized = displayable && rememberRecognizedGestureDisplay(recognition.name, scoreText)
 
     if (!recognized) {
       restoreLastRecognizedGestureDisplay()
@@ -674,7 +675,7 @@ function applyServiceState(state) {
 function syncAlgorithmStatus() {
   if (!els.modelStatus) return
   const ready = Boolean(recognizer && serviceConnected)
-  els.modelStatus.textContent = ready ? 'DINOv2-TCN 已就绪' : '识别服务未就绪'
+  els.modelStatus.textContent = ready ? '系统手势 + 用户原型已就绪' : '识别服务未就绪'
   els.modelStatus.classList.toggle('error', !ready)
   els.modelStatus.classList.toggle('ready', ready)
 }
@@ -758,7 +759,9 @@ async function createRecognizer(vision) {
 
 function renderPrototypes() {
   const rows = gestureManagementRows()
-  els.prototypeCount.textContent = `${rows.length} 个`
+  const systemCount = rows.filter(row => row.system).length
+  const customCount = rows.length - systemCount
+  els.prototypeCount.textContent = `${systemCount} 系统 · ${customCount} 自录`
   if (!rows.length) {
     els.prototypeList.innerHTML = '<div class="empty-list">暂无动作，录入后会显示在这里。</div>'
     return
@@ -771,7 +774,7 @@ function renderPrototypes() {
     item.innerHTML = `
       <div>
         <strong>${escapeHtml(row.gestureName)}</strong>
-        <span>用户视频原型 · ${row.enabled ? escapeHtml(row.actionLabel) : '未关联控制'}</span>
+        <span>${row.system ? '系统固定手势' : '用户视频原型'} · ${row.enabled ? escapeHtml(row.actionLabel) : '未关联控制'}</span>
       </div>
       <button type="button">管理</button>
     `
@@ -795,18 +798,20 @@ function renderGestureMappings() {
     item.innerHTML = `
       <div class="mapping-meta">
         <strong>${escapeHtml(row.gestureName)}</strong>
-        <span>用户视频原型</span>
+        <span>${row.system ? '系统固定手势 · 1.2 秒稳定触发' : '用户视频原型'}</span>
       </div>
       <select aria-label="关联 ${escapeHtml(row.gestureName)} 到车辆功能" data-gesture-code="${escapeHtml(row.gestureCode)}">
         ${actionOptionsHtml(row.actionType)}
       </select>
-      <button class="delete-gesture-button" type="button">删除</button>
+      ${row.system
+        ? '<span class="system-gesture-lock" aria-label="系统固定手势不可删除">固定</span>'
+        : '<button class="delete-gesture-button" type="button">删除</button>'}
     `
     item.querySelector('select').addEventListener('change', event => {
       updateLocalControlSetting(row, event.target.value)
       item.classList.toggle('bound', event.target.value !== 'NONE')
     })
-    item.querySelector('.delete-gesture-button').addEventListener('click', () => {
+    item.querySelector('.delete-gesture-button')?.addEventListener('click', () => {
       void deleteGesture(row)
     })
     els.gestureMappingList.append(item)
@@ -814,6 +819,7 @@ function renderGestureMappings() {
 }
 
 async function deleteGesture(row) {
+  if (row?.system) return
   const gestureCode = row?.gestureCode
   if (!gestureCode) return
   try {
@@ -833,11 +839,14 @@ function gestureManagementRows() {
     const gestureCode = prototype.id || prototype.gestureCode || prototype.name
     const setting = settingsByCode.get(String(gestureCode)) || {}
     const actionType = setting.actionType || 'NONE'
+    const gestureSource = prototype.source || prototype.gestureSource || setting.gestureSource || 'custom'
+    const system = ['built_in', 'system'].includes(String(gestureSource).toLowerCase())
     return {
       gestureCode: String(gestureCode),
       gestureName: prototype.name || prototype.gestureName || String(gestureCode),
-      gestureKind: prototype.kind || VIDEO_GESTURE_KIND,
-      gestureSource: 'custom',
+      gestureKind: prototype.gestureKind || prototype.kind || VIDEO_GESTURE_KIND,
+      gestureSource,
+      system,
       holdMs: positiveMs(setting.holdMs, positiveMs(prototype.holdMs, positiveMs(serviceConfig?.defaultHoldMs, DEFAULT_HOLD_MS))),
       actionType,
       actionLabel: setting.actionLabel || actionLabel(actionType),
@@ -868,7 +877,7 @@ async function saveControlBindings() {
     gestureCode: row.gestureCode,
     gestureName: row.gestureName,
     gestureKind: row.gestureKind,
-    gestureSource: 'custom',
+    gestureSource: row.gestureSource,
     holdMs: positiveMs(row.holdMs, positiveMs(serviceConfig?.defaultHoldMs, DEFAULT_HOLD_MS)),
     actionType: row.actionType || 'NONE',
     enabled: Boolean(row.actionType && row.actionType !== 'NONE')
@@ -1496,6 +1505,19 @@ input[type="range"] {
   border-color: rgba(255, 61, 0, 0.36);
   color: var(--danger-color);
   background: rgba(255, 61, 0, 0.08);
+}
+
+:deep(.system-gesture-lock) {
+  min-width: 48px;
+  min-height: 36px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(0, 180, 216, 0.24);
+  border-radius: 10px;
+  color: var(--primary-color);
+  background: var(--primary-soft);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .prototype-item {

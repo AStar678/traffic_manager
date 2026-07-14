@@ -20,6 +20,10 @@ export function getSystemLogs(params) {
   return request.get('/alerts/system-logs', { params })
 }
 
+export function clearErrorLogs(params) {
+  return request.delete('/alerts/system-logs/errors', { params })
+}
+
 export function runAlertAgent() {
   return request.post('/alerts/agent/run')
 }

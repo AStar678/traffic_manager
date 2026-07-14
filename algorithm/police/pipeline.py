@@ -96,8 +96,10 @@ class PoliceGesturePipeline:
             "action": action,
             "top3": self._top3(probabilities),
         }
-        if include_visuals:
-            detection["keypoints"] = keypoints
+        # Keypoints are compact inference data and are consumed by the backend
+        # WebRTC renderer.  `include_visuals` only controls the expensive base64
+        # annotated still image; it must not remove the pose data itself.
+        detection["keypoints"] = keypoints
         detections.append(detection)
 
         return {

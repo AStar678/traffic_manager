@@ -1,7 +1,11 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { getCameraData, getCameraFrameBlob, listCameraSlots } from '@/api/camera'
 
-export const FRAME_SYNC_BUFFER_MS = 450
+export const JPEG_TARGET_FPS = 25
+export const JPEG_FRAME_INTERVAL_MS = Math.floor(1000 / JPEG_TARGET_FPS)
+export const JPEG_RETRY_INTERVAL_MS = 1000
+export const FRAME_SYNC_BUFFER_MS = JPEG_FRAME_INTERVAL_MS
+export const PROCESSED_STREAM_DELAY_MS = 0
 
 const cameraSlots = ref([])
 const sandboxPresets = ref([])
@@ -11,23 +15,13 @@ const cameraStatus = ref('idle')
 const cameraError = ref('')
 const cameraPreviewUrls = reactive({})
 const cameraPreviewVersions = reactive({})
-const cameraWebRtcStreams = reactive({})
-const cameraWebRtcStates = reactive({})
-const cameraVideoRef = ref(null)
-const cameraPeers = new Map()
-const cameraPeerSessions = new Map()
-const cameraPeerFingerprints = new Map()
-const cameraReconnectTimers = new Map()
-const cameraConnectTasks = new Map()
-let iceConfigPromise = null
-let iceConfigCache = null
-const webRtcClientId = getWebRtcClientId()
+const cameraJpegStates = reactive({})
 
-let slotsLoading = false
 let slotsLoadPromise = null
-let previewsLoading = false
-let pollingStarted = false
-let cameraWebRtcSuspended = false
+let rawPollingConsumers = 0
+let rawPollingSuspended = false
+const rawControllers = new Map()
+const rawPollingTimers = new Map()
 
 const activeCameraSlots = computed(() => cameraSlots.value.filter(slot => slot.sourceType !== 'OFF'))
 const selectedCameraSource = computed(() =>
@@ -37,27 +31,20 @@ const selectedCameraSourceId = computed({
   get: () => selectedCameraSlotId.value,
   set: value => { selectedCameraSlotId.value = Number(value) || 1 }
 })
-const cameraDisplayUrl = computed(() => cameraPreviewUrls[selectedCameraSource.value?.slotId] || '')
-const selectedCameraStream = computed(() => cameraWebRtcStreams[selectedCameraSource.value?.slotId] || null)
-const cameraVideoReady = computed(() => Boolean(selectedCameraStream.value))
-const cameraPreviewUrl = cameraDisplayUrl
-const cameraStreamUrl = cameraDisplayUrl
-const cameraTransport = computed(() => selectedCameraStream.value ? 'webrtc' : 'file')
-const previewStatus = computed(() => cameraDisplayUrl.value ? 'ready' : cameraStatus.value)
 
-watch([cameraVideoRef, selectedCameraStream], ([element, stream]) => {
-  if (!element || element.srcObject === stream) return
-  element.srcObject = stream
-  if (stream) void element.play().catch(() => {})
-}, { flush: 'post' })
-
-export function useCameraSource(_taskType, options = {}) {
+export function useCameraSource(taskType, options = {}) {
   const syncIntervalMs = options.syncIntervalMs ?? 4000
-  const fallbackIntervalMs = options.fallbackIntervalMs ?? 3000
+  const enabled = options.enabled !== false
+  const processedSource = options.processed && enabled ? useProcessedCameraStreams(taskType) : null
+  const previewCollection = processedSource?.cameraPreviewUrls || cameraPreviewUrls
+  const stateCollection = processedSource?.cameraJpegStates || cameraJpegStates
+  const cameraDisplayUrl = computed(() => previewCollection[selectedCameraSource.value?.slotId] || '')
+  const cameraTransport = computed(() => options.processed ? 'processed-jpeg' : 'jpeg')
+  const previewStatus = computed(() => cameraDisplayUrl.value ? 'ready' : cameraStatus.value)
+  let slotSyncTimer = null
 
   async function loadCameraSlots({ silent = false } = {}) {
     if (slotsLoadPromise) return slotsLoadPromise
-    slotsLoading = true
     slotsLoadPromise = (async () => {
       if (!silent) cameraStatus.value = 'loading'
       try {
@@ -70,14 +57,13 @@ export function useCameraSource(_taskType, options = {}) {
         }
         cameraStatus.value = cameraSlots.value.length ? 'ready' : 'empty'
         cameraError.value = ''
-        void synchronizeWebRtcConnections()
-        void refreshFallbackPreviews()
+        cleanupInactivePreviews(previewCollection)
+        syncRawPollingSlots()
+        if (options.processed) void processedSource?.refreshAllPreviews()
       } catch (error) {
         console.error(error)
         cameraStatus.value = 'offline'
         cameraError.value = '主服务摄像头模块未连接'
-      } finally {
-        slotsLoading = false
       }
     })()
     try {
@@ -87,100 +73,50 @@ export function useCameraSource(_taskType, options = {}) {
     }
   }
 
-  async function refreshCameraSlotPreview(slotId) {
-    const slot = cameraSlots.value.find(item => item.slotId === Number(slotId))
-    if (!slot || slot.sourceType === 'OFF') {
-      releasePreview(slotId)
-      return
-    }
-    try {
-      const blob = await getCameraFrameBlob(slotId)
-      if (!(blob instanceof Blob)) throw new Error('camera_frame_not_blob')
-      const nextUrl = URL.createObjectURL(blob)
-      const previousUrl = cameraPreviewUrls[slotId]
-      cameraPreviewUrls[slotId] = nextUrl
-      cameraPreviewVersions[slotId] = Date.now()
-      if (previousUrl) URL.revokeObjectURL(previousUrl)
-      slot.status = 'ready'
-      slot.error = ''
-      if (Number(slotId) === Number(selectedCameraSlotId.value)) cameraError.value = ''
-    } catch (error) {
-      console.error(error)
-      slot.status = 'error'
-      slot.error = error.response?.data?.message || '取帧失败'
-    }
-  }
-
-  async function refreshAllPreviews() {
-    if (previewsLoading) return
-    previewsLoading = true
-    try {
-      await Promise.allSettled(activeCameraSlots.value.map(slot => refreshCameraSlotPreview(slot.slotId)))
-    } finally {
-      previewsLoading = false
-    }
-  }
-
-  async function refreshFallbackPreviews() {
-    if (previewsLoading) return
-    const fallbackSlots = activeCameraSlots.value.filter(slot => !cameraWebRtcStreams[slot.slotId])
-    if (!fallbackSlots.length) return
-    previewsLoading = true
-    try {
-      await Promise.allSettled(fallbackSlots.map(slot => refreshCameraSlotPreview(slot.slotId)))
-    } finally {
-      previewsLoading = false
-    }
-  }
-
   function selectCameraSlot(slotId) {
     const slot = cameraSlots.value.find(item => item.slotId === Number(slotId))
     if (slot?.sourceType === 'OFF') return false
     selectedCameraSlotId.value = Number(slotId)
     cameraError.value = slot?.error || ''
-    attachSelectedStream()
-    if (!cameraWebRtcStreams[slotId]) void refreshCameraSlotPreview(slotId)
+    if (options.processed) void processedSource?.refreshCameraSlotPreview(slotId)
+    else void refreshRawCameraSlotPreview(slotId)
     return true
   }
 
   function refreshCameraPreview() {
-    return refreshAllPreviews()
+    return options.processed ? processedSource?.refreshAllPreviews() : refreshAllRawPreviews()
   }
 
   function requestPreviewFrame() {
     return refreshCameraSlotPreview(selectedCameraSlotId.value)
   }
 
+  function refreshCameraSlotPreview(slotId) {
+    return options.processed
+      ? processedSource?.refreshCameraSlotPreview(slotId)
+      : refreshRawCameraSlotPreview(slotId)
+  }
+
   function startPolling() {
-    if (pollingStarted) return
-    pollingStarted = true
-    window.setInterval(() => { void refreshFallbackPreviews() }, fallbackIntervalMs)
-    window.setInterval(() => { void loadCameraSlots({ silent: true }) }, syncIntervalMs)
+    if (!options.processed) startRawPolling()
+    if (!slotSyncTimer) {
+      slotSyncTimer = window.setInterval(() => { void loadCameraSlots({ silent: true }) }, syncIntervalMs)
+    }
   }
 
-  function releasePreview(slotId) {
-    const previousUrl = cameraPreviewUrls[slotId]
-    if (previousUrl) URL.revokeObjectURL(previousUrl)
-    delete cameraPreviewUrls[slotId]
-    delete cameraPreviewVersions[slotId]
-  }
-
-  async function activateCameraSource() {
-    return selectCameraSlot(selectedCameraSlotId.value)
-  }
-
-  async function getCameraSnapshotUrl() {
-    const slot = selectedCameraSource.value
-    return slot?.frameUrl || ''
-  }
-
-  function markCameraVideoReady() {
-    attachSelectedStream()
+  function stopPolling() {
+    if (!options.processed) stopRawPolling()
+    if (slotSyncTimer) window.clearInterval(slotSyncTimer)
+    slotSyncTimer = null
   }
 
   onMounted(() => {
-    void loadCameraSlots()
+    if (!enabled) return
     startPolling()
+    void loadCameraSlots()
+  })
+  onBeforeUnmount(() => {
+    if (enabled) stopPolling()
   })
 
   return {
@@ -194,374 +130,262 @@ export function useCameraSource(_taskType, options = {}) {
     selectedCameraSource,
     cameraStatus,
     cameraError,
-    cameraStreamUrl,
-    cameraPreviewUrl,
+    cameraStreamUrl: cameraDisplayUrl,
+    cameraPreviewUrl: cameraDisplayUrl,
     cameraDisplayUrl,
-    cameraPreviewUrls,
+    cameraPreviewUrls: previewCollection,
     cameraPreviewVersions,
-    cameraWebRtcStreams,
-    cameraWebRtcStates,
-    selectedCameraStream,
-    cameraVideoRef,
-    cameraVideoReady,
+    cameraJpegStates: stateCollection,
     cameraTransport,
     previewStatus,
     loadCameraSources: loadCameraSlots,
     loadCameraSlots,
     syncCameraSources: loadCameraSlots,
-    activateCameraSource,
+    activateCameraSource: () => selectCameraSlot(selectedCameraSlotId.value),
     selectCameraSlot,
     refreshCameraPreview,
-    refreshAllPreviews,
+    refreshAllPreviews: refreshCameraPreview,
     refreshCameraSlotPreview,
     requestPreviewFrame,
-    markCameraVideoReady,
-    suspendCameraWebRtcConnections,
-    resumeCameraWebRtcConnections,
+    suspendCameraJpegPolling,
+    resumeCameraJpegPolling,
     getCameraVideoElement: () => null,
-    getCameraSnapshotUrl
+    getCameraSnapshotUrl: async () => selectedCameraSource.value?.frameUrl || ''
   }
 }
 
-function slotFingerprint(slot) {
-  return JSON.stringify([slot.sourceType, slot.path, slot.deviceIndex])
-}
-
-async function synchronizeWebRtcConnections() {
-  if (cameraWebRtcSuspended || typeof RTCPeerConnection === 'undefined') return
-  const activeIds = new Set(activeCameraSlots.value.map(slot => Number(slot.slotId)))
-  for (const slotId of cameraPeers.keys()) {
-    if (!activeIds.has(Number(slotId))) closeCameraPeer(slotId)
-  }
-  await Promise.allSettled(activeCameraSlots.value.map(slot => connectCameraPeer(slot)))
-}
-
-function connectCameraPeer(slot) {
-  if (cameraWebRtcSuspended) return Promise.resolve()
-  const slotId = Number(slot.slotId)
-  const fingerprint = slotFingerprint(slot)
-  if (cameraPeers.has(slotId) && cameraPeerFingerprints.get(slotId) === fingerprint) return Promise.resolve()
-  const currentTask = cameraConnectTasks.get(slotId)
-  if (currentTask?.fingerprint === fingerprint) return currentTask.promise
-  const promise = establishCameraPeer(slot, slotId, fingerprint).finally(() => {
-    if (cameraConnectTasks.get(slotId)?.promise === promise) cameraConnectTasks.delete(slotId)
-  })
-  cameraConnectTasks.set(slotId, { fingerprint, promise })
-  return promise
-}
-
-async function establishCameraPeer(slot, slotId, fingerprint) {
-  if (cameraWebRtcSuspended) return
-  closeCameraPeer(slotId)
-  cameraWebRtcStates[slotId] = 'connecting'
-
-  const peer = new RTCPeerConnection(await getIceConfiguration())
-  cameraPeers.set(slotId, peer)
-  cameraPeerFingerprints.set(slotId, fingerprint)
-  peer.addTransceiver('video', { direction: 'recvonly' })
-
-  peer.ontrack = event => {
-    const stream = event.streams?.[0] || new MediaStream([event.track])
-    cameraWebRtcStreams[slotId] = stream
-    cameraWebRtcStates[slotId] = 'streaming'
-    if (slotId === Number(selectedCameraSlotId.value)) attachSelectedStream()
-  }
-  peer.onconnectionstatechange = () => {
-    const state = peer.connectionState
-    cameraWebRtcStates[slotId] = state
-    if (state === 'connected') {
-      clearReconnectTimer(slotId)
-      const slotState = cameraSlots.value.find(item => Number(item.slotId) === slotId)
-      if (slotState) slotState.status = 'ready'
-      return
-    }
-    if (state === 'failed' || state === 'closed') scheduleReconnect(slotId, 1500, true)
-    if (state === 'disconnected') scheduleReconnect(slotId, 10000, false)
-  }
-
-  try {
-    const offer = await peer.createOffer()
-    await peer.setLocalDescription(offer)
-    await waitForIceGathering(peer)
-    const response = await fetch(`/webrtc/api/v1/webrtc/offer/${slotId}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        type: peer.localDescription.type,
-        sdp: peer.localDescription.sdp,
-        clientId: webRtcClientId
-      })
-    })
-    const answer = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(answer.detail || `WebRTC 信令失败 (${response.status})`)
-    cameraPeerSessions.set(slotId, answer.sessionId)
-    await peer.setRemoteDescription({ type: answer.type, sdp: answer.sdp })
-    if (cameraWebRtcSuspended) closeCameraPeer(slotId)
-  } catch (error) {
-    console.error(`摄像头 ${slotId} WebRTC 连接失败`, error)
-    cameraWebRtcStates[slotId] = 'error'
-    const slotState = cameraSlots.value.find(item => Number(item.slotId) === slotId)
-    if (slotState) slotState.error = error.message || 'WebRTC 连接失败'
-    closeCameraPeer(slotId)
-    scheduleReconnect(slotId)
-  }
-}
-
-function getWebRtcClientId() {
-  const key = 'visiondrive-webrtc-client-id'
-  try {
-    const existing = window.sessionStorage.getItem(key)
-    if (existing) return existing
-    const generated = window.crypto?.randomUUID?.() || `tab-${Date.now()}-${Math.random().toString(16).slice(2)}`
-    window.sessionStorage.setItem(key, generated)
-    return generated
-  } catch {
-    return `tab-${Date.now()}-${Math.random().toString(16).slice(2)}`
-  }
-}
-
-async function getIceConfiguration() {
-  const now = Math.floor(Date.now() / 1000)
-  if (iceConfigCache && Number(iceConfigCache.expiresAt || 0) > now + 60) {
-    return {
-      iceServers: iceConfigCache.iceServers,
-      iceTransportPolicy: iceConfigCache.iceTransportPolicy || 'all'
-    }
-  }
-  if (!iceConfigPromise) {
-    iceConfigPromise = fetch('/webrtc/api/v1/webrtc/ice-config')
-      .then(async response => {
-        const data = await response.json().catch(() => ({}))
-        if (!response.ok) throw new Error(data.detail || `ICE 配置获取失败 (${response.status})`)
-        iceConfigCache = data
-        return data
-      })
-      .finally(() => { iceConfigPromise = null })
-  }
-  try {
-    const config = await iceConfigPromise
-    return {
-      iceServers: config.iceServers || [],
-      iceTransportPolicy: config.iceTransportPolicy || 'all'
-    }
-  } catch (error) {
-    console.warn('TURN 配置不可用，回退到直连 WebRTC', error)
-    const stunUrl = import.meta.env.VITE_WEBRTC_STUN_URL
-    return { iceServers: stunUrl ? [{ urls: stunUrl }] : [] }
-  }
-}
-
-function waitForIceGathering(peer) {
-  if (peer.iceGatheringState === 'complete') return Promise.resolve()
-  return new Promise(resolve => {
-    const timeout = window.setTimeout(finish, 6000)
-    function finish() {
-      window.clearTimeout(timeout)
-      peer.removeEventListener('icegatheringstatechange', onChange)
-      resolve()
-    }
-    function onChange() {
-      if (peer.iceGatheringState === 'complete') finish()
-    }
-    peer.addEventListener('icegatheringstatechange', onChange)
+async function refreshRawCameraSlotPreview(slotId) {
+  return refreshJpegSlot({
+    slotId,
+    urls: cameraPreviewUrls,
+    states: cameraJpegStates,
+    controllers: rawControllers
   })
 }
 
-function scheduleReconnect(slotId, delay = 1500, closeImmediately = true) {
-  if (cameraWebRtcSuspended) return
-  if (cameraReconnectTimers.has(slotId)) return
-  if (closeImmediately) closeCameraPeer(slotId)
-  const timer = window.setTimeout(() => {
-    cameraReconnectTimers.delete(slotId)
-    if (!closeImmediately) closeCameraPeer(slotId)
-    const slot = cameraSlots.value.find(item => Number(item.slotId) === Number(slotId))
-    if (!cameraWebRtcSuspended && slot?.sourceType !== 'OFF') void connectCameraPeer(slot)
+async function refreshAllRawPreviews() {
+  const results = await Promise.allSettled(activeCameraSlots.value.map(slot => refreshRawCameraSlotPreview(slot.slotId)))
+  return results.some(result => result.status === 'fulfilled' && result.value)
+}
+
+function startRawPolling() {
+  rawPollingConsumers += 1
+  syncRawPollingSlots()
+}
+
+function stopRawPolling() {
+  rawPollingConsumers = Math.max(0, rawPollingConsumers - 1)
+  if (rawPollingConsumers > 0) return
+  clearPollingTimers(rawPollingTimers)
+  abortControllers(rawControllers)
+}
+
+function scheduleRawSlot(slotId, delay = currentPollDelay()) {
+  const active = activeCameraSlots.value.some(slot => Number(slot.slotId) === Number(slotId))
+  if (rawPollingConsumers === 0 || rawPollingSuspended || !active || rawPollingTimers.has(slotId) || rawControllers.has(slotId)) return
+  const timer = window.setTimeout(async () => {
+    rawPollingTimers.delete(slotId)
+    if (rawPollingConsumers === 0 || rawPollingSuspended) return
+    const startedAt = monotonicNow()
+    const succeeded = await refreshRawCameraSlotPreview(slotId)
+    const elapsed = monotonicNow() - startedAt
+    scheduleRawSlot(slotId, succeeded ? currentPollDelay(elapsed) : JPEG_RETRY_INTERVAL_MS)
   }, delay)
-  cameraReconnectTimers.set(slotId, timer)
+  rawPollingTimers.set(slotId, timer)
 }
 
-function clearReconnectTimer(slotId) {
-  const timer = cameraReconnectTimers.get(slotId)
-  if (timer) window.clearTimeout(timer)
-  cameraReconnectTimers.delete(slotId)
+function syncRawPollingSlots() {
+  if (rawPollingConsumers === 0 || rawPollingSuspended) return
+  const activeIds = new Set(activeCameraSlots.value.map(slot => Number(slot.slotId)))
+  rawPollingTimers.forEach((timer, slotId) => {
+    if (activeIds.has(Number(slotId))) return
+    window.clearTimeout(timer)
+    rawPollingTimers.delete(slotId)
+    rawControllers.get(slotId)?.abort()
+    rawControllers.delete(slotId)
+  })
+  activeIds.forEach(slotId => scheduleRawSlot(slotId, 0))
 }
 
-function closeCameraPeer(slotId, closeRemote = true) {
-  clearReconnectTimer(slotId)
-  const peer = cameraPeers.get(slotId)
-  if (peer) {
-    peer.ontrack = null
-    peer.onconnectionstatechange = null
-    peer.close()
-  }
-  const sessionId = cameraPeerSessions.get(slotId)
-  if (closeRemote && sessionId) {
-    void fetch(`/webrtc/api/v1/webrtc/session/${sessionId}`, { method: 'DELETE' }).catch(() => {})
-  }
-  cameraPeers.delete(slotId)
-  cameraPeerSessions.delete(slotId)
-  cameraPeerFingerprints.delete(slotId)
-  delete cameraWebRtcStreams[slotId]
+export function suspendCameraJpegPolling() {
+  rawPollingSuspended = true
+  clearPollingTimers(rawPollingTimers)
+  abortControllers(rawControllers)
 }
 
-export function suspendCameraWebRtcConnections() {
-  cameraWebRtcSuspended = true
-  for (const slotId of [...cameraReconnectTimers.keys()]) clearReconnectTimer(slotId)
-  for (const slotId of [...cameraPeers.keys()]) closeCameraPeer(slotId)
+export function resumeCameraJpegPolling() {
+  if (!rawPollingSuspended) return
+  rawPollingSuspended = false
+  syncRawPollingSlots()
 }
 
-export function resumeCameraWebRtcConnections() {
-  if (!cameraWebRtcSuspended) return
-  cameraWebRtcSuspended = false
-  void synchronizeWebRtcConnections()
+export function useProcessedCameraStreams(taskType) {
+  return useIsolatedJpegStreams(taskType)
 }
 
-export function useDelayedCameraStreams(delayMs = 1000) {
-  const streams = reactive({})
+export function useDelayedCameraStreams() {
+  return useIsolatedJpegStreams(null)
+}
+
+function useIsolatedJpegStreams(taskType) {
+  const urls = reactive({})
   const states = reactive({})
-  const peers = new Map()
-  const sessions = new Map()
-  const fingerprints = new Map()
-  const reconnectTimers = new Map()
-  const connectTasks = new Map()
+  const controllers = new Map()
+  const timers = new Map()
   let stopped = false
 
-  function closePeer(slotId, closeRemote = true) {
-    const timer = reconnectTimers.get(slotId)
-    if (timer) window.clearTimeout(timer)
-    reconnectTimers.delete(slotId)
-    const peer = peers.get(slotId)
-    if (peer) {
-      peer.ontrack = null
-      peer.onconnectionstatechange = null
-      peer.close()
-    }
-    const sessionId = sessions.get(slotId)
-    if (closeRemote && sessionId) {
-      void fetch(`/webrtc/api/v1/webrtc/session/${sessionId}`, { method: 'DELETE' }).catch(() => {})
-    }
-    peers.delete(slotId)
-    sessions.delete(slotId)
-    fingerprints.delete(slotId)
-    delete streams[slotId]
+  async function refreshCameraSlotPreview(slotId) {
+    return refreshJpegSlot({ slotId, taskType, urls, states, controllers })
   }
 
-  function scheduleDelayedReconnect(slotId) {
-    if (stopped || reconnectTimers.has(slotId)) return
-    const timer = window.setTimeout(() => {
-      reconnectTimers.delete(slotId)
-      const slot = cameraSlots.value.find(item => Number(item.slotId) === Number(slotId))
-      if (!stopped && slot?.sourceType !== 'OFF') void connectDelayedPeer(slot)
-    }, 1500)
-    reconnectTimers.set(slotId, timer)
+  async function refreshAllPreviews() {
+    if (stopped) return false
+    const results = await Promise.allSettled(activeCameraSlots.value.map(slot => refreshCameraSlotPreview(slot.slotId)))
+    return results.some(result => result.status === 'fulfilled' && result.value)
   }
 
-  function connectDelayedPeer(slot) {
-    if (stopped || typeof RTCPeerConnection === 'undefined') return Promise.resolve()
-    const slotId = Number(slot.slotId)
-    const fingerprint = slotFingerprint(slot)
-    if (peers.has(slotId) && fingerprints.get(slotId) === fingerprint) return Promise.resolve()
-    const currentTask = connectTasks.get(slotId)
-    if (currentTask?.fingerprint === fingerprint) return currentTask.promise
-    const promise = establishDelayedPeer(slot, slotId, fingerprint).finally(() => {
-      if (connectTasks.get(slotId)?.promise === promise) connectTasks.delete(slotId)
-    })
-    connectTasks.set(slotId, { fingerprint, promise })
-    return promise
+  function scheduleSlot(slotId, delay = currentPollDelay()) {
+    const active = activeCameraSlots.value.some(slot => Number(slot.slotId) === Number(slotId))
+    if (stopped || !active || timers.has(slotId) || controllers.has(slotId)) return
+    const timer = window.setTimeout(async () => {
+      timers.delete(slotId)
+      if (stopped) return
+      const startedAt = monotonicNow()
+      const succeeded = await refreshCameraSlotPreview(slotId)
+      const elapsed = monotonicNow() - startedAt
+      scheduleSlot(slotId, succeeded ? currentPollDelay(elapsed) : JPEG_RETRY_INTERVAL_MS)
+    }, delay)
+    timers.set(slotId, timer)
   }
 
-  async function establishDelayedPeer(slot, slotId, fingerprint) {
-    closePeer(slotId)
-    states[slotId] = 'connecting'
-    const peer = new RTCPeerConnection(await getIceConfiguration())
-    if (stopped) {
-      peer.close()
-      return
-    }
-    peers.set(slotId, peer)
-    fingerprints.set(slotId, fingerprint)
-    peer.addTransceiver('video', { direction: 'recvonly' })
-    peer.ontrack = event => {
-      streams[slotId] = event.streams?.[0] || new MediaStream([event.track])
-      states[slotId] = 'streaming'
-    }
-    peer.onconnectionstatechange = () => {
-      const state = peer.connectionState
-      states[slotId] = state
-      if (state === 'failed' || state === 'closed') {
-        closePeer(slotId)
-        scheduleDelayedReconnect(slotId)
-      } else if (state === 'disconnected') {
-        scheduleDelayedReconnect(slotId)
-      }
-    }
-    try {
-      const offer = await peer.createOffer()
-      await peer.setLocalDescription(offer)
-      await waitForIceGathering(peer)
-      const response = await fetch(`/webrtc/api/v1/webrtc/offer/${slotId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: peer.localDescription.type,
-          sdp: peer.localDescription.sdp,
-          clientId: `${webRtcClientId}:detail`,
-          delayMs
-        })
-      })
-      const answer = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(answer.detail || `WebRTC 信令失败 (${response.status})`)
-      sessions.set(slotId, answer.sessionId)
-      await peer.setRemoteDescription({ type: answer.type, sdp: answer.sdp })
-      if (stopped) closePeer(slotId)
-    } catch (error) {
-      console.error(`摄像头 ${slotId} 延迟 WebRTC 连接失败`, error)
-      states[slotId] = 'error'
-      closePeer(slotId)
-      scheduleDelayedReconnect(slotId)
-    }
-  }
-
-  async function synchronizeDelayedPeers() {
-    if (stopped) return
+  function syncSlots() {
     const activeIds = new Set(activeCameraSlots.value.map(slot => Number(slot.slotId)))
-    for (const slotId of [...peers.keys()]) {
-      if (!activeIds.has(Number(slotId))) closePeer(slotId)
-    }
-    await Promise.allSettled(activeCameraSlots.value.map(connectDelayedPeer))
+    timers.forEach((timer, slotId) => {
+      if (activeIds.has(Number(slotId))) return
+      window.clearTimeout(timer)
+      timers.delete(slotId)
+      controllers.get(slotId)?.abort()
+      controllers.delete(slotId)
+    })
+    activeIds.forEach(slotId => scheduleSlot(slotId, 0))
   }
 
-  const stopWatchingSlots = watch(cameraSlots, () => { void synchronizeDelayedPeers() }, { deep: true })
+  const stopWatchingSlots = watch(cameraSlots, () => {
+    cleanupInactivePreviews(urls)
+    syncSlots()
+  }, { deep: true })
+
   onMounted(async () => {
     if (!cameraSlots.value.length) {
       try {
         const data = getCameraData(await listCameraSlots()) || {}
         cameraSlots.value = data.slots || []
+        sandboxPresets.value = data.sandboxPresets || []
+        sourceTypes.value = data.sourceTypes || []
       } catch (error) {
         console.error('详情页摄像头列表加载失败', error)
       }
     }
-    await synchronizeDelayedPeers()
+    syncSlots()
   })
   onBeforeUnmount(() => {
     stopped = true
     stopWatchingSlots()
-    for (const slotId of [...peers.keys()]) closePeer(slotId)
+    clearPollingTimers(timers)
+    abortControllers(controllers)
+    releaseAllPreviews(urls)
   })
 
   return {
     cameraSlots,
     activeCameraSlots,
-    cameraPreviewUrls,
-    cameraWebRtcStreams: streams,
-    cameraWebRtcStates: states
+    cameraPreviewUrls: urls,
+    cameraJpegStates: states,
+    processed: Boolean(taskType),
+    taskType,
+    delayMs: 0,
+    refreshAllPreviews,
+    refreshCameraSlotPreview
   }
 }
 
-function attachSelectedStream() {
-  const element = cameraVideoRef.value
-  const stream = selectedCameraStream.value
-  if (!element || element.srcObject === stream) return
-  element.srcObject = stream
-  if (stream) void element.play().catch(() => {})
+async function refreshJpegSlot({ slotId, taskType = null, urls, states, controllers }) {
+  const slot = cameraSlots.value.find(item => Number(item.slotId) === Number(slotId))
+  if (!slot || slot.sourceType === 'OFF') {
+    releasePreview(urls, slotId)
+    states[slotId] = 'off'
+    return false
+  }
+
+  const previousController = controllers.get(slotId)
+  if (previousController) return false
+  const controller = new AbortController()
+  controllers.set(slotId, controller)
+  if (!urls[slotId]) states[slotId] = 'loading'
+  try {
+    const blob = await getCameraFrameBlob(slotId, { taskType, signal: controller.signal })
+    if (!(blob instanceof Blob)) throw new Error('camera_frame_not_blob')
+    if (controllers.get(slotId) !== controller) return false
+    replacePreviewUrl(urls, slotId, blob)
+    cameraPreviewVersions[slotId] = Date.now()
+    states[slotId] = 'ready'
+    slot.status = 'ready'
+    slot.error = ''
+    if (Number(slotId) === Number(selectedCameraSlotId.value)) cameraError.value = ''
+    return true
+  } catch (error) {
+    if (error.name === 'AbortError') return false
+    states[slotId] = urls[slotId] ? 'retrying' : 'error'
+    slot.error = error.message || 'JPEG 取帧失败'
+    return false
+  } finally {
+    if (controllers.get(slotId) === controller) controllers.delete(slotId)
+  }
+}
+
+function replacePreviewUrl(urls, slotId, blob) {
+  const nextUrl = URL.createObjectURL(blob)
+  const previousUrl = urls[slotId]
+  urls[slotId] = nextUrl
+  if (!previousUrl) return
+  const release = () => URL.revokeObjectURL(previousUrl)
+  if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(release)
+  else window.setTimeout(release, 0)
+}
+
+function releasePreview(urls, slotId) {
+  const previousUrl = urls[slotId]
+  if (previousUrl) URL.revokeObjectURL(previousUrl)
+  delete urls[slotId]
+  delete cameraPreviewVersions[slotId]
+}
+
+function cleanupInactivePreviews(urls) {
+  const activeIds = new Set(activeCameraSlots.value.map(slot => String(slot.slotId)))
+  Object.keys(urls).forEach(slotId => {
+    if (!activeIds.has(String(slotId))) releasePreview(urls, slotId)
+  })
+}
+
+function releaseAllPreviews(urls) {
+  Object.keys(urls).forEach(slotId => releasePreview(urls, slotId))
+}
+
+function abortControllers(controllers) {
+  controllers.forEach(controller => controller.abort())
+  controllers.clear()
+}
+
+function clearPollingTimers(timers) {
+  timers.forEach(timer => window.clearTimeout(timer))
+  timers.clear()
+}
+
+function currentPollDelay(elapsed = 0) {
+  if (typeof document !== 'undefined' && document.hidden) return JPEG_RETRY_INTERVAL_MS
+  return Math.max(0, JPEG_FRAME_INTERVAL_MS - Math.max(0, elapsed))
+}
+
+function monotonicNow() {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
 }

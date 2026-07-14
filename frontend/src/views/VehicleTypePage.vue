@@ -19,7 +19,6 @@
       task-type="vehicle_type"
       :result="result"
       :recognizing="recognizing"
-      :preloaded-streams="props.preloadedStreams"
     />
   </div>
 </template>
@@ -34,8 +33,7 @@ import { TASK_TYPES } from '@/utils/constants'
 const props = defineProps({
   embedded: { type: Boolean, default: false },
   externalResult: { type: Object, default: null },
-  externalRecognizing: { type: Boolean, default: false },
-  preloadedStreams: { type: Object, default: null }
+  externalRecognizing: { type: Boolean, default: false }
 })
 const emit = defineEmits(['toggle-recognition'])
 

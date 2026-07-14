@@ -33,10 +33,11 @@ class OwnerGestureControlServiceTest {
     }
 
     @Test
-    void exposesOnlyDinov2UserPrototypes() {
+    void exposesDinov2SystemAndUserPrototypes() {
         algorithmClient.prototypes = List.of(
                 prototype("deep-1", "视频挥手", "dinov2_tcn_prototype", "custom"),
-                prototype("Open_Palm", "手掌张开", "mediapipe_prototype", "built_in")
+                prototype("Open_Palm", "手掌张开", "dinov2_tcn_prototype", "built_in"),
+                prototype("legacy-open", "旧系统手势", "mediapipe_prototype", "built_in")
         );
 
         Map<String, Object> library = service.getPrototypeLibrary();
@@ -44,30 +45,36 @@ class OwnerGestureControlServiceTest {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> gestures = (List<Map<String, Object>>) library.get("gestures");
         assertEquals("dinov2_tcn_prototype", library.get("algorithm"));
-        assertEquals(false, library.get("presetGestures"));
-        assertEquals(1, gestures.size());
+        assertEquals(true, library.get("presetGestures"));
+        assertEquals(2, gestures.size());
         assertEquals("deep-1", gestures.get(0).get("gestureCode"));
         assertEquals("custom", gestures.get(0).get("gestureSource"));
+        assertEquals("Open_Palm", gestures.get(1).get("gestureCode"));
+        assertEquals("built_in", gestures.get(1).get("gestureSource"));
     }
 
     @Test
     void removesEveryBindingThatDoesNotBelongToCurrentDinov2Prototypes() {
         algorithmClient.prototypes = List.of(
-                prototype("deep-1", "视频挥手", "dinov2_tcn_prototype", "custom")
+                prototype("deep-1", "视频挥手", "dinov2_tcn_prototype", "custom"),
+                prototype("Open_Palm", "手掌张开", "dinov2_tcn_prototype", "built_in")
         );
         OwnerGestureControlBinding active = binding("deep-1", "custom");
-        OwnerGestureControlBinding oldSystem = binding("Open_Palm", "built_in");
+        OwnerGestureControlBinding activeSystem = binding("Open_Palm", "built_in");
+        OwnerGestureControlBinding oldSystem = binding("Thumb_Up", "built_in");
         OwnerGestureControlBinding oldCustom = binding("legacy-custom", "custom");
-        storedBindings.addAll(List.of(active, oldSystem, oldCustom));
+        storedBindings.addAll(List.of(active, activeSystem, oldSystem, oldCustom));
 
         assertEquals(2, service.reconcileBindings());
         assertEquals(List.of(oldSystem, oldCustom), deletedBindings);
+        assertEquals(List.of(active, activeSystem), storedBindings);
     }
 
     @Test
-    void refusesObsoleteSystemGestureEvenIfDatabaseBindingStillExists() {
+    void executesCurrentSystemGestureBinding() {
         algorithmClient.prototypes = List.of(
-                prototype("deep-1", "视频挥手", "dinov2_tcn_prototype", "custom")
+                prototype("deep-1", "视频挥手", "dinov2_tcn_prototype", "custom"),
+                prototype("Open_Palm", "手掌张开", "dinov2_tcn_prototype", "built_in")
         );
         storedBindings.add(binding("Open_Palm", "built_in"));
 
@@ -77,14 +84,15 @@ class OwnerGestureControlServiceTest {
                 "confidence", 0.99
         ));
 
-        assertFalse((Boolean) result.get("enabled"));
-        assertEquals("NONE", result.get("actionType"));
+        assertEquals(true, result.get("enabled"));
+        assertEquals("VOLUME_UP", result.get("actionType"));
     }
 
     @Test
-    void savesOnlyCurrentDinov2PrototypeBindings() {
+    void savesCurrentSystemAndUserPrototypeBindings() {
         algorithmClient.prototypes = List.of(
-                prototype("deep-1", "视频挥手", "dinov2_tcn_prototype", "custom")
+                prototype("deep-1", "视频挥手", "dinov2_tcn_prototype", "custom"),
+                prototype("Open_Palm", "手掌张开", "dinov2_tcn_prototype", "built_in")
         );
 
         service.saveControlSettings(Map.of("settings", List.of(
@@ -104,12 +112,18 @@ class OwnerGestureControlServiceTest {
                 )
         )));
 
-        assertEquals(1, storedBindings.size());
-        OwnerGestureControlBinding binding = storedBindings.get(0);
-        assertEquals("deep-1", binding.getGestureCode());
-        assertEquals("视频挥手", binding.getGestureName());
-        assertEquals("custom", binding.getGestureSource());
-        assertEquals("VOLUME_UP", binding.getActionType());
+        assertEquals(2, storedBindings.size());
+        OwnerGestureControlBinding systemBinding = storedBindings.stream()
+                .filter(item -> "Open_Palm".equals(item.getGestureCode()))
+                .findFirst().orElseThrow();
+        OwnerGestureControlBinding customBinding = storedBindings.stream()
+                .filter(item -> "deep-1".equals(item.getGestureCode()))
+                .findFirst().orElseThrow();
+        assertEquals("built_in", systemBinding.getGestureSource());
+        assertEquals("VOLUME_DOWN", systemBinding.getActionType());
+        assertEquals("视频挥手", customBinding.getGestureName());
+        assertEquals("custom", customBinding.getGestureSource());
+        assertEquals("VOLUME_UP", customBinding.getActionType());
     }
 
     @Test
@@ -121,7 +135,8 @@ class OwnerGestureControlServiceTest {
                 )),
                 "prototypes", List.of(
                         prototype("deep-1", "视频挥手", "dinov2_tcn_prototype", "custom"),
-                        prototype("Open_Palm", "手掌张开", "mediapipe_prototype", "built_in")
+                        prototype("Open_Palm", "手掌张开", "dinov2_tcn_prototype", "built_in"),
+                        prototype("legacy-open", "旧系统手势", "mediapipe_prototype", "built_in")
                 ),
                 "config", Map.of(
                         "activeAlgorithm", "dinov2_tcn_prototype",
@@ -139,8 +154,8 @@ class OwnerGestureControlServiceTest {
         Map<String, Object> config = (Map<String, Object>) state.get("config");
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> prototypes = (List<Map<String, Object>>) state.get("prototypes");
-        assertEquals(Map.of("active", "dinov2_tcn_prototype", "presetGestures", false), algorithm);
-        assertEquals(1, prototypes.size());
+        assertEquals(Map.of("active", "dinov2_tcn_prototype", "presetGestures", true), algorithm);
+        assertEquals(2, prototypes.size());
         assertEquals(12, config.get("sampleTarget"));
         assertFalse(config.containsKey("staticMatchThreshold"));
     }

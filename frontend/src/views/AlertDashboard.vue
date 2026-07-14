@@ -121,10 +121,22 @@
           <el-option label="最近 200 条" :value="200" />
           <el-option label="最近 500 条" :value="500" />
         </el-select>
-        <button class="tool-button primary refresh-log-button" type="button" :disabled="logsLoading" @click="fetchSystemLogs">
-          <el-icon :class="{ spinning: logsLoading }"><Refresh /></el-icon>
-          <span>刷新</span>
-        </button>
+        <div class="log-toolbar-actions">
+          <button
+            v-if="logFilters.level === 'ERROR'"
+            class="tool-button danger log-action-button"
+            type="button"
+            :disabled="logsLoading || logsClearing || !systemLogs.length"
+            @click="clearCurrentErrorLogs"
+          >
+            <el-icon :class="{ spinning: logsClearing }"><Delete /></el-icon>
+            <span>{{ logsClearing ? '清空中' : '清空当前' }}</span>
+          </button>
+          <button class="tool-button primary log-action-button" type="button" :disabled="logsLoading || logsClearing" @click="fetchSystemLogs">
+            <el-icon :class="{ spinning: logsLoading }"><Refresh /></el-icon>
+            <span>刷新</span>
+          </button>
+        </div>
       </div>
 
       <el-table
@@ -253,9 +265,9 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import * as echarts from 'echarts'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAlertStore } from '@/stores/alert'
-import { getSystemLogs, injectDatabaseFailureAlert, runAlertAgent } from '@/api/alerts'
+import { clearErrorLogs, getSystemLogs, injectDatabaseFailureAlert, runAlertAgent } from '@/api/alerts'
 
 const alertStore = useAlertStore()
 alertStore.fetchAlerts()
@@ -267,6 +279,7 @@ const agentRunning = ref(false)
 const manualInjecting = ref(false)
 const logDialogVisible = ref(false)
 const logsLoading = ref(false)
+const logsClearing = ref(false)
 const systemLogs = ref([])
 const evidenceDialogVisible = ref(false)
 const selectedEvidence = reactive({
@@ -474,6 +487,49 @@ async function fetchSystemLogs() {
     systemLogs.value = []
   } finally {
     logsLoading.value = false
+  }
+}
+
+function currentErrorLogParams() {
+  const params = {}
+  if (logFilters.module) params.module = logFilters.module
+  if (logFilters.event) params.event = logFilters.event
+  return params
+}
+
+function currentErrorLogScope() {
+  const filters = []
+  if (logFilters.module) filters.push(`模块：${moduleLabel(logFilters.module)}`)
+  if (logFilters.event) filters.push(`事件：${eventLabel(logFilters.event)}`)
+  return filters.length ? `当前筛选（${filters.join('，')}）` : '当前全部'
+}
+
+async function clearCurrentErrorLogs() {
+  if (logFilters.level !== 'ERROR' || logsClearing.value || !systemLogs.value.length) return
+
+  try {
+    await ElMessageBox.confirm(
+      `确定清空${currentErrorLogScope()}的错误日志吗？此操作不可恢复。`,
+      '清空错误日志',
+      {
+        confirmButtonText: '确认清空',
+        cancelButtonText: '取消',
+        type: 'warning',
+        confirmButtonClass: 'el-button--danger'
+      }
+    )
+  } catch (error) {
+    return
+  }
+
+  logsClearing.value = true
+  try {
+    const response = await clearErrorLogs(currentErrorLogParams())
+    const deletedCount = Number(response.data?.deletedCount || 0)
+    await fetchSystemLogs()
+    ElMessage.success(deletedCount ? `已清空 ${deletedCount} 条错误日志` : '当前没有可清空的错误日志')
+  } finally {
+    logsClearing.value = false
   }
 }
 
@@ -833,9 +889,16 @@ onBeforeUnmount(() => {
   margin-bottom: 14px;
 }
 
-.refresh-log-button {
+.log-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.log-action-button {
   min-height: 40px;
   padding: 0 14px;
+  white-space: nowrap;
 }
 
 .system-log-table {
@@ -1059,6 +1122,11 @@ onBeforeUnmount(() => {
 
   .log-toolbar {
     grid-template-columns: 1fr;
+  }
+
+  .log-toolbar-actions,
+  .log-toolbar-actions .tool-button {
+    width: 100%;
   }
 
   :deep(.system-log-dialog) {

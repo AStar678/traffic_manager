@@ -58,6 +58,11 @@ jwt:
   expiration: 7200000  # 2小时
   refresh-expiration: 604800000  # 7天
 
+# 登录/注册请求使用 RSA-OAEP + AES-GCM 混合加密。生产环境必须配置持久化 PKCS#8 私钥。
+auth:
+  payload-encryption:
+    private-key-path: ${AUTH_ENCRYPTION_PRIVATE_KEY_PATH:}
+
 # 仅首次迁移时显式开启；默认绝不重复导入。
 migration:
   h2:

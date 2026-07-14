@@ -4,72 +4,22 @@
     task-type="license_plate"
     :result="props.externalResult"
     :recognizing="props.externalRecognizing"
-    :preloaded-streams="props.preloadedStreams"
   />
   <div v-else class="plate-page">
     <!-- 主区域：摄像头大画面 -->
     <div class="viewport-area">
-      <div class="viewport" :class="{ 'showing-synchronized-frame': synchronizedResultFrameUrl }">
-        <video
-          v-show="cameraVideoReady && !synchronizedResultFrameUrl"
-          ref="cameraVideoRef"
-          autoplay
-          muted
-          playsinline
-          @loadeddata="markCameraVideoReady"
-          @playing="markCameraVideoReady"
-        ></video>
-        <img
-          v-if="synchronizedResultFrameUrl"
-          :src="synchronizedResultFrameUrl"
-          alt="与识别结果同步的车牌检测帧"
-        />
-        <img v-else-if="!cameraVideoReady && cameraDisplayUrl" :src="cameraDisplayUrl" alt="camera fallback" />
-        <div v-if="!synchronizedResultFrameUrl && !cameraVideoReady && !cameraDisplayUrl" class="viewport-placeholder">
+      <div class="viewport">
+        <img v-if="cameraDisplayUrl" :src="cameraDisplayUrl" alt="车牌识别后端叠框 JPEG" />
+        <div v-else class="viewport-placeholder">
           <el-icon :size="48"><Camera /></el-icon>
           <span>{{ cameraError || '等待摄像头服务' }}</span>
         </div>
-
-        <!-- 检测框叠加层 -->
-        <svg
-          class="detection-overlay"
-          :viewBox="detectionViewBox"
-          preserveAspectRatio="xMidYMid meet"
-          v-if="result.detections.length && !synchronizedResultFrameUrl"
-        >
-          <g v-for="box in result.detections" :key="box.objectId">
-            <rect
-              :x="box.bbox.x1" :y="box.bbox.y1"
-              :width="box.bbox.x2 - box.bbox.x1"
-              :height="box.bbox.y2 - box.bbox.y1"
-              fill="none"
-              :stroke="plateTheme(box).accent"
-              stroke-width="4"
-              class="detect-rect"
-            />
-            <rect
-              :x="box.bbox.x1"
-              :y="Math.max(0, box.bbox.y1 - 32)"
-              :width="plateLabelWidth(box)"
-              height="28"
-              rx="14"
-              :fill="plateTheme(box).accent"
-            />
-            <text
-              :x="box.bbox.x1 + 14"
-              :y="Math.max(18, box.bbox.y1 - 11)"
-              :fill="plateTheme(box).text"
-              font-size="18"
-              font-weight="800"
-            >{{ plateOverlayText(box) }}</text>
-          </g>
-        </svg>
 
         <div class="scan-line-animated"></div>
 
         <!-- 顶部状态 -->
         <div class="viewport-top">
-          <span class="chip live">{{ synchronizedResultFrameUrl ? '● 同步帧' : '● LIVE' }}</span>
+          <span class="chip live">● JPEG 后端叠框</span>
           <span class="chip">{{ cameraLabel }}</span>
         </div>
 
@@ -162,8 +112,7 @@ import MultiCameraRecognitionDetail from '@/components/common/MultiCameraRecogni
 const props = defineProps({
   embedded: { type: Boolean, default: false },
   externalResult: { type: Object, default: null },
-  externalRecognizing: { type: Boolean, default: false },
-  preloadedStreams: { type: Object, default: null }
+  externalRecognizing: { type: Boolean, default: false }
 })
 const emit = defineEmits(['toggle-recognition'])
 
@@ -180,12 +129,9 @@ const {
   cameraStatus,
   cameraError,
   cameraDisplayUrl,
-  cameraVideoRef,
-  cameraVideoReady,
   loadCameraSources,
-  markCameraVideoReady,
   refreshCameraPreview
-} = useCameraSource(TASK_TYPES.LICENSE_PLATE)
+} = useCameraSource(TASK_TYPES.LICENSE_PLATE, { processed: true, enabled: !props.embedded })
 
 const cameraLabel = computed(() => {
   return selectedCameraSource.value?.name || '主服务摄像头模块'
@@ -193,15 +139,6 @@ const cameraLabel = computed(() => {
 const cameraStatusText = computed(() => {
   const labels = { idle: '未连接', loading: '连接中', ready: '已连接', empty: '无可用源', offline: '服务离线' }
   return labels[cameraStatus.value] || cameraStatus.value
-})
-const synchronizedResultFrameUrl = computed(() => {
-  if (!result.value.detections.length) return ''
-  return result.value.annotatedImageUrl || ''
-})
-const detectionViewBox = computed(() => {
-  const width = result.value.image?.width || 1280
-  const height = result.value.image?.height || 720
-  return `0 0 ${width} ${height}`
 })
 
 const plateColorThemes = {
@@ -375,10 +312,6 @@ onBeforeUnmount(() => {
   background: #070b12;
 }
 
-.viewport.showing-synchronized-frame video {
-  display: none !important;
-}
-
 .viewport-placeholder {
   height: 100%;
   min-height: 0;
@@ -392,18 +325,6 @@ onBeforeUnmount(() => {
     linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px),
     linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px);
   background-size: 40px 40px;
-}
-
-.detection-overlay {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-}
-
-.detect-rect {
-  animation: breathe 2s ease-in-out infinite;
 }
 
 .viewport-top {

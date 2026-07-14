@@ -103,6 +103,11 @@ async def health_check():
         "version": __version__,
         "taskType": TASK_TYPE,
         "model": status,
+        "concurrency": {
+            "workers": 1,
+            "cpuThreads": config.CPU_THREADS,
+            "stateMode": "single-gpu-model-with-source-trackers",
+        },
     }
 
 

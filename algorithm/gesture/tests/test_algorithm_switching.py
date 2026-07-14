@@ -65,7 +65,10 @@ def test_algorithms_keep_independent_prototype_stores(tmp_path):
     for value in range(12):
         result = service.process_payload({"type": "frame", "value": value})
     assert result["recordingComplete"]["name"] == "视频挥手"
-    assert len(service.list_prototypes()["prototypes"]) == 1
+    deep_prototypes = service.list_prototypes()["prototypes"]
+    assert len(deep_prototypes) == 6
+    assert len([item for item in deep_prototypes if item.get("source") == "built_in"]) == 5
+    assert len([item for item in deep_prototypes if item.get("source") == "custom"]) == 1
 
     recognized = service.process_payload({"type": "frame", "value": 11})["recognition"]
     assert recognized["accepted"] is True

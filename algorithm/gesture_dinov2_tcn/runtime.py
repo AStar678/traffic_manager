@@ -196,6 +196,11 @@ class Dinov2TcnPrototypeRuntime:
             return self._result(recognition=rejected, config=config)
         return self._result(recognition=self._accepted(prototype, score, config), config=config)
 
+    def observe(self, payload: dict[str, Any]) -> None:
+        """Keep the user-prototype time buffer warm without running a match."""
+        self.ensure_ready()
+        self.live_samples.append(self._sample_decoder(payload))
+
     def list_prototypes(self) -> list[dict[str, Any]]:
         return [self._summary(item) for item in self.prototypes]
 

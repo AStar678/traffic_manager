@@ -90,6 +90,19 @@ public class AlertController {
         return ApiResponse.success(alertService.getSystemLogs(module, event, level, limit));
     }
 
+    @Operation(summary = "清空当前错误日志", description = "仅删除 ERROR 级别日志，可按当前模块和事件筛选范围清空")
+    @DeleteMapping("/system-logs/errors")
+    public ApiResponse<Map<String, Object>> clearErrorLogs(
+            @Parameter(description = "当前筛选模块")
+            @RequestParam(required = false) String module,
+
+            @Parameter(description = "当前筛选事件")
+            @RequestParam(required = false) String event
+    ) {
+        int deletedCount = alertService.clearErrorLogs(module, event);
+        return ApiResponse.success(Map.of("deletedCount", deletedCount));
+    }
+
     @Operation(summary = "手动触发告警智能体检测")
     @PostMapping("/agent/run")
     public ApiResponse<List<AnomalyEvent>> runAlertAgent() {
